@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ja" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#fbf7ef">
+  <meta name="description" content="meeshogi — 一局を、次の一手に。棋譜解析・戦績管理アプリの操作できるデザインプレビュー。">
+  <title>meeshogi — 一局を、次の一手に。</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%23926020' d='M32 3 51 14 59 60H5l8-46Z'/%3E%3Ctext x='32' y='46' text-anchor='middle' font-size='37' fill='%23fbf7ef'%3E王%3C/text%3E%3C/svg%3E">
+  <style>/* INLINE_STYLES */</style>
+</head>
+<body>
+  <div class="review">
+    <header class="review-top">
+      <a class="wordmark" href="#library" aria-label="meeshogi 棋譜を開く"><svg viewBox="0 0 32 36" aria-hidden="true"><path d="m16 2 10 6 4 25H2L6 8Z"/><path d="M11 15h10M16 12v15M10 21h12M9 27h14"/></svg>meeshogi<span class="brand-dot">.</span></a>
+      <div class="review-edition"><span>DESIGN STUDY</span><span class="edition-rule"></span><b>01</b></div>
+    </header>
+    <main class="review-main">
+      <section class="intro" aria-label="meeshogiについて">
+        <div class="eyebrow"><span></span> あなたの将棋に、小さな相棒を。</div>
+        <h1>一局を、<br>次の一手に。</h1>
+        <p>勝った日も、悔しかった日も。<br>一手ずつ振り返れば、<br>その一局が、あなたの力になる。</p>
+        <div class="intro-foot"><span class="small-piece">歩</span><span>棋譜と向き合う、小さな習慣。<br><small>A little companion. A better next move.</small></span></div>
+      </section>
+      <div class="device-wrap">
+        <section class="device" id="device" data-platform="ios" aria-label="meeshogi アプリのプレビュー">
+          <div class="device-island" aria-hidden="true"></div>
+          <div class="status-bar" aria-hidden="true"><span>9:41</span><div class="status-symbols"><svg viewBox="0 0 20 14"><path d="M1 10h3v3H1zM6 7h3v6H6zM11 4h3v9h-3zM16 1h3v12h-3z"/></svg><svg viewBox="0 0 20 14"><path d="M1 4a14 14 0 0 1 18 0M4 7a9 9 0 0 1 12 0M7 10a4 4 0 0 1 6 0" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="13" r="1.2"/></svg><span class="battery"></span></div></div>
+          <div id="app" class="app"></div>
+          <div id="toast" class="toast" role="status" aria-live="polite"></div>
+          <div class="home-indicator" aria-hidden="true"></div>
+        </section>
+        <div class="device-caption"><span class="status-dot"></span><span>操作できるデザインプレビュー</span></div>
+      </div>
+      <aside class="review-controls" aria-label="プレビューの操作">
+        <div class="eyebrow">ひとつの棋譜から、はじまる。</div>
+        <nav class="chapters" aria-label="画面を選ぶ">
+          <button data-action="go" data-screen="library" class="chapter active"><span class="chapter-no">01</span><span><b>棋譜をためる</b><small>あなたの対局を、一冊に。</small></span><span class="chapter-arrow">↗</span></button>
+          <button data-action="go" data-screen="analysis" class="chapter"><span class="chapter-no">02</span><span><b>一手を振り返る</b><small>盤面の向こうに、発見を。</small></span><span class="chapter-arrow">↗</span></button>
+          <button data-action="go" data-screen="stats" class="chapter"><span class="chapter-no">03</span><span><b>歩みをたしかめる</b><small>積み重ねが、見えてくる。</small></span><span class="chapter-arrow">↗</span></button>
+        </nav>
+        <div class="preview-options"><span>外観</span><div class="segmented compact" id="review-theme"><button data-action="theme" data-value="light" aria-label="ライトテーマ" aria-pressed="true"><span data-icon="sun"></span></button><button data-action="theme" data-value="dark" aria-label="ダークテーマ" aria-pressed="false"><span data-icon="moon"></span></button></div></div>
+        <div class="preview-options"><span>フレーム</span><div class="segmented compact"><button data-action="platform" data-value="ios" aria-pressed="true">iPhone</button><button data-action="platform" data-value="android" aria-pressed="false">Android</button></div></div>
+        <button class="text-button settings-link" data-action="go" data-screen="settings"><span data-icon="settings"></span>設定を開く<span data-icon="right"></span></button>
+        <p class="preview-note">棋譜・戦績・評価値はサンプルです。<br>実エンジンによる解析は行いません。</p>
+      </aside>
+    </main>
+    <footer class="review-footer"><span>つづける人の、そばに。<span class="footer-dot">·</span>meeshogi</span><span>HTML PROTOTYPE <span class="footer-dot">/</span> SEPTEMBER 2026</span></footer>
+  </div>
+  <dialog id="sheet" class="sheet" aria-labelledby="sheet-title"><div class="sheet-handle" aria-hidden="true"></div><div id="sheet-content"></div></dialog>
+  <script>/* INLINE_DATA */</script>
+  <script>/* INLINE_APP */</script>
+</body>
+</html>
