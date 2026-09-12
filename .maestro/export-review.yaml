@@ -10,10 +10,18 @@ appId: com.meeshogi.app
     when:
       platform: Android
     commands:
-      - scrollUntilVisible:
-          element:
-            text: Meeshogi Export Test
-          direction: DOWN
+      # The collapsed Android sharesheet occupies only the bottom of the
+      # screen. A center-origin scroll can dismiss it by hitting the scrim.
+      - repeat:
+          times: 4
+          while:
+            notVisible: Meeshogi Export Test
+          commands:
+            - swipe:
+                start: 50%, 90%
+                end: 50%, 65%
+      - assertVisible: Meeshogi Export Test
+      - takeScreenshot: 33-system-share-expanded
       - tapOn: Meeshogi Export Test
       - extendedWaitUntil:
           visible:
