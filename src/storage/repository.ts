@@ -1,0 +1,74 @@
+import { type GameRecord, type Settings } from '../domain/model';
+import { decodeGame, decodeSettings } from './validation';
+
+export interface Database {
+  execAsync(sql: string): Promise<void>;
+  runAsync(sql: string, ...params: (string | number | null)[]): Promise<unknown>;
+  getAllAsync<T>(sql: string, ...params: (string | number | null)[]): Promise<T[]>;
+}
+export class LocalRepository {
+  constructor(private readonly db: Database) {}
+  async initialize() {
+    const versions = await this.db.getAllAsync<{ user_version: number }>('PRAGMA user_version');
+    if ((versions[0]?.user_version ?? 0) > 1)
+      throw new Error('新しいバージョンで保存されたデータです。アプリを更新してください。');
+    await this.db.execAsync(`PRAGMA journal_mode = WAL;
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE IF NOT EXISTS games (
+        id TEXT PRIMARY KEY NOT NULL, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id = 1), payload TEXT NOT NULL);
+      PRAGMA user_version = 1;`);
+  }
+  async load(): Promise<{ games: GameRecord[]; settings: Settings }> {
+    const rows = await this.db.getAllAsync<{ id: string; identity: string; payload: string }>(
+      'SELECT id, identity, payload FROM games',
+    );
+    const settingsRows = await this.db.getAllAsync<{ payload: string }>(
+      'SELECT payload FROM settings WHERE id = 1',
+    );
+    let games: GameRecord[];
+    let settings: Settings;
+    try {
+      games = rows.map(({ id, identity, payload }) =>
+        decodeGame(JSON.parse(payload), id, identity),
+      );
+      settings = decodeSettings(settingsRows[0] ? JSON.parse(settingsRows[0].payload) : {});
+    } catch {
+      throw new Error('保存したデータを読み込めません。データは削除せず保持しています。');
+    }
+    return { games, settings };
+  }
+  async insert(game: GameRecord) {
+    await this.db.runAsync(
+      'INSERT INTO games (id, identity, payload) VALUES (?, ?, ?)',
+      game.id,
+      game.identity,
+      JSON.stringify(game),
+    );
+  }
+  async save(game: GameRecord) {
+    await this.db.runAsync(
+      'UPDATE games SET payload = ? WHERE id = ?',
+      JSON.stringify(game),
+      game.id,
+    );
+  }
+  async delete(id: string) {
+    await this.db.runAsync('DELETE FROM games WHERE id = ?', id);
+  }
+  async saveSettings(settings: Settings, reattributed: GameRecord[]) {
+    await this.db.execAsync('BEGIN IMMEDIATE');
+    try {
+      await this.db.runAsync(
+        'INSERT INTO settings (id, payload) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload',
+        JSON.stringify(settings),
+      );
+      for (const game of reattributed) await this.save(game);
+      await this.db.execAsync('COMMIT');
+    } catch (error) {
+      await this.db.execAsync('ROLLBACK');
+      throw error;
+    }
+  }
+}

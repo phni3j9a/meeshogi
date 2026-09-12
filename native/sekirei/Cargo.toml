@@ -1,0 +1,31 @@
+[package]
+name = "meeshogi-sekirei"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The meeshogi Rust bridge for Sekirei on-device analysis"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "meeshogi_sekirei"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+rayon = "1"
+sekirei-core = { git = "https://github.com/kent-tokyo/sekirei.git", rev = "aeb6ea30d58f93cad84ffe98bc13441feb807fa8" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+panic = "abort"
+
+[workspace]
+resolver = "2"

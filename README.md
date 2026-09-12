@@ -6,7 +6,29 @@
 
 ## 状態
 
-仕様と主要9画面のデザインモックを採用済みです。このリポジトリには初期版の仕様、[採用モックとデザイン基準](docs/design/README.md)、開発方針、取り込み検証用の棋譜を置いています。アプリ本体、棋譜パーサー、解析連携、GitHub Actionsのワークフローはまだ実装されていません。
+無料版を開発中です。Expo / React Nativeのアプリ、KIFの取り込み・合法手検証、SQLite保存、戦績集計、Sekireiの端末内解析経路と、両OSの操作検証を実装しています。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。完成判定と検証の到達点は[開発状況](docs/DEVELOPMENT.md)に記録します。
+
+## 開発
+
+Node.js 22.23.2、Rust 1.96.0を使用します。JavaScript依存は `package-lock.json`、Rust依存は `native/sekirei/Cargo.lock` で固定しています。
+
+```sh
+npm ci
+npm run check
+cargo test --manifest-path native/sekirei/Cargo.toml --locked
+```
+
+ネイティブ解析を含むため、開発用アプリをビルドします。AndroidはJDK 17 / SDK 36 / NDK 27.1.12297006、iOSはmacOS / Xcodeが必要です。`android/` と `ios/` はExpo CNGの生成物として扱います。
+
+```sh
+npx expo prebuild --platform android --no-install
+npm run android
+# macOS:
+npx expo prebuild --platform ios
+npm run ios
+```
+
+解析にはsekirei-weightの現行候補 `c-leaf-wrm-seed42` を同梱し、読み込み時にSHA-256を確認します。固定したruntime・モデルの来歴と利用条件は[解析エンジン](docs/ENGINE.md)、戦型の判定条件は[分類ルール](docs/OPENINGS.md)を参照してください。
 
 ## 初期版の体験
 

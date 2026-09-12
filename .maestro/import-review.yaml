@@ -1,0 +1,53 @@
+appId: com.meeshogi.app
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- takeScreenshot: ${ARTIFACT_DIR}/01-library-empty
+- tapOn:
+    id: import-button
+- tapOn:
+    id: import-paste
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- assertVisible: KeroPona
+- assertVisible: asitaka_y
+- takeScreenshot: ${ARTIFACT_DIR}/02-import
+- tapOn:
+    id: import-save
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: analysis-ready
+    timeout: 180000
+- takeScreenshot: ${ARTIFACT_DIR}/03-analysis
+- tapOn:
+    id: analysis-stop
+    optional: true
+- tapOn:
+    id: move-next
+- assertVisible: '1 / 80手'
+- takeScreenshot: ${ARTIFACT_DIR}/04-replay
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- assertVisible: KeroPona
+- takeScreenshot: ${ARTIFACT_DIR}/05-library-restored
+- tapOn: '設定'
+- assertVisible:
+    id: settings-screen
+- takeScreenshot: ${ARTIFACT_DIR}/06-settings
+- tapOn: '戦績'
+- assertVisible:
+    id: statistics-screen
+- takeScreenshot: ${ARTIFACT_DIR}/07-statistics
