@@ -3,6 +3,8 @@ import {
   ActivityIndicator,
   ColorValue,
   Pressable,
+  Platform,
+  useWindowDimensions,
   ScrollView,
   StyleProp,
   StyleSheet,
@@ -58,10 +60,14 @@ export function Icon({
 }) {
   const theme = useTheme();
   const [ios, android] = symbols[name];
+  const { fontScale } = useWindowDimensions();
+  // expo-symbols 57 renders Android glyphs as scaled Text in a fixed box.
+  // Keep decorative icons at their requested size while body text can grow.
+  const symbolSize = Platform.OS === 'android' ? size / fontScale : size;
   return (
     <SymbolView
       name={{ ios, android, web: android } as SymbolViewProps['name']}
-      size={size}
+      size={symbolSize}
       tintColor={color ?? theme.accent}
       style={{ width: size, height: size }}
     />
@@ -304,16 +310,27 @@ export function Row({
   testID?: string;
 }) {
   const theme = useTheme();
+  const { fontScale } = useWindowDimensions();
+  const stackValue = fontScale > 1.2 && !!value && !children;
   const content = (
     <>
       {icon && <Icon name={icon} color={theme.text} />}
-      <AppText style={{ flex: 1 }}>{label}</AppText>
-      {children ??
-        (value && (
-          <AppText tone="secondary" style={{ flexShrink: 1, textAlign: 'right' }}>
-            {value}
-          </AppText>
-        ))}
+      {stackValue ? (
+        <View style={{ flex: 1, gap: 4 }}>
+          <AppText>{label}</AppText>
+          <AppText tone="secondary">{value}</AppText>
+        </View>
+      ) : (
+        <>
+          <AppText style={{ flex: 1 }}>{label}</AppText>
+          {children ??
+            (value && (
+              <AppText tone="secondary" style={{ flexShrink: 1, textAlign: 'right' }}>
+                {value}
+              </AppText>
+            ))}
+        </>
+      )}
       {onPress && <Icon name="next" color={theme.muted} size={18} />}
     </>
   );

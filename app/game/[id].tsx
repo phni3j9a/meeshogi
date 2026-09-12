@@ -261,6 +261,7 @@ export default function GameScreen() {
       />
     );
   const completed = mainlineAnalysis.filter(Boolean).length;
+  const fullyAnalyzed = completed >= game.positions.length;
   const previousResults = Object.keys(game.analysis).length - completed;
   return (
     <View
@@ -271,7 +272,7 @@ export default function GameScreen() {
         options={{
           title: branch ? '分岐検討' : '検討',
           headerLeft: branch
-            ? () => <TextButton label="検討" icon="previous" onPress={leaveBranch} />
+            ? () => <IconButton label="本譜に戻る" name="previous" onPress={leaveBranch} />
             : undefined,
           headerRight: () => (
             <IconButton name="more" label="棋譜の操作" onPress={() => void menu()} />
@@ -440,6 +441,7 @@ export default function GameScreen() {
             {candidates.map((candidate, index) => (
               <Pressable
                 key={candidate.usi}
+                testID={`candidate-${index}`}
                 accessibilityRole="button"
                 onPress={() =>
                   previewCandidate(candidate.pv.length ? candidate.pv : [candidate.usi])
@@ -539,25 +541,30 @@ export default function GameScreen() {
                 : currentAnalysis
                   ? '分岐の解析結果'
                   : '分岐は未解析'
-              : job?.status === 'running'
-                ? `解析中 ${job.completed} / ${job.total}局面`
-                : job?.status === 'paused'
-                  ? `解析を停止中 ${job.completed} / ${job.total}局面`
-                  : job?.status === 'error'
-                    ? '解析を再開できます'
-                    : completed >= game.positions.length
-                      ? '全局解析が完了しました'
+              : fullyAnalyzed
+                ? '全局解析が完了しました'
+                : job?.status === 'running'
+                  ? `解析中 ${completed} / ${job.total}局面`
+                  : job?.status === 'paused'
+                    ? `解析を停止中 ${completed} / ${job.total}局面`
+                    : job?.status === 'error'
+                      ? '解析を再開できます'
                       : completed
                         ? `${completed}局面を解析済み`
                         : 'この棋譜は未解析です'}
           </AppText>
+          {!branch && currentAnalysis && currentAnalysis === focusedAnalysis && (
+            <AppText variant="caption" tone="secondary" testID="focused-analysis-ready">
+              この局面の追加解析結果を表示中
+            </AppText>
+          )}
           {job?.status === 'error' && (
             <Notice text={job.error ?? '解析に失敗しました。もう一度解析できます。'} error />
           )}
           {job?.status === 'running' && !branch && (
             <View
               accessibilityRole="progressbar"
-              accessibilityValue={{ now: job.completed, min: 0, max: job.total }}
+              accessibilityValue={{ now: completed, min: 0, max: job.total }}
               style={{
                 backgroundColor: theme.inset,
                 height: 4,
@@ -570,12 +577,19 @@ export default function GameScreen() {
                   backgroundColor: theme.win,
                   height: 4,
                   borderRadius: 4,
-                  width: `${(job.completed / job.total) * 100}%`,
+                  width: `${(completed / job.total) * 100}%`,
                 }}
               />
             </View>
           )}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 16 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              columnGap: 16,
+            }}
+          >
             {!branch &&
               (job?.status === 'running' ? (
                 <TextButton
@@ -586,13 +600,15 @@ export default function GameScreen() {
                 />
               ) : (
                 <TextButton
-                  label={completed ? '解析を再開' : '解析する'}
+                  label={fullyAnalyzed ? '解析済み' : completed ? '解析を再開' : '解析する'}
+                  disabled={fullyAnalyzed}
                   testID="analysis-start"
                   onPress={() => void startAnalysis(id).catch((e) => setError(errorMessage(e)))}
                   icon="play"
                 />
               ))}
             <TextButton
+              testID="analysis-focus"
               label={focusBusy ? '追加解析中…' : 'この局面を深く解析'}
               onPress={() => void focus(sfen)}
               disabled={focusBusy}

@@ -76,8 +76,12 @@ export default function LibraryScreen() {
             <PageHeader title="棋譜">
               <IconButton
                 name="search"
-                label="棋譜を検索"
-                onPress={() => setSearching((value) => !value)}
+                label={searching ? '検索を閉じる' : '棋譜を検索'}
+                testID="library-search-toggle"
+                onPress={() => {
+                  if (searching) setQuery('');
+                  setSearching((value) => !value);
+                }}
               />
               <IconButton
                 name="add"
@@ -90,6 +94,7 @@ export default function LibraryScreen() {
             {searching && (
               <TextInput
                 accessibilityLabel="棋譜を検索"
+                testID="library-search-input"
                 placeholder="対局者名・日付で検索"
                 placeholderTextColor={theme.muted}
                 defaultValue={query}

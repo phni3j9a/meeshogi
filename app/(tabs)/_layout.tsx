@@ -1,17 +1,25 @@
 import React from 'react';
+import { useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Tabs } from 'expo-router';
 import { Icon } from '@/ui/primitives';
 import { useTheme } from '@/ui/theme';
 
 export default function TabLayout() {
   const theme = useTheme();
+  const { fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: theme.accent,
         tabBarInactiveTintColor: theme.muted,
-        tabBarStyle: { backgroundColor: theme.background, borderTopColor: theme.border },
+        tabBarStyle: {
+          backgroundColor: theme.background,
+          borderTopColor: theme.border,
+          height: 50 + insets.bottom + Math.max(0, fontScale - 1) * 24,
+        },
         tabBarLabelStyle: { fontSize: 11 },
         sceneStyle: { backgroundColor: theme.background },
         animation: 'none',

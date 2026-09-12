@@ -9,6 +9,8 @@ export function useChoice() {
       showActionSheetWithOptions(
         {
           title,
+          useModal: true,
+          autoFocus: true,
           options: [...choices.map((choice) => choice.label), 'キャンセル'],
           cancelButtonIndex: choices.length,
           destructiveButtonIndex: choices.findIndex((choice) => choice.destructive),
