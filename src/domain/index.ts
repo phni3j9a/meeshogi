@@ -15,6 +15,7 @@ import {
   promotedPieceType,
 } from 'tsshogi';
 import type {
+  Formation,
   GameMove,
   GameRecord,
   GameResult,
@@ -917,6 +918,18 @@ const ALL_OPENINGS: Opening[] = [
   'opposing',
   'unknown',
 ];
+const ALL_FORMATIONS: Formation[] = [
+  'double-static',
+  'static-ranging',
+  'double-ranging',
+  'unknown',
+];
+
+/** Derive from the effective tags so manual corrections cannot leave a stale formation. */
+export function gameFormation(game: Pick<ParsedGame, 'openings'>): Formation {
+  const { black, white } = game.openings;
+  return formationForOpening(black.manual ?? black.automatic, white.manual ?? white.automatic);
+}
 
 export function getStatistics(games: GameRecord[], filter: StatFilter = {}): Statistics {
   const filtered = games.filter((game) => matchesFilter(game, filter));
@@ -938,6 +951,10 @@ export function getStatistics(games: GameRecord[], filter: StatFilter = {}): Sta
     opening,
     tally: tallyGames(filtered.filter((game) => gameOpening(game, filter.openingSide) === opening)),
   }));
+  const formations = ALL_FORMATIONS.map((formation) => ({
+    formation,
+    tally: tallyGames(filtered.filter((game) => gameFormation(game) === formation)),
+  }));
   const chronological = [...filtered].sort((a, b) =>
     `${localDateKey(a.startedAt)}\u0000${a.identity}`.localeCompare(
       `${localDateKey(b.startedAt)}\u0000${b.identity}`,
@@ -948,7 +965,7 @@ export function getStatistics(games: GameRecord[], filter: StatFilter = {}): Sta
     addOutcome(trendTally, game);
     return { gameId: game.id, winRate: trendTally.winRate };
   });
-  return { ...tally, games: filtered, months, sides, services, openings, trend };
+  return { ...tally, games: filtered, months, sides, services, openings, formations, trend };
 }
 
 export function inferAttribution(
@@ -971,10 +988,7 @@ export function inferAttribution(
   return { mySide: null, attribution: 'none' };
 }
 
-export function formationForOpening(
-  opening: Opening,
-  opponentOpening: Opening,
-): 'double-static' | 'static-ranging' | 'double-ranging' | 'unknown' {
+export function formationForOpening(opening: Opening, opponentOpening: Opening): Formation {
   const ownStatic = opening === 'static';
   const opponentStatic = opponentOpening === 'static';
   if (opening === 'unknown' || opponentOpening === 'unknown') {

@@ -2,17 +2,19 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { getStatistics } from '@/domain';
+import { FORMATION_LABELS, getStatistics } from '@/domain';
 import { OPENING_LABELS, SERVICE_LABELS, Service, Side, SIDE_LABELS } from '@/domain/model';
 import { useAppStore } from '@/store/app-store';
 import {
   AppText,
   EmptyState,
+  Group,
   Icon,
   IconButton,
   PageHeader,
   PageScroll,
   Segment,
+  Row,
   TextButton,
 } from '@/ui/primitives';
 import { LineChart } from '@/ui/charts';
@@ -124,6 +126,31 @@ export default function StatisticsScreen() {
             onPress={() => void selectService()}
           />
         </View>
+        {stats.total > 0 && (
+          <>
+            <AppText variant="heading" style={{ marginBottom: 10 }}>
+              対戦構図
+            </AppText>
+            <Group style={{ marginBottom: 24 }}>
+              {stats.formations
+                .filter(({ tally }) => tally.total > 0)
+                .map(({ formation, tally }, index, entries) => (
+                  <Row
+                    key={formation}
+                    label={FORMATION_LABELS[formation]}
+                    last={index === entries.length - 1}
+                  >
+                    <View style={{ flexShrink: 1, alignItems: 'flex-end' }}>
+                      <AppText>{formatPercentage(tally.winRate)}</AppText>
+                      <AppText variant="caption" tone="secondary" style={{ textAlign: 'right' }}>
+                        {tally.total}局・{tally.wins}勝 {tally.losses}敗
+                      </AppText>
+                    </View>
+                  </Row>
+                ))}
+            </Group>
+          </>
+        )}
         <AppText variant="heading" style={{ marginBottom: 10 }}>
           戦型別
         </AppText>

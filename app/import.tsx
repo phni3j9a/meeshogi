@@ -5,7 +5,7 @@ import { usePreventRemove } from 'expo-router/react-navigation';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import { inferAttribution, parseKif } from '@/domain';
+import { FORMATION_LABELS, gameFormation, inferAttribution, parseKif } from '@/domain';
 import {
   OPENING_LABELS,
   RESULT_LABELS,
@@ -330,8 +330,8 @@ export default function ImportScreen() {
                 label="戦型"
                 value={`${OPENING_LABELS[parsed.openings.black.manual ?? parsed.openings.black.automatic]} 対 ${OPENING_LABELS[parsed.openings.white.manual ?? parsed.openings.white.automatic]}`}
                 onPress={() => void selectOpening()}
-                last
               />
+              <Row label="対戦構図" value={FORMATION_LABELS[gameFormation(parsed)]} last />
             </Group>
             <AppText variant="caption" tone="secondary" style={{ marginVertical: 8 }}>
               {ambiguous

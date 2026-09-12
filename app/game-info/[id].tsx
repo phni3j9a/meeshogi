@@ -26,6 +26,7 @@ import {
 } from '@/ui/primitives';
 import { errorMessage, useChoice } from '@/ui/use-choice';
 import { writtenDate } from '@/ui/dates';
+import { FORMATION_LABELS, gameFormation } from '@/domain';
 
 export default function GameInfoScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -136,6 +137,7 @@ export default function GameInfoScreen() {
       </Group>
       <SectionLabel>戦型</SectionLabel>
       <Group>
+        <Row label="対戦構図" value={FORMATION_LABELS[gameFormation(game)]} />
         {(['black', 'white'] as Side[]).map((side, index) => (
           <Row
             key={side}

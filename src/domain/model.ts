@@ -118,6 +118,7 @@ export interface Statistics extends Tally {
   sides: Record<Side, Tally>;
   services: Record<Service, Tally>;
   openings: { opening: Opening; tally: Tally }[];
+  formations: { formation: Formation; tally: Tally }[];
   trend: { gameId: string; winRate: number | null }[];
 }
 export const SERVICE_LABELS: Record<Service, string> = {
@@ -134,6 +135,12 @@ export const OPENING_LABELS: Record<Opening, string> = {
   unknown: '未分類',
 };
 export const SIDE_LABELS: Record<Side, string> = { black: '先手', white: '後手' };
+export const FORMATION_LABELS: Record<Formation, string> = {
+  'double-static': '相居飛車',
+  'static-ranging': '対抗形',
+  'double-ranging': '相振り飛車',
+  unknown: '未分類',
+};
 export const RESULT_LABELS: Record<GameResult, string> = {
   'black-win': '先手の勝ち',
   'white-win': '後手の勝ち',

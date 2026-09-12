@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   applyUsi,
   boardView,
+  formationForOpening,
+  gameFormation,
   getStatistics,
   inferAttribution,
   legalMoves,
@@ -10,7 +12,12 @@ import {
   moveLabel,
   parseKif,
 } from '../../src/domain';
-import { DEFAULT_SETTINGS, type GameRecord, type Settings } from '../../src/domain/model';
+import {
+  DEFAULT_SETTINGS,
+  type GameRecord,
+  type Opening,
+  type Settings,
+} from '../../src/domain/model';
 
 const fixture = (name: string): string => readFileSync(`fixtures/kif/${name}`, 'utf8');
 
@@ -202,6 +209,56 @@ describe('position helpers', () => {
 });
 
 describe('attribution and statistics', () => {
+  it('classifies formations symmetrically and derives filtered tallies from manual corrections', () => {
+    expect(formationForOpening('static', 'static')).toBe('double-static');
+    expect(formationForOpening('static', 'fourth-file')).toBe('static-ranging');
+    expect(formationForOpening('central', 'static')).toBe('static-ranging');
+    expect(formationForOpening('third-file', 'opposing')).toBe('double-ranging');
+    expect(formationForOpening('unknown', 'static')).toBe('unknown');
+    expect(formationForOpening('central', 'unknown')).toBe('unknown');
+    const base = recordFromKif('shogiwars.kif', 'base', 'white');
+    const make = (id: string, black: Opening, white: Opening): GameRecord => ({
+      ...base,
+      id,
+      openings: {
+        ruleVersion: base.openings.ruleVersion,
+        black: { automatic: black, manual: null },
+        white: { automatic: white, manual: null },
+      },
+    });
+    const games = [
+      make('static', 'static', 'static'),
+      make('ranging', 'third-file', 'central'),
+      make('opposed', 'static', 'fourth-file'),
+      make('unknown', 'unknown', 'static'),
+    ];
+    games[0].openings.white.manual = 'opposing';
+    games[1].manualResult = 'draw';
+    expect(gameFormation(games[0])).toBe('static-ranging');
+    const stats = getStatistics([...games, { ...games[0], id: 'spectator', mySide: null }]);
+    expect(stats.formations.map(({ formation, tally }) => [formation, tally.total])).toEqual([
+      ['double-static', 0],
+      ['static-ranging', 2],
+      ['double-ranging', 1],
+      ['unknown', 1],
+    ]);
+    expect(
+      stats.formations.find(({ formation }) => formation === 'double-ranging')?.tally,
+    ).toMatchObject({ draws: 1, wins: 0, winRate: null });
+    expect(stats.formations.reduce((total, { tally }) => total + tally.total, 0)).toBe(stats.total);
+    const filtered = getStatistics(games, {
+      opening: 'opposing',
+      openingSide: 'self',
+      side: 'white',
+      service: 'shogiwars',
+    });
+    expect(filtered.total).toBe(1);
+    expect(
+      filtered.formations.find(({ formation }) => formation === 'static-ranging')?.tally.wins,
+    ).toBe(1);
+    games[0].openings.white.manual = null;
+    expect(gameFormation(games[0])).toBe('double-static');
+  });
   it('matches configured names only for the game service', () => {
     const game = parseKif(fixture('shogiwars.kif'));
     const settings: Settings = {
