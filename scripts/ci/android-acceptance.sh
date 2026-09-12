@@ -78,7 +78,7 @@ cleanup() {
   : > "$record_stop"
   # Stop the remote recorder without killing the host adb process. The loop
   # must receive its normal exit, finalize the MP4, and pull it before wait.
-  for attempt in {1..30}; do
+  for _ in {1..30}; do
     kill -0 "$record_loop_pid" 2>/dev/null || break
     adb shell pkill -INT screenrecord 2>/dev/null || true
     sleep 0.2
@@ -141,6 +141,23 @@ original_font_scale=''
 
 run_flow search-delete-review .maestro/search-delete-review.yaml
 
-if adb logcat -d -s AndroidRuntime:E | rg 'FATAL EXCEPTION'; then
+if ! command -v grep >/dev/null 2>&1; then
+  echo 'grep is required to inspect AndroidRuntime logcat output' >&2
+  exit 1
+fi
+fatal_logcat="$run_dir/androidruntime.logcat.txt"
+logcat_status=0
+adb logcat -d -s AndroidRuntime:E > "$fatal_logcat" || logcat_status=$?
+if (( logcat_status != 0 )); then
+  echo "adb logcat failed while checking AndroidRuntime (status $logcat_status)" >&2
+  exit 1
+fi
+grep_status=0
+grep -q 'FATAL EXCEPTION' "$fatal_logcat" || grep_status=$?
+if (( grep_status == 0 )); then
+  exit 1
+fi
+if (( grep_status > 1 )); then
+  echo "grep failed while checking $fatal_logcat (status $grep_status)" >&2
   exit 1
 fi

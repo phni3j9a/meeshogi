@@ -2,7 +2,7 @@
 appId: com.meeshogi.app
 ---
 - launchApp
-- tapOn: 設定
+- tapOn: '設定.*'
 - tapOn:
     id: player-names-link
 - tapOn:
@@ -24,7 +24,7 @@ appId: com.meeshogi.app
     visible:
       id: settings-screen
     timeout: 30000
-- tapOn: 戦績
+- tapOn: '戦績.*'
 - tapOn: 全期間
 - assertVisible: '.*1局.*1勝 0敗.*'
 - assertVisible: '100.0'

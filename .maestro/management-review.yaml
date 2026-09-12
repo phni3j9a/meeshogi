@@ -1,7 +1,7 @@
 appId: com.meeshogi.app
 ---
 - launchApp
-- tapOn: 棋譜
+- tapOn: '棋譜.*'
 - tapOn: KeroPona
 - tapOn: 棋譜の操作
 - tapOn: お気に入りに追加
@@ -39,7 +39,7 @@ appId: com.meeshogi.app
 - assertVisible: '.*引き分け（手動）.*'
 - stopApp
 - launchApp
-- tapOn: 戦績
+- tapOn: '戦績.*'
 - tapOn: 全期間
 - assertVisible: '.*2局.*1勝 0敗.*'
 - assertVisible: '.*引き分け 1.*'
@@ -63,7 +63,7 @@ appId: com.meeshogi.app
 - assertVisible: 後手の勝ち
 - stopApp
 - launchApp
-- tapOn: 戦績
+- tapOn: '戦績.*'
 - tapOn: 全期間
 - assertVisible: '.*2局.*2勝 0敗.*'
 - scrollUntilVisible:

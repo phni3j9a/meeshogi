@@ -54,11 +54,11 @@ env:
     timeout: 60000
 - assertVisible: '.*KeroPona.*'
 - takeScreenshot: 05-library-restored
-- tapOn: '設定'
+- tapOn: '設定.*'
 - assertVisible:
     id: settings-screen
 - takeScreenshot: 06-settings
-- tapOn: '戦績'
+- tapOn: '戦績.*'
 - assertVisible:
     id: statistics-screen
 - takeScreenshot: 07-statistics

@@ -5,7 +5,7 @@ appId: com.meeshogi.app
     visible:
       id: library-screen
     timeout: 60000
-- tapOn: 棋譜
+- tapOn: '棋譜.*'
 - tapOn:
     id: import-button
 - runFlow:
@@ -47,7 +47,7 @@ appId: com.meeshogi.app
     visible:
       id: library-screen
     timeout: 60000
-- tapOn: 戦績
+- tapOn: '戦績.*'
 - extendedWaitUntil:
     visible:
       id: statistics-screen
@@ -56,7 +56,7 @@ appId: com.meeshogi.app
 - assertVisible: '.*2局.*2勝 0敗.*'
 - takeScreenshot: 18-two-games-statistics
 # The same game in Shift_JIS must parse and be rejected as a duplicate.
-- tapOn: 棋譜
+- tapOn: '棋譜.*'
 - tapOn:
     id: import-button
 - runFlow:
@@ -86,7 +86,7 @@ appId: com.meeshogi.app
     visible:
       id: library-screen
     timeout: 60000
-- tapOn: 戦績
+- tapOn: '戦績.*'
 - extendedWaitUntil:
     visible:
       id: statistics-screen

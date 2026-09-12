@@ -1,6 +1,14 @@
 appId: com.meeshogi.app
 ---
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      text: KeroPona
+    timeout: 30000
 - assertVisible:
     id: library-screen
 - assertVisible: KeroPona
@@ -23,10 +31,22 @@ appId: com.meeshogi.app
 - takeScreenshot: 41-large-game-info
 - stopApp
 - launchApp
-- tapOn: 戦績
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      text: KeroPona
+    timeout: 30000
+- tapOn: '戦績.*'
+- extendedWaitUntil:
+    visible:
+      id: statistics-screen
+    timeout: 30000
 - tapOn: 全期間
 - takeScreenshot: 42-large-statistics
-- tapOn: 設定
+- tapOn: '設定.*'
 - takeScreenshot: 43-large-settings
 - tapOn:
     id: player-names-link
