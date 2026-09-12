@@ -1,7 +1,7 @@
 appId: com.meeshogi.app
 ---
 - launchApp
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - tapOn:
     id: move-first
 - scrollUntilVisible:
@@ -42,7 +42,7 @@ appId: com.meeshogi.app
 - takeScreenshot: 46-focused-analysis
 - stopApp
 - launchApp
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - assertVisible: '0 / 80手'
 - scrollUntilVisible:
     element:

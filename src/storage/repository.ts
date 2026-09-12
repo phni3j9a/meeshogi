@@ -21,23 +21,33 @@ export class LocalRepository {
       PRAGMA user_version = 1;`);
   }
   async load(): Promise<{ games: GameRecord[]; settings: Settings }> {
-    const rows = await this.db.getAllAsync<{ id: string; identity: string; payload: string }>(
-      'SELECT id, identity, payload FROM games',
-    );
-    const settingsRows = await this.db.getAllAsync<{ payload: string }>(
-      'SELECT payload FROM settings WHERE id = 1',
-    );
-    let games: GameRecord[];
-    let settings: Settings;
+    const games: GameRecord[] = [];
     try {
-      games = rows.map(({ id, identity, payload }) =>
-        decodeGame(JSON.parse(payload), id, identity),
+      // Release each batch of JSON strings before reading the next one. Keeping
+      // every raw payload alongside every decoded game doubles load-time memory.
+      const batchSize = 100;
+      for (let offset = 0; ; offset += batchSize) {
+        const rows = await this.db.getAllAsync<{
+          id: string;
+          identity: string;
+          payload: string;
+        }>(
+          'SELECT id, identity, payload FROM games ORDER BY rowid LIMIT ? OFFSET ?',
+          batchSize,
+          offset,
+        );
+        for (const { id, identity, payload } of rows)
+          games.push(decodeGame(JSON.parse(payload), id, identity));
+        if (rows.length < batchSize) break;
+      }
+      const settingsRows = await this.db.getAllAsync<{ payload: string }>(
+        'SELECT payload FROM settings WHERE id = 1',
       );
-      settings = decodeSettings(settingsRows[0] ? JSON.parse(settingsRows[0].payload) : {});
+      const settings = decodeSettings(settingsRows[0] ? JSON.parse(settingsRows[0].payload) : {});
+      return { games, settings };
     } catch {
       throw new Error('保存したデータを読み込めません。データは削除せず保持しています。');
     }
-    return { games, settings };
   }
   async insert(game: GameRecord) {
     await this.db.runAsync(

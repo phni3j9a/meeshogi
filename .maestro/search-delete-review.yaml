@@ -1,7 +1,7 @@
 appId: com.meeshogi.app
 ---
 - launchApp
-- assertVisible: KeroPona
+- assertVisible: '.*KeroPona.*'
 - tapOn:
     id: library-search-toggle
 - tapOn:
@@ -16,9 +16,10 @@ appId: com.meeshogi.app
     id: library-search-input
 - scrollUntilVisible:
     element:
-      text: SiGototti
+      text: '.*SiGototti.*'
     direction: DOWN
-- tapOn: SiGototti
+- tapOn: '.*SiGototti.*'
+
 - tapOn: 棋譜の操作
 - tapOn: 対局情報を確認・修正
 - scrollUntilVisible:
@@ -34,10 +35,10 @@ appId: com.meeshogi.app
       id: library-screen
     timeout: 30000
 - assertVisible: '.*最近の対局.*1局.*'
-- assertNotVisible: SiGototti
+- assertNotVisible: '.*SiGototti.*'
 - stopApp
 - launchApp
-- assertNotVisible: SiGototti
+- assertNotVisible: '.*SiGototti.*'
 - tapOn: '戦績.*'
 - tapOn: 全期間
 - assertVisible: '.*1局.*1勝 0敗.*'

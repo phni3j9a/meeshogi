@@ -120,7 +120,7 @@ export function decodeGame(value: unknown, id: string, identity: string): GameRe
   requireValid(
     strings(value.positions) &&
       value.positions.length === value.moves.length + 1 &&
-      value.positions.every((sfen) => Position.newBySFEN(sfen) !== null),
+      value.positions.every((sfen) => Position.isValidSFEN(sfen)),
   );
   requireValid(integer(value.lastViewedPly, 0, value.moves.length));
   requireValid(object(value.openings) && string(value.openings.ruleVersion));

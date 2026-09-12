@@ -2,7 +2,7 @@ appId: com.meeshogi.app
 ---
 - launchApp
 - tapOn: '棋譜.*'
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - scrollUntilVisible:
     element:
       id: analysis-start
@@ -20,7 +20,7 @@ appId: com.meeshogi.app
 # A fresh process must load all computed positions from SQLite.
 - stopApp
 - launchApp
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - scrollUntilVisible:
     element:
       text: 全局解析が完了しました

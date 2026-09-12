@@ -2,7 +2,7 @@ appId: com.meeshogi.app
 ---
 - launchApp
 - tapOn: '棋譜.*'
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - tapOn: 棋譜の操作
 - tapOn: お気に入りに追加
 - stopApp
@@ -10,7 +10,7 @@ appId: com.meeshogi.app
 - tapOn: お気に入り
 - assertVisible: '.*最近の対局.*1局.*'
 - takeScreenshot: 20-favorite
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - tapOn: 棋譜の操作
 - tapOn: 対局情報を確認・修正
 - scrollUntilVisible:
@@ -54,7 +54,7 @@ appId: com.meeshogi.app
 # Restore the original result. Opening overrides remain intentionally visible.
 - stopApp
 - launchApp
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - tapOn: 棋譜の操作
 - tapOn: 対局情報を確認・修正
 - tapOn:

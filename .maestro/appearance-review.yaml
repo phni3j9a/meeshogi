@@ -10,7 +10,7 @@ env:
     timeout: 60000
 - extendedWaitUntil:
     visible:
-      text: KeroPona
+      text: '.*KeroPona.*'
     timeout: 30000
 - tapOn: '設定.*'
 - scrollUntilVisible:
@@ -38,10 +38,10 @@ env:
     timeout: 60000
 - extendedWaitUntil:
     visible:
-      text: KeroPona
+      text: '.*KeroPona.*'
     timeout: 30000
 - takeScreenshot: 28-${SHOT_PREFIX}-library
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - extendedWaitUntil:
     visible:
       id: game-screen
@@ -76,7 +76,7 @@ env:
     timeout: 60000
 - extendedWaitUntil:
     visible:
-      text: KeroPona
+      text: '.*KeroPona.*'
     timeout: 30000
 - tapOn: '戦績.*'
 - extendedWaitUntil:

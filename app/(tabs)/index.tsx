@@ -68,6 +68,7 @@ export default function LibraryScreen() {
     >
       <FlashList
         data={filtered}
+        maintainVisibleContentPosition={{ disabled: true }}
         keyExtractor={(game) => game.id}
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
         keyboardShouldPersistTaps="handled"

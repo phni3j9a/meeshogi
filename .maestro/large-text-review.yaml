@@ -7,13 +7,13 @@ appId: com.meeshogi.app
     timeout: 60000
 - extendedWaitUntil:
     visible:
-      text: KeroPona
+      text: '.*KeroPona.*'
     timeout: 30000
 - assertVisible:
     id: library-screen
-- assertVisible: KeroPona
+- assertVisible: '.*KeroPona.*'
 - takeScreenshot: 38-large-library
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - assertVisible:
     id: game-screen
 - takeScreenshot: 39-large-game
@@ -37,7 +37,7 @@ appId: com.meeshogi.app
     timeout: 60000
 - extendedWaitUntil:
     visible:
-      text: KeroPona
+      text: '.*KeroPona.*'
     timeout: 30000
 - tapOn: '戦績.*'
 - extendedWaitUntil:

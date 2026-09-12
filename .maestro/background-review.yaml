@@ -6,7 +6,7 @@ appId: com.meeshogi.app
       id: library-screen
     timeout: 60000
 - extendedWaitUntil:
-    visible: KeroPona
+    visible: '.*KeroPona.*'
     timeout: 30000
 - tapOn: '設定.*'
 - tapOn: 解析の長さ
@@ -18,9 +18,9 @@ appId: com.meeshogi.app
       id: library-screen
     timeout: 60000
 - extendedWaitUntil:
-    visible: KeroPona
+    visible: '.*KeroPona.*'
     timeout: 30000
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - scrollUntilVisible:
     element:
       text: '以前のモデル・解析条件の結果が.*'
@@ -70,7 +70,7 @@ appId: com.meeshogi.app
       id: library-screen
     timeout: 60000
 - extendedWaitUntil:
-    visible: KeroPona
+    visible: '.*KeroPona.*'
     timeout: 30000
 - tapOn: '設定.*'
 - tapOn: 解析の長さ
@@ -82,9 +82,9 @@ appId: com.meeshogi.app
       id: library-screen
     timeout: 60000
 - extendedWaitUntil:
-    visible: KeroPona
+    visible: '.*KeroPona.*'
     timeout: 30000
-- tapOn: KeroPona
+- tapOn: '.*KeroPona.*'
 - scrollUntilVisible:
     element:
       id: analysis-status

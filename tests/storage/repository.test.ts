@@ -117,6 +117,36 @@ describe('端末保存', () => {
     expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(99);
     db.close();
   });
+  it('多数の棋譜を欠落なく読み込み、後半の破損時も部分成功や削除をしない', async () => {
+    const { db, repository } = database(':memory:');
+    try {
+      await repository.initialize();
+      const base = sample();
+      const games = Array.from({ length: 225 }, (_, index) => ({
+        ...base,
+        id: `collection-${index}`,
+        identity: `occasion-${index}`,
+        lastViewedPly: index % base.positions.length,
+        favorite: index % 2 === 0,
+        manualResult: index % 3 === 0 ? ('draw' as const) : null,
+      }));
+      for (const game of games) await repository.insert(game);
+      const loaded = await repository.load();
+      expect(loaded.games).toEqual(games);
+      expect(getStatistics(loaded.games)).toMatchObject({ wins: 150, draws: 75, winRate: 1 });
+
+      const last = games.at(-1)!;
+      const damaged = JSON.stringify({ ...last, positions: ['invalid SFEN'] });
+      db.prepare('UPDATE games SET payload = ? WHERE id = ?').run(damaged, last.id);
+      await expect(repository.load()).rejects.toThrow('保持');
+      expect(db.prepare('SELECT count(*) AS n FROM games').get()?.n).toBe(games.length);
+      expect(db.prepare('SELECT payload FROM games WHERE id = ?').get(last.id)?.payload).toBe(
+        damaged,
+      );
+    } finally {
+      db.close();
+    }
+  });
   it.each([
     { result: 'corrupted-result' },
     { manualResult: 'corrupted-result' },
