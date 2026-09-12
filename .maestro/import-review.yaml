@@ -6,7 +6,7 @@ appId: com.meeshogi.app
     visible:
       id: library-screen
     timeout: 60000
-- takeScreenshot: ${ARTIFACT_DIR}/01-library-empty
+- takeScreenshot: 01-library-empty
 - tapOn:
     id: import-button
 - tapOn:
@@ -16,7 +16,11 @@ appId: com.meeshogi.app
     optional: true
 - assertVisible: '.*KeroPona.*'
 - assertVisible: '.*asitaka_y.*'
-- takeScreenshot: ${ARTIFACT_DIR}/02-import
+- takeScreenshot: 02-import
+# Scroll the sheet outside the independently scrollable KIF text field.
+- swipe:
+    start: 95%, 85%
+    end: 95%, 30%
 - scrollUntilVisible:
     element:
       id: import-save
@@ -32,14 +36,14 @@ appId: com.meeshogi.app
       id: analysis-ready
     direction: DOWN
     timeout: 180000
-- takeScreenshot: ${ARTIFACT_DIR}/03-analysis
+- takeScreenshot: 03-analysis
 - tapOn:
     id: analysis-stop
     optional: true
 - tapOn:
     id: move-next
 - assertVisible: '1 / 80手'
-- takeScreenshot: ${ARTIFACT_DIR}/04-replay
+- takeScreenshot: 04-replay
 - stopApp
 - launchApp
 - extendedWaitUntil:
@@ -47,12 +51,12 @@ appId: com.meeshogi.app
       id: library-screen
     timeout: 60000
 - assertVisible: '.*KeroPona.*'
-- takeScreenshot: ${ARTIFACT_DIR}/05-library-restored
+- takeScreenshot: 05-library-restored
 - tapOn: '設定'
 - assertVisible:
     id: settings-screen
-- takeScreenshot: ${ARTIFACT_DIR}/06-settings
+- takeScreenshot: 06-settings
 - tapOn: '戦績'
 - assertVisible:
     id: statistics-screen
-- takeScreenshot: ${ARTIFACT_DIR}/07-statistics
+- takeScreenshot: 07-statistics

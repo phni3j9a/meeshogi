@@ -5,6 +5,8 @@ import { AppText, Icon } from './primitives';
 import { useTheme } from './theme';
 import { writtenDate } from './dates';
 import { effectiveResult } from '../domain/model';
+import { currentGameAnalysis } from '../analysis/cache';
+import { useAppStore } from '../store/app-store';
 
 export function gameOutcome(game: GameRecord): '勝' | '負' | '分' | '中断' | '不明' | '観戦' {
   if (!game.mySide) return '観戦';
@@ -36,9 +38,14 @@ export function GameRow({
   showDate?: boolean;
 }) {
   const theme = useTheme();
+  const settings = useAppStore((state) => state.settings);
   const outcome = gameOutcome(game);
   const date = writtenDate(game.startedAt);
-  const analyzed = Object.keys(game.analysis).length;
+  const analyzed = currentGameAnalysis(game, {
+    nodes: settings.analysisNodes,
+    multiPV: settings.multiPV,
+  }).filter(Boolean).length;
+  const previous = Object.keys(game.analysis).length - analyzed;
   return (
     <Pressable
       accessibilityRole="button"
@@ -89,7 +96,9 @@ export function GameRow({
         </AppText>
         <AppText variant="small" tone="muted">
           {analyzed === 0
-            ? '未解析'
+            ? previous
+              ? '条件が変わりました・再解析できます'
+              : '未解析'
             : analyzed >= game.positions.length
               ? '解析済み'
               : `解析 ${analyzed}/${game.positions.length}局面`}

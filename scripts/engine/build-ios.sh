@@ -28,3 +28,18 @@ xcodebuild -create-xcframework \
   -library "$CARGO_TARGET_DIR/aarch64-apple-ios/release/libmeeshogi_sekirei.a" -headers native/sekirei/include \
   -library "$out/sim/libmeeshogi_sekirei.a" -headers native/sekirei/include \
   -output "$out/MeeshogiSekireiCore.xcframework"
+
+# CocoaPods evaluates the local podspec from its pod root. Stage the generated
+# native framework and model below that root so the podspec does not depend on
+# paths outside the sandbox CocoaPods creates during `pod install`.
+pod_root="$repo_root/modules/sekirei/ios"
+generated="$pod_root/generated"
+rm -rf "$generated"
+mkdir -p "$generated/model"
+cp -R "$out/MeeshogiSekireiCore.xcframework" "$generated/"
+cp "$repo_root/assets/model/c-leaf-wrm-seed42.bin" "$generated/model/"
+
+[[ -d "$generated/MeeshogiSekireiCore.xcframework" ]] \
+  || { echo 'generated iOS XCFramework is missing.' >&2; exit 1; }
+[[ -f "$generated/model/c-leaf-wrm-seed42.bin" ]] \
+  || { echo 'generated iOS model is missing.' >&2; exit 1; }

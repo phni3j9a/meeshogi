@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 mkdir -p artifacts/android
-adb install --no-incremental -r artifacts/android/meeshogi.apk
+if [[ ${1:-} != --installed ]]; then
+  adb push -Z artifacts/android/meeshogi.apk /data/local/tmp/meeshogi-acceptance.apk
+  local_digest="$(sha256sum artifacts/android/meeshogi.apk | cut -d ' ' -f 1)"
+  device_digest="$(adb shell sha256sum /data/local/tmp/meeshogi-acceptance.apk | cut -d ' ' -f 1)"
+  [[ "$local_digest" == "$device_digest" ]] || { echo 'APK transfer digest mismatch' >&2; exit 1; }
+  adb shell pm install -r /data/local/tmp/meeshogi-acceptance.apk
+  adb shell rm /data/local/tmp/meeshogi-acceptance.apk
+fi
 bash scripts/ci/android-clipboard.sh fixtures/kif/shogiwars.kif
 adb logcat -c
 adb shell screenrecord --time-limit 180 /sdcard/meeshogi-flow.mp4 > artifacts/android/recording.log 2>&1 &
@@ -18,5 +25,6 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-maestro test --format junit --output artifacts/android/junit.xml --debug-output artifacts/android/maestro -e ARTIFACT_DIR=artifacts/android .maestro/import-review.yaml
+run_output="$PWD/artifacts/android/maestro/$(date -u +%Y%m%dT%H%M%SZ)"
+maestro test --format junit --output artifacts/android/junit.xml --test-output-dir "$run_output" .maestro/import-review.yaml
 if adb logcat -d -s AndroidRuntime:E | rg 'FATAL EXCEPTION'; then exit 1; fi

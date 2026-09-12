@@ -30,4 +30,5 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-maestro --device "$device" test --format junit --output artifacts/ios/junit.xml --debug-output artifacts/ios/maestro -e ARTIFACT_DIR=artifacts/ios .maestro/import-review.yaml
+run_output="$PWD/artifacts/ios/maestro/$(date -u +%Y%m%dT%H%M%SZ)"
+maestro --device "$device" test --format junit --output artifacts/ios/junit.xml --test-output-dir "$run_output" .maestro/import-review.yaml

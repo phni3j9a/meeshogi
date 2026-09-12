@@ -60,6 +60,40 @@ function setup() {
   return { store, repository, analyze, cancel, persisted: () => persisted };
 }
 describe('棋譜の更新と解析の隔離', () => {
+  it('解析条件の保存後は古い処理を止め、新しい条件で再開する', async () => {
+    const { store, analyze, cancel } = setup();
+    await store.getState().initialize();
+    const game = await store.getState().saveImport(fixture(), { service: 'shogiwars' });
+    const pending = deferred<PositionAnalysis>();
+    const entered = deferred<void>();
+    analyze.mockImplementationOnce(async () => {
+      entered.resolve();
+      return pending.promise;
+    });
+    const run = store.getState().startAnalysis(game.id);
+    await entered.promise;
+    await store.getState().updateSettings({ analysisNodes: 1000, multiPV: 1 });
+    expect(cancel).toHaveBeenCalled();
+    expect(store.getState().analysisJob).toBeNull();
+    pending.resolve({
+      sfen: game.positions[0],
+      engineId: 'engine',
+      modelId: 'model',
+      conditions: { nodes: 10000, multiPV: 2 },
+      candidates: [],
+      mateProof: null,
+      completedAt: 'now',
+    });
+    await run;
+    expect(store.getState().games[0].analysis).toEqual({});
+    await store.getState().startAnalysis(game.id);
+    expect(Object.values(store.getState().games[0].analysis)).toHaveLength(game.positions.length);
+    expect(
+      Object.values(store.getState().games[0].analysis).every(
+        (result) => result.conditions.nodes === 1000 && result.conditions.multiPV === 1,
+      ),
+    ).toBe(true);
+  });
   it('同時取り込みでも重複を作らない', async () => {
     const { store, repository } = setup();
     await store.getState().initialize();

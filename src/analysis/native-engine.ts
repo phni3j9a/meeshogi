@@ -2,8 +2,8 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 import { applyUsi, boardView, legalMoves } from '../domain';
 import type { AnalysisCandidate, AnalysisConditions, MateProof, PositionAnalysis, Side } from '../domain/model';
 
-export const ENGINE_ID = 'sekirei-v0.3.36@aeb6ea30d58f93cad84ffe98bc13441feb807fa8';
-export const MODEL_ID = 'c-leaf-wrm-seed42@807c18da03521414a8c75dfe51dd4de2caf8e9ec4909320826eac12b66852eab';
+import { ENGINE_ID, MODEL_ID } from './identity';
+export { ENGINE_ID, MODEL_ID } from './identity';
 
 const NATIVE_MODULE_NAME = 'MeeshogiSekirei';
 const MIN_NODES = 1;

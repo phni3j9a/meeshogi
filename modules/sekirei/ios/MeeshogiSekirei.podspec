@@ -16,11 +16,11 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.source_files = '**/*.{h,swift}'
+  s.source_files = ['MeeshogiSekireiModule.swift', 'MeeshogiSekirei.h']
   s.public_header_files = 'MeeshogiSekirei.h'
-  s.vendored_frameworks = '../../../native/target/ios/MeeshogiSekireiCore.xcframework'
+  s.vendored_frameworks = 'generated/MeeshogiSekireiCore.xcframework'
   s.resource_bundles = {
-    'MeeshogiSekireiAssets' => ['../../../assets/model/c-leaf-wrm-seed42.bin']
+    'MeeshogiSekireiAssets' => ['generated/model/c-leaf-wrm-seed42.bin']
   }
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

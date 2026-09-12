@@ -1,0 +1,32 @@
+# The OS clipboard contains シシ神, seeded by the acceptance script.
+appId: com.meeshogi.app
+---
+- launchApp
+- tapOn: 設定
+- tapOn:
+    id: player-names-link
+- tapOn:
+    id: names-shogiwars
+- inputText: asitaka_y
+- hideKeyboard
+- longPressOn:
+    id: names-kiou
+- tapOn: 'Paste|貼り付け|ペースト'
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- assertVisible: '.*シシ神.*'
+- takeScreenshot: 08-player-names
+- hideKeyboard
+- tapOn:
+    id: names-save
+- tapOn: 保存して反映
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- tapOn: 戦績
+- tapOn: 全期間
+- assertVisible: '.*1局.*1勝 0敗.*'
+- assertVisible: '100.0'
+- takeScreenshot: 09-one-win

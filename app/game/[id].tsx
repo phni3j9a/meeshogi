@@ -25,6 +25,7 @@ import { gameTitle, openingDescription } from '@/ui/game-row';
 import { openMateSession } from '@/ui/mate-session';
 import { useTheme } from '@/ui/theme';
 import { errorMessage, useChoice } from '@/ui/use-choice';
+import { currentGameAnalysis, isCompatibleAnalysis } from '@/analysis/cache';
 
 type Branch = { origin: number; positions: string[]; moves: string[]; cursor: number };
 export default function GameScreen() {
@@ -53,9 +54,26 @@ export default function GameScreen() {
   const sfen = branch ? branch.positions[branch.cursor] : game?.positions[ply];
   const validMoves = useMemo(() => (sfen ? legalMoves(sfen) : []), [sfen]);
   const position = useMemo(() => (sfen ? boardView(sfen) : null), [sfen]);
-  const analysis =
-    focusedAnalysis?.sfen === sfen ? focusedAnalysis : !branch ? game?.analysis[ply] : null;
-  const currentAnalysis = analysis?.sfen === sfen ? analysis : null;
+  const mainlineAnalysis = useMemo(
+    () =>
+      game
+        ? currentGameAnalysis(game, {
+            nodes: settings.analysisNodes,
+            multiPV: settings.multiPV,
+          })
+        : [],
+    [game?.positions, game?.analysis, settings.analysisNodes, settings.multiPV],
+  );
+  const currentAnalysis =
+    sfen &&
+    isCompatibleAnalysis(focusedAnalysis, sfen, {
+      nodes: Math.min(1000000, settings.analysisNodes * 5),
+      multiPV: settings.multiPV,
+    })
+      ? focusedAnalysis
+      : !branch
+        ? mainlineAnalysis[ply]
+        : null;
   const candidates =
     currentAnalysis?.candidates.filter((candidate) => validMoves.includes(candidate.usi)) ?? [];
   const bottomSide: Side = flipped
@@ -96,7 +114,7 @@ export default function GameScreen() {
     setSelected(null);
     setFocusedAnalysis((previous) => (previous?.sfen === sfen ? previous : null));
     setError('');
-  }, [sfen]);
+  }, [sfen, settings.analysisNodes, settings.multiPV]);
   const go = (next: number, stopPlaying = true) => {
     const bounded = Math.max(0, Math.min(total, next));
     if (stopPlaying) setPlaying(false);
@@ -242,7 +260,8 @@ export default function GameScreen() {
         onAction={() => router.dismissTo('/')}
       />
     );
-  const completed = Object.keys(game.analysis).length;
+  const completed = mainlineAnalysis.filter(Boolean).length;
+  const previousResults = Object.keys(game.analysis).length - completed;
   return (
     <View
       style={{ flex: 1, backgroundColor: theme.background, paddingBottom: insets.bottom }}
@@ -374,9 +393,7 @@ export default function GameScreen() {
         </View>
         {!branch && (
           <LineChart
-            values={game.positions.map(
-              (_, index) => game.analysis[index]?.candidates[0]?.scoreCp ?? null,
-            )}
+            values={mainlineAnalysis.map((result) => result?.candidates[0]?.scoreCp ?? null)}
             selected={ply}
             onSelect={(next) => go(next)}
             height={82}
@@ -510,6 +527,11 @@ export default function GameScreen() {
           </View>
         )}
         <View style={{ marginTop: 10 }}>
+          {!branch && previousResults > 0 && (
+            <Notice
+              text={`以前のモデル・解析条件の結果が${previousResults}局面あります。現在の設定で解析し直せます。`}
+            />
+          )}
           <AppText variant="caption" tone="secondary" testID="analysis-status">
             {branch
               ? focusBusy

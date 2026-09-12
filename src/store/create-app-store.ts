@@ -12,6 +12,7 @@ import {
 } from '../domain/model';
 import { inferAttribution } from '../domain';
 import type { LocalRepository } from '../storage/repository';
+import { isCompatibleAnalysis } from '../analysis/cache';
 
 type AnalysisJob = {
   gameId: string;
@@ -215,6 +216,9 @@ export function makeAppStore(deps: Dependencies) {
       updateSettings: (patch) =>
         write(async () => {
           const settings = { ...get().settings, ...patch };
+          const analysisChanged =
+            settings.analysisNodes !== get().settings.analysisNodes ||
+            settings.multiPV !== get().settings.multiPV;
           settings.playerNames = Object.fromEntries(
             Object.entries(settings.playerNames).map(([service, names]) => [
               service,
@@ -227,8 +231,13 @@ export function makeAppStore(deps: Dependencies) {
                 .map((g) => ({ ...g, ...inferAttribution(g, settings) }))
             : [];
           await repo().saveSettings(settings, reattributed);
+          if (analysisChanged) get().stopAnalysis();
           const updated = new Map(reattributed.map((g) => [g.id, g]));
-          set((state) => ({ settings, games: state.games.map((g) => updated.get(g.id) ?? g) }));
+          set((state) => ({
+            settings,
+            games: state.games.map((g) => updated.get(g.id) ?? g),
+            ...(analysisChanged ? { analysisJob: null } : {}),
+          }));
         }),
       setLastViewed: (id, ply) =>
         get().updateGame(id, { lastViewedPly: ply, lastOpenedAt: new Date().toISOString() }),
@@ -247,11 +256,7 @@ export function makeAppStore(deps: Dependencies) {
         if (!game) return;
         const conditions = { nodes: get().settings.analysisNodes, multiPV: get().settings.multiPV };
         const reusable = (a: PositionAnalysis | undefined, sfen: string) =>
-          a?.sfen === sfen &&
-          a.engineId === deps.engineId &&
-          a.modelId === deps.modelId &&
-          a.conditions.nodes === conditions.nodes &&
-          a.conditions.multiPV === conditions.multiPV;
+          isCompatibleAnalysis(a, sfen, conditions, deps);
         let completed = game.positions.filter((sfen, ply) =>
           reusable(game.analysis[ply], sfen),
         ).length;
@@ -269,12 +274,8 @@ export function makeAppStore(deps: Dependencies) {
               return deps.analyze(sfen, conditions);
             });
             if (run !== generation) return;
-            if (
-              result.sfen !== sfen ||
-              result.engineId !== deps.engineId ||
-              result.modelId !== deps.modelId
-            )
-              throw new Error('解析結果の局面またはモデルが一致しません。');
+            if (!reusable(result, sfen))
+              throw new Error('解析結果の局面・モデル・条件が一致しません。');
             await write(async () => {
               if (run !== generation) return;
               const latest = get().games.find((g) => g.id === id);
@@ -324,7 +325,8 @@ export function makeAppStore(deps: Dependencies) {
             return deps.analyze(sfen, conditions);
           });
           if (focus !== focusGeneration) throw new Error('局面の解析を中止しました。');
-          if (result.sfen !== sfen) throw new Error('解析結果の局面が一致しません。');
+          if (!isCompatibleAnalysis(result, sfen, conditions, deps))
+            throw new Error('解析結果の局面・モデル・条件が一致しません。');
           return result;
         } finally {
           if (focus === focusGeneration) {
