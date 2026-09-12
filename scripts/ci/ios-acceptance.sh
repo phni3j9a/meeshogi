@@ -4,6 +4,10 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$root"
 
+# A fresh hosted Simulator can finish starting XCTest just after the default
+# three-minute driver deadline. Keep a bounded startup allowance for CI.
+export MAESTRO_DRIVER_STARTUP_TIMEOUT="${MAESTRO_DRIVER_STARTUP_TIMEOUT:-300000}"
+
 artifact_dir="$root/artifacts/ios"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 run_dir="$artifact_dir/runs/$run_id"
