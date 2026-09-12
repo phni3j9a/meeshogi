@@ -9,6 +9,9 @@ run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 run_dir="$artifact_dir/runs/$run_id"
 maestro_dir="$run_dir/maestro"
 mkdir -p "$maestro_dir"
+record_pid=''
+content_size_original=''
+content_size_changed=0
 trace() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$run_dir/timeline.log"
 }
@@ -45,33 +48,6 @@ if not phones:
 print(phones[0]["udid"])
 PY
 )"
-trace simulator.boot.start
-xcrun simctl boot "$device" || true
-python3 - "$device" <<'PY'
-import subprocess
-import sys
-
-subprocess.run(["xcrun", "simctl", "bootstatus", sys.argv[1], "-b"], timeout=600, check=True)
-PY
-trace simulator.boot.end
-xcrun simctl status_bar "$device" override --time 9:41 --batteryState charged --batteryLevel 100
-trace app.install.start
-xcrun simctl install "$device" "$RUNNER_TEMP/meeshogi-ios/Build/Products/Release-iphonesimulator/meeshogi.app"
-
-trace app.install.end
-
-# Stage both encoding variants in the CI-only helper's public Documents folder.
-IOS_FILES_HELPER_OUT="$run_dir/files-helper" \
-  bash scripts/ci/ios-fixture-files.sh "$device" "$utf8_fixture" "$shift_jis_fixture"
-
-# The import flow consumes the KIF clipboard. The player-name flows receive
-# their independent real OS clipboard values after the import has been saved.
-xcrun simctl pbcopy "$device" < fixtures/kif/shogiwars.kif
-xcrun simctl io "$device" recordVideo "$run_dir/flow.mov" > "$run_dir/recording.log" 2>&1 &
-record_pid=$!
-
-content_size_original=''
-content_size_changed=0
 
 restore_content_size() {
   if [[ "$content_size_changed" == 1 && -n "$content_size_original" ]]; then
@@ -85,13 +61,69 @@ cleanup() {
   trap - EXIT
   trace "acceptance.end status=$status"
   restore_content_size || true
-  kill -INT "$record_pid" 2>/dev/null || true
-  wait "$record_pid" 2>/dev/null || true
+  if [[ -n "${record_pid:-}" ]]; then
+    kill -INT "$record_pid" 2>/dev/null || true
+    wait "$record_pid" 2>/dev/null || true
+  fi
   xcrun simctl io "$device" screenshot "$run_dir/final.png" || true
   xcrun simctl spawn "$device" log show --last 10m --style compact --predicate 'process == "meeshogi"' > "$run_dir/simulator.log" || true
   exit "$status"
 }
 trap cleanup EXIT
+
+trace simulator.boot.start
+xcrun simctl boot "$device" || true
+python3 - "$device" <<'PY'
+import subprocess
+import sys
+
+subprocess.run(["xcrun", "simctl", "bootstatus", sys.argv[1], "-b"], timeout=600, check=True)
+PY
+trace simulator.boot.end
+xcrun simctl io "$device" recordVideo "$run_dir/flow.mov" > "$run_dir/recording.log" 2>&1 &
+record_pid=$!
+xcrun simctl status_bar "$device" override --time 9:41 --batteryState charged --batteryLevel 100
+trace app.install.start
+xcrun simctl install "$device" "$RUNNER_TEMP/meeshogi-ios/Build/Products/Release-iphonesimulator/meeshogi.app"
+
+trace app.install.end
+
+# Stage both encoding variants in the CI-only helper's public Documents folder.
+IOS_FILES_HELPER_OUT="$run_dir/files-helper" \
+  bash scripts/ci/ios-fixture-files.sh "$device" "$utf8_fixture" "$shift_jis_fixture"
+
+# The import flow consumes the KIF clipboard. The player-name flows receive
+# their independent real OS clipboard values after the import has been saved.
+pbcopy_file() {
+  local input_file="$1"
+  local attempt
+  local delay
+  local status=1
+
+  for ((attempt = 1; attempt <= 3; attempt += 1)); do
+    trace "pbcopy.attempt file=$input_file attempt=$attempt/3"
+    # Keep the redirection inside the loop so every retry opens the file again.
+    if xcrun simctl pbcopy "$device" < "$input_file"; then
+      trace "pbcopy.success file=$input_file attempt=$attempt/3 status=0"
+      return 0
+    else
+      status=$?
+      trace "pbcopy.failure file=$input_file attempt=$attempt/3 status=$status"
+    fi
+    if (( attempt < 3 )); then
+      delay=$((attempt * 5))
+      trace "pbcopy.retry file=$input_file backoff=${delay}s"
+      if ! sleep "$delay"; then
+        trace "pbcopy.retry-sleep-failed file=$input_file backoff=${delay}s"
+      fi
+    fi
+  done
+
+  trace "pbcopy.failed file=$input_file attempts=3 status=$status"
+  return "$status"
+}
+
+pbcopy_file fixtures/kif/shogiwars.kif
 
 run_flow() {
   local name=$1
@@ -109,9 +141,9 @@ run_flow() {
 }
 
 run_flow import-review .maestro/import-review.yaml
-xcrun simctl pbcopy "$device" < "$clipboard_wars"
+pbcopy_file "$clipboard_wars"
 run_flow player-names .maestro/player-names.yaml
-xcrun simctl pbcopy "$device" < "$clipboard_kiou"
+pbcopy_file "$clipboard_kiou"
 run_flow player-names-kiou .maestro/player-names-kiou.yaml
 run_flow analysis-review .maestro/analysis-review.yaml
 run_flow candidate-review .maestro/candidate-review.yaml

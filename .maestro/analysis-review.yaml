@@ -71,6 +71,11 @@ appId: com.meeshogi.app
     id: square-2g
 - tapOn:
     id: square-2f
+- assertVisible: 分岐検討
+- scrollUntilVisible:
+    element:
+      text: '0手目から分岐'
+    direction: UP
 - assertVisible: '0手目から分岐'
 - scrollUntilVisible:
     element:
