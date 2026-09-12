@@ -105,6 +105,64 @@ describe('棋譜の更新と解析の隔離', () => {
     expect(repository.insert).toHaveBeenCalledTimes(1);
     expect(store.getState().games).toHaveLength(1);
   });
+  it.each(['2026/9/8 19:36:45', '2026-09-08 19:36:45'])(
+    '日時が%s表記でも保存済みの同一局として扱い、原本を保つ',
+    async (date) => {
+      const { store, persisted } = setup();
+      await store.getState().initialize();
+      const original = fixture();
+      const game = await store.getState().saveImport(original, { service: 'shogiwars' });
+      const variant = parseKif(original.rawKif.replace(original.startedAt, date));
+      expect(variant.identity).not.toBe(original.identity);
+      await expect(
+        store.getState().saveImport(variant, { service: 'shogiwars' }),
+      ).rejects.toMatchObject({ existingId: game.id });
+      expect(persisted()).toHaveLength(1);
+      expect(persisted()[0].rawKif).toBe(original.rawKif);
+      expect(persisted()[0].identity).toBe(original.identity);
+    },
+  );
+  it('同じ日時・対局者で内容が違う棋譜は表記揺れがあっても確認を求める', async () => {
+    const { store } = setup();
+    await store.getState().initialize();
+    const game = await store.getState().saveImport(fixture(), { service: 'shogiwars' });
+    const alternative = parseKif(
+      '開始日時：2026/9/8 19:36:45\n先手：KeroPona\n後手：asitaka_y\n手数----指手---------消費時間--\n1 ２六歩(27)\n2 投了\n',
+    );
+    await expect(
+      store.getState().saveImport(alternative, { service: 'shogiwars' }),
+    ).rejects.toMatchObject({ existingId: game.id, collision: true });
+    expect(store.getState().games).toHaveLength(1);
+    await store.getState().saveImport(alternative, { service: 'shogiwars', allowCollision: true });
+    expect(store.getState().games).toHaveLength(2);
+  });
+  it('先後の戦型を連続保存しても両者の修正が残り、片側だけ自動に戻せる', async () => {
+    const { store, repository, persisted } = setup();
+    await store.getState().initialize();
+    const game = await store.getState().saveImport(fixture(), { service: 'shogiwars' });
+    const pending = deferred<void>();
+    const entered = deferred<void>();
+    const save = repository.save.getMockImplementation()!;
+    repository.save.mockImplementationOnce(async (value) => {
+      entered.resolve();
+      await pending.promise;
+      await save(value);
+    });
+    const black = store.getState().updateOpening(game.id, 'black', 'static');
+    await entered.promise;
+    const white = store.getState().updateOpening(game.id, 'white', 'fourth-file');
+    pending.resolve();
+    await Promise.all([black, white]);
+    expect(persisted()[0].openings).toMatchObject({
+      black: { manual: 'static' },
+      white: { manual: 'fourth-file' },
+    });
+    await store.getState().updateOpening(game.id, 'black', null);
+    expect(persisted()[0].openings).toMatchObject({
+      black: { manual: null },
+      white: { manual: 'fourth-file' },
+    });
+  });
   it('書き込み失敗時は保存できたように見せず次回再試行できる', async () => {
     const { store, repository } = setup();
     await store.getState().initialize();

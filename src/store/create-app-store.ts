@@ -9,8 +9,9 @@ import {
   type Side,
   type AnalysisConditions,
   type GameResult,
+  type Opening,
 } from '../domain/model';
-import { inferAttribution } from '../domain';
+import { inferAttribution, sameGameOccasion, sameRecordedGame } from '../domain';
 import type { LocalRepository } from '../storage/repository';
 import { isCompatibleAnalysis } from '../analysis/cache';
 
@@ -37,7 +38,6 @@ type GamePatch = Partial<
     | 'mySide'
     | 'attribution'
     | 'service'
-    | 'openings'
     | 'manualResult'
   >
 >;
@@ -50,6 +50,7 @@ export interface AppState {
   initialize(): Promise<void>;
   saveImport(parsed: ParsedGame, options: ImportOptions): Promise<GameRecord>;
   updateGame(id: string, patch: GamePatch): Promise<void>;
+  updateOpening(id: string, side: Side, manual: Opening | null): Promise<void>;
   deleteGame(id: string): Promise<void>;
   updateSettings(patch: Partial<Settings>): Promise<void>;
   setLastViewed(id: string, ply: number): Promise<void>;
@@ -145,17 +146,14 @@ export function makeAppStore(deps: Dependencies) {
       },
       saveImport: (parsed, options) =>
         write(async () => {
-          const duplicate = get().games.find((g) => g.identity === parsed.identity);
+          const duplicate = get().games.find(
+            (g) => g.identity === parsed.identity || sameRecordedGame(g, parsed),
+          );
           if (duplicate)
             throw Object.assign(new Error('この棋譜は保存済みです。既存の棋譜を開けます。'), {
               existingId: duplicate.id,
             });
-          const collision = get().games.find(
-            (g) =>
-              g.startedAt === parsed.startedAt &&
-              g.blackName === parsed.blackName &&
-              g.whiteName === parsed.whiteName,
-          );
+          const collision = get().games.find((g) => sameGameOccasion(g, parsed));
           if (collision && !options.allowCollision)
             throw Object.assign(
               new Error(
@@ -201,6 +199,20 @@ export function makeAppStore(deps: Dependencies) {
               Math.min(previous.moves.length, Math.trunc(patch.lastViewedPly)),
             );
           if (patch.mySide !== undefined) game.attribution = 'manual';
+          await repo().save(game);
+          replaceGame(game);
+        }),
+      updateOpening: (id, side, manual) =>
+        write(async () => {
+          const previous = get().games.find((g) => g.id === id);
+          if (!previous) throw new Error('棋譜が見つかりません。');
+          const game = {
+            ...previous,
+            openings: {
+              ...previous.openings,
+              [side]: { ...previous.openings[side], manual },
+            },
+          };
           await repo().save(game);
           replaceGame(game);
         }),

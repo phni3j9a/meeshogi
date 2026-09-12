@@ -32,6 +32,7 @@ export default function GameInfoScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const game = useAppStore((state) => state.games.find((item) => item.id === id));
   const updateGame = useAppStore((state) => state.updateGame);
+  const updateOpening = useAppStore((state) => state.updateOpening);
   const deleteGame = useAppStore((state) => state.deleteGame);
   const [error, setError] = useState('');
   const choose = useChoice();
@@ -44,15 +45,7 @@ export default function GameInfoScreen() {
     ]);
     if (!value) return;
     try {
-      await updateGame(id, {
-        openings: {
-          ...game.openings,
-          [side]: {
-            ...game.openings[side],
-            manual: value === 'automatic' ? null : (value as Opening),
-          },
-        },
-      });
+      await updateOpening(id, side, value === 'automatic' ? null : (value as Opening));
     } catch (e) {
       setError(errorMessage(e));
     }

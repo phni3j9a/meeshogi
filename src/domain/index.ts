@@ -593,6 +593,27 @@ function identityForGame(input: {
     .join('|');
 }
 
+/** Compare the written local time, without changing the original KIF or stored identity. */
+export function sameGameOccasion(a: ParsedGame, b: ParsedGame): boolean {
+  return (
+    (localDateKey(a.startedAt) || a.startedAt.trim()) ===
+      (localDateKey(b.startedAt) || b.startedAt.trim()) &&
+    a.blackName === b.blackName &&
+    a.whiteName === b.whiteName
+  );
+}
+
+export function sameRecordedGame(a: ParsedGame, b: ParsedGame): boolean {
+  return (
+    sameGameOccasion(a, b) &&
+    a.positions[0] === b.positions[0] &&
+    a.result === b.result &&
+    a.termination === b.termination &&
+    a.moves.length === b.moves.length &&
+    a.moves.every((move, index) => move.usi === b.moves[index].usi)
+  );
+}
+
 function readService(place: string): Service {
   if (/将棋ウォーズ|shogiwars/i.test(place)) {
     return 'shogiwars';

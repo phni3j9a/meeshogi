@@ -63,9 +63,11 @@ export function ShogiBoard({
         <AppText variant="headline" numberOfLines={1} style={{ flexShrink: 1 }}>
           {names?.[side] || SIDE_LABELS[side]}
         </AppText>
-        <AppText variant="caption" tone="secondary">
-          {SIDE_LABELS[side]}
-        </AppText>
+        {names?.[side] && (
+          <AppText variant="caption" tone="secondary">
+            {SIDE_LABELS[side]}
+          </AppText>
+        )}
         {board.turn === side && (
           <View style={[styles.turn, { borderColor: theme.win }]}>
             <AppText variant="small" tone="win">
