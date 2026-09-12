@@ -6,7 +6,7 @@
 
 ## 状態
 
-無料版を開発中です。Expo / React Nativeのアプリ、KIFの取り込み・合法手検証、SQLite保存、戦績集計、Sekireiの端末内解析経路と、両OSの操作検証を実装しています。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。完成判定と検証の到達点は[開発状況](docs/DEVELOPMENT.md)に記録します。
+無料版を開発中です。Expo / React Nativeのアプリ、KIFの取り込み・合法手検証、SQLite保存、戦績集計、Sekireiの端末内解析経路と、両OSの操作検証を実装しています。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。今回のiOS検証は各ページのスクリーンショットと目視確認を完了基準とし、詳細な操作検証は残事項として区別します。完成判定と検証の到達点は[開発状況](docs/DEVELOPMENT.md)に記録します。
 
 ## 開発
 

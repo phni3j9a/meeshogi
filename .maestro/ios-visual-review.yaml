@@ -1,0 +1,207 @@
+appId: com.meeshogi.app
+---
+# The import-review flow has already created one real Shogi Wars game, waited
+# for the first cached analysis, and visited all three tabs. This flow records
+# the remaining routes without adding synthetic state or requiring full-game
+# analysis.
+
+# Settings and player names: inputText is deliberate here so the keyboard is
+# visible in the screenshot; the full flow separately verifies OS clipboard
+# pasting for both services.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- tapOn:
+    id: player-names-link
+- extendedWaitUntil:
+    visible:
+      id: names-shogiwars
+    timeout: 30000
+- tapOn:
+    id: names-shogiwars
+- eraseText: 100
+- inputText: asitaka_y
+- assertVisible: '.*asitaka_y.*'
+- takeScreenshot: ios-visual-names-keyboard
+- assertVisible:
+    id: names-save
+- tapOn:
+    id: names-save
+- tapOn: 保存して反映
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+
+# All-period statistics after the saved attribution.
+- tapOn: '戦績.*'
+- extendedWaitUntil:
+    visible:
+      id: statistics-screen
+    timeout: 30000
+- tapOn: 全期間
+- assertVisible: '.*1局.*1勝 0敗.*'
+- takeScreenshot: ios-visual-statistics-all
+
+# Game information, including the opening rows. Give the white side a manual
+# fourth-file opening so the subsequent opening drill-down has unique data.
+- tapOn: '棋譜.*'
+- extendedWaitUntil:
+    visible:
+      text: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- tapOn: 棋譜の操作
+- tapOn: 対局情報を確認・修正
+- extendedWaitUntil:
+    visible: '.*対局日時.*'
+    timeout: 30000
+- takeScreenshot: ios-visual-game-info-top
+- scrollUntilVisible:
+    element:
+      text: '.*後手の戦型.*'
+    direction: DOWN
+    timeout: 30000
+- takeScreenshot: ios-visual-game-info-openings
+- tapOn: '.*後手の戦型.*'
+- tapOn: '四間飛車.*'
+- assertVisible: '.*四間飛車（手動）.*'
+- takeScreenshot: ios-visual-game-info-fourth-file
+
+# The new opening value is reflected in the all-period self-opening list.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '戦績.*'
+- extendedWaitUntil:
+    visible:
+      id: statistics-screen
+    timeout: 30000
+- tapOn: 全期間
+- scrollUntilVisible:
+    element:
+      text: '四間飛車.*'
+    direction: DOWN
+    timeout: 30000
+- tapOn: '四間飛車.*'
+- extendedWaitUntil:
+    visible: '.*自分の戦型・全期間.*'
+    timeout: 30000
+- takeScreenshot: ios-visual-opening-detail
+
+# The initial cached result is enough to show the board and analysis panel.
+# Only the selected 67th-ply position is deep-analyzed; the proof badge is
+# accepted only after focused-analysis-ready appears.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- tapOn:
+    id: move-first
+- scrollUntilVisible:
+    element:
+      id: square-2g
+    direction: UP
+    timeout: 30000
+- takeScreenshot: ios-visual-game-board
+- scrollUntilVisible:
+    element:
+      id: analysis-ready
+    direction: DOWN
+    timeout: 30000
+- takeScreenshot: ios-visual-game-board-analysis
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 350
+- assertVisible: '67 / 80手'
+- scrollUntilVisible:
+    element:
+      id: analysis-focus
+    direction: DOWN
+    timeout: 30000
+- tapOn:
+    id: analysis-focus
+- extendedWaitUntil:
+    visible:
+      id: focused-analysis-ready
+    timeout: 180000
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+    timeout: 30000
+- assertVisible: '後手・3手詰め ›'
+- takeScreenshot: ios-visual-mate-badge
+- tapOn: '後手・3手詰め ›'
+- assertVisible: '0 / 3手'
+- takeScreenshot: ios-visual-mate-answer
+- tapOn: 詰め手順を閉じる
+- assertVisible: '67 / 80手'
+
+# Close the proof, return to the first position, and open a real candidate
+# variation from the cached initial analysis.
+- tapOn:
+    id: move-first
+- scrollUntilVisible:
+    element:
+      id: candidate-0
+    direction: DOWN
+    timeout: 30000
+- tapOn:
+    id: candidate-0
+- assertVisible: 分岐検討
+- scrollUntilVisible:
+    element:
+      text: '0手目から分岐'
+    direction: UP
+    timeout: 30000
+- takeScreenshot: ios-visual-candidate-variation
+
+# Settings and the offline license screen complete the visual route set.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- takeScreenshot: ios-visual-settings
+- scrollUntilVisible:
+    element:
+      text: '.*ライセンス.*'
+    direction: DOWN
+    timeout: 30000
+- tapOn: '.*ライセンス.*'
+- extendedWaitUntil:
+    visible: '.*@babel/code-frame@.*'
+    timeout: 30000
+- takeScreenshot: ios-visual-licenses

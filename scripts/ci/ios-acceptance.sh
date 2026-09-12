@@ -5,13 +5,21 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$root"
 
 # A fresh hosted Simulator can finish starting XCTest just after the default
-# three-minute driver deadline. Keep a bounded startup allowance for CI.
+# driver deadline. Keep a bounded startup allowance for CI.
 export MAESTRO_DRIVER_STARTUP_TIMEOUT="${MAESTRO_DRIVER_STARTUP_TIMEOUT:-300000}"
 
 artifact_dir="$root/artifacts/ios"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 run_dir="$artifact_dir/runs/$run_id"
 maestro_dir="$run_dir/maestro"
+acceptance_mode="${IOS_ACCEPTANCE_MODE:-visual}"
+case "$acceptance_mode" in
+  visual|full) ;;
+  *)
+    echo "IOS_ACCEPTANCE_MODE must be visual or full (got: $acceptance_mode)" >&2
+    exit 2
+    ;;
+esac
 mkdir -p "$maestro_dir"
 record_pid=''
 content_size_original=''
@@ -19,7 +27,7 @@ content_size_changed=0
 trace() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$run_dir/timeline.log"
 }
-trace acceptance.start
+trace acceptance.start mode="$acceptance_mode"
 
 # Keep the clipboard inputs in the ignored artifact tree so the exact bytes
 # sent through the CI-only iOS helper remain available with the CI artifact.
@@ -166,6 +174,12 @@ run_flow() {
 }
 
 run_flow import-review .maestro/import-review.yaml
+
+if [[ "$acceptance_mode" == visual ]]; then
+  run_flow ios-visual-review .maestro/ios-visual-review.yaml
+  exit 0
+fi
+
 copy_via_helper "$clipboard_wars"
 run_flow player-names .maestro/player-names.yaml
 copy_via_helper "$clipboard_kiou"

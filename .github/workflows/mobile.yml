@@ -13,7 +13,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: mobile-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  # Late push events must not cancel a newer commit or an explicit acceptance run.
+  group: mobile-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'auto' }}
   cancel-in-progress: true
 env:
   CI: '1'
