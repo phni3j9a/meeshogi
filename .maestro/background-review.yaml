@@ -1,0 +1,52 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- tapOn: 設定
+- tapOn: 解析の長さ
+- tapOn: 長め
+- stopApp
+- launchApp
+- tapOn: KeroPona
+- scrollUntilVisible:
+    element:
+      text: '以前のモデル・解析条件の結果が.*'
+    direction: DOWN
+- assertVisible: この棋譜は未解析です
+- takeScreenshot: 34-changed-analysis-conditions
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible:
+      id: analysis-stop
+    timeout: 30000
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible: '解析を停止中.*'
+    timeout: 30000
+- takeScreenshot: 35-background-paused
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible:
+      id: analysis-stop
+    timeout: 30000
+- tapOn:
+    id: analysis-stop
+- assertVisible: '解析を停止中.*'
+- takeScreenshot: 36-resumed-and-stopped
+# Restoring the original budget exposes only the matching cached positions.
+- stopApp
+- launchApp
+- tapOn: 設定
+- tapOn: 解析の長さ
+- tapOn: 標準
+- stopApp
+- launchApp
+- tapOn: KeroPona
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- takeScreenshot: 37-restored-analysis-conditions

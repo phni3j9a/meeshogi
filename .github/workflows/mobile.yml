@@ -4,6 +4,12 @@ on:
     branches: ['main', 'feat/**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      ios_app_run_id:
+        description: 'Reuse the iOS Simulator app artifact from this completed workflow run'
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -16,6 +22,7 @@ env:
   RUSTUP_TOOLCHAIN: '1.96.0'
 jobs:
   logic:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.ios_app_run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -30,6 +37,7 @@ jobs:
       - run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
       - run: cargo test --manifest-path native/sekirei/Cargo.toml --locked
   android:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.ios_app_run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -86,6 +94,7 @@ jobs:
           path: artifacts/android
           retention-days: 7
   ios:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.ios_app_run_id == '' }}
     runs-on: macos-26-intel
     timeout-minutes: 100
     env:
@@ -114,10 +123,109 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -workspace ios/meeshogi.xcworkspace -scheme meeshogi -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/meeshogi-ios" CODE_SIGNING_ALLOWED=NO ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES build 2>&1 | tee artifacts/ios/build.log
+      - name: Package reusable iOS Simulator app
+        run: bash scripts/ci/ios-app-artifact.sh package "$RUNNER_TEMP/meeshogi-ios/Build/Products/Release-iphonesimulator/meeshogi.app" artifacts/ios-app
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: success()
+        with:
+          name: ios-simulator-app
+          path: artifacts/ios-app
+          if-no-files-found: error
+          retention-days: 14
       - run: bash scripts/ci/ios-acceptance.sh
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
           name: ios-acceptance
           path: artifacts/ios
+          retention-days: 7
+  ios-replay:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_app_run_id != '' }}
+    runs-on: macos-26-intel
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      IOS_APP_RUN_ID: ${{ inputs.ios_app_run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+      - run: bash scripts/ci/install-maestro.sh
+      - name: Create replay diagnostics directory
+        run: mkdir -p artifacts/ios-replay
+      - name: Validate source run id
+        run: |
+          case "$IOS_APP_RUN_ID" in
+            ''|*[!0-9]*)
+              echo "ios_app_run_id must be a numeric completed workflow run id: $IOS_APP_RUN_ID" >&2
+              exit 1
+              ;;
+          esac
+      - name: Verify source workflow run provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$IOS_APP_RUN_ID" > artifacts/ios-replay/source-run.json
+          python3 - artifacts/ios-replay/source-run.json <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              run = json.load(handle)
+
+          expected_run_id = os.environ["IOS_APP_RUN_ID"]
+          repository = os.environ["GITHUB_REPOSITORY"]
+          if str(run.get("id")) != expected_run_id:
+              raise SystemExit("GitHub API returned a different workflow run id")
+          if run.get("status") != "completed":
+              raise SystemExit(f"Source workflow run is not completed: {run.get('status')}")
+          if run.get("path") != ".github/workflows/mobile.yml":
+              raise SystemExit(f"Source workflow path is not mobile.yml: {run.get('path')}")
+          if run.get("head_repository", {}).get("full_name") != repository:
+              raise SystemExit("Source workflow belongs to a different repository")
+          if run.get("event") not in {"push", "workflow_dispatch"}:
+              raise SystemExit(f"Source workflow event is not allowed: {run.get('event')}")
+
+          head_sha = run.get("head_sha")
+          if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+              raise SystemExit("Source workflow has no valid 40-character head SHA")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"IOS_APP_SOURCE_SHA={head_sha}\n")
+              env_file.write(f"IOS_APP_SOURCE_RUN_ID={expected_run_id}\n")
+          PY
+      - name: Download reusable iOS Simulator app
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: ios-simulator-app
+          path: ${{ runner.temp }}/ios-app-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.ios_app_run_id }}
+      - name: Verify app artifact matches current product sources
+        run: bash scripts/ci/ios-app-artifact.sh verify "$RUNNER_TEMP/ios-app-artifact" artifacts/ios-replay "$IOS_APP_SOURCE_SHA" "$IOS_APP_SOURCE_RUN_ID"
+      - name: Restore iOS Simulator app
+        run: bash scripts/ci/ios-app-artifact.sh restore "$RUNNER_TEMP/ios-app-artifact" "$RUNNER_TEMP/meeshogi-ios/Build/Products/Release-iphonesimulator"
+      - name: Run iOS acceptance against restored app
+        run: bash scripts/ci/ios-acceptance.sh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: ios-replay-diagnostics-${{ github.run_id }}
+          path: |
+            artifacts/ios
+            artifacts/ios-replay
+          if-no-files-found: warn
           retention-days: 7

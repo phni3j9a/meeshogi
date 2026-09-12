@@ -1,0 +1,21 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- tapOn: 棋譜
+- tapOn: KeroPona
+- tapOn: 棋譜の操作
+- tapOn: KIFを書き出す
+- takeScreenshot: 33-system-share
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: Meeshogi Export Test
+          direction: DOWN
+      - tapOn: Meeshogi Export Test
+      - extendedWaitUntil:
+          visible:
+            id: game-screen
+          timeout: 30000

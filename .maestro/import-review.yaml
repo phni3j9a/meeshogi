@@ -1,11 +1,13 @@
 appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
 ---
 - launchApp:
     clearState: true
 - extendedWaitUntil:
     visible:
       id: library-screen
-    timeout: 60000
+    timeout: ${INITIAL_READY_TIMEOUT}
 - takeScreenshot: 01-library-empty
 - tapOn:
     id: import-button

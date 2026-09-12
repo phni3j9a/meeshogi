@@ -21,12 +21,20 @@ cargo test --manifest-path native/sekirei/Cargo.toml --locked
 ネイティブ解析を含むため、開発用アプリをビルドします。AndroidはJDK 17 / SDK 36 / NDK 27.1.12297006、iOSはmacOS / Xcodeが必要です。`android/` と `ios/` はExpo CNGの生成物として扱います。
 
 ```sh
+rustup target add aarch64-linux-android x86_64-linux-android
+cargo install cargo-ndk --version 4.1.2 --locked
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
 npx expo prebuild --platform android --no-install
 npm run android
 # macOS:
-npx expo prebuild --platform ios
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+npx expo prebuild --platform ios --no-install
+bash scripts/engine/build-ios.sh
+pod install --project-directory=ios
 npm run ios
 ```
+
+iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインストールします。CIの操作検証と、ビルド済みSimulatorアプリを使う再検証の手順は[開発状況](docs/DEVELOPMENT.md#操作検証の実行)を参照してください。
 
 解析にはsekirei-weightの現行候補 `c-leaf-wrm-seed42` を同梱し、読み込み時にSHA-256を確認します。固定したruntime・モデルの来歴と利用条件は[解析エンジン](docs/ENGINE.md)、戦型の判定条件は[分類ルール](docs/OPENINGS.md)を参照してください。
 
