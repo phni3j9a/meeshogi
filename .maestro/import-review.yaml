@@ -1,6 +1,7 @@
 appId: com.meeshogi.app
 env:
   INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+  IMPORT_SAVE_TIMEOUT: ${IMPORT_SAVE_TIMEOUT || 30000}
 ---
 - launchApp:
     clearState: true
@@ -40,7 +41,7 @@ env:
 - extendedWaitUntil:
     visible:
       id: game-screen
-    timeout: 30000
+    timeout: ${IMPORT_SAVE_TIMEOUT}
 - scrollUntilVisible:
     element:
       id: analysis-ready

@@ -166,6 +166,7 @@ run_flow() {
   trace "flow.start $name"
   maestro --device "$device" test \
     -e INITIAL_READY_TIMEOUT=180000 \
+    -e IMPORT_SAVE_TIMEOUT=120000 \
     --format junit \
     --output "$output/junit.xml" \
     --test-output-dir "$output/test-output" \
