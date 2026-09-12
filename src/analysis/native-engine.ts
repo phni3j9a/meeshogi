@@ -1,5 +1,5 @@
 import { requireOptionalNativeModule } from 'expo-modules-core';
-import { applyUsi, legalMoves } from '../domain';
+import { applyUsi, boardView, legalMoves } from '../domain';
 import type { AnalysisCandidate, AnalysisConditions, MateProof, PositionAnalysis, Side } from '../domain/model';
 
 export const ENGINE_ID = 'sekirei-v0.3.36@aeb6ea30d58f93cad84ffe98bc13441feb807fa8';
@@ -12,8 +12,9 @@ const MAX_MULTI_PV = 3;
 
 type NativeSekireiModule = {
   initializeAsync(): Promise<void>;
-  analyzeAsync(sfen: string, nodes: number, multiPV: number): Promise<string | NativePayload>;
-  cancelAsync(): void | Promise<void>;
+  prepareRequest(): number;
+  analyzeAsync(sfen: string, nodes: number, multiPV: number, requestId: number): Promise<string | NativePayload>;
+  cancelAsync(requestId: number): void | Promise<void>;
 };
 
 type NativePayload = {
@@ -28,6 +29,7 @@ type NativePayload = {
 
 let initialization: Promise<void> | undefined;
 let cancellationGeneration = 0;
+let currentRequestId: number | undefined;
 
 function nativeModule(): NativeSekireiModule | null {
   return requireOptionalNativeModule<NativeSekireiModule>(NATIVE_MODULE_NAME);
@@ -96,6 +98,20 @@ function sideFromSfen(sfen: string): Side {
   if (side === 'b') return 'black';
   if (side === 'w') return 'white';
   throw new Error('SFEN の手番が不正です。');
+}
+
+function validateSfen(sfen: string): void {
+  let board: ReturnType<typeof boardView>;
+  try {
+    board = boardView(sfen);
+  } catch {
+    throw new Error('解析する SFEN が不正です。');
+  }
+  const blackKings = board.cells.filter((cell) => cell.side === 'black' && cell.piece === 'king').length;
+  const whiteKings = board.cells.filter((cell) => cell.side === 'white' && cell.piece === 'king').length;
+  if (blackKings !== 1 || whiteKings !== 1) {
+    throw new Error('解析する SFEN には先後の玉が1つずつ必要です。');
+  }
 }
 
 function validatePv(sfen: string, pv: string[], label: string): void {
@@ -198,15 +214,27 @@ export async function analyzeNative(sfen: string, conditions: AnalysisConditions
   const requestGeneration = cancellationGeneration;
   if (!sfen.trim()) throw new Error('解析する SFEN が空です。');
   ensureConditions(conditions);
+  validateSfen(sfen);
   const module = ensureModule();
   await initialize(module);
   if (requestGeneration !== cancellationGeneration) throw new Error('解析がキャンセルされました。');
-  const result = await module.analyzeAsync(sfen, conditions.nodes, conditions.multiPV);
-  return parseNativeResult(result, sfen, conditions);
+  const requestId = module.prepareRequest();
+  if (!Number.isSafeInteger(requestId) || requestId <= 0) throw new Error('ネイティブ解析の request id が不正です。');
+  currentRequestId = requestId;
+  try {
+    const result = await module.analyzeAsync(sfen, conditions.nodes, conditions.multiPV, requestId);
+    // A native request can finish at the same time as cancelAsync(). Keep the
+    // generation check after the await so a result that crossed that boundary
+    // cannot be persisted by the caller.
+    if (requestGeneration !== cancellationGeneration) throw new Error('解析がキャンセルされました。');
+    return parseNativeResult(result, sfen, conditions);
+  } finally {
+    if (currentRequestId === requestId) currentRequestId = undefined;
+  }
 }
 
 export async function cancelNative(): Promise<void> {
   cancellationGeneration += 1;
   const module = nativeModule();
-  if (module) await module.cancelAsync();
+  if (module && currentRequestId !== undefined) await module.cancelAsync(currentRequestId);
 }

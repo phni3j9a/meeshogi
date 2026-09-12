@@ -22,6 +22,7 @@ export default function PlayerNamesScreen() {
   const [preview, setPreview] = useState(draft.current);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [error, setError] = useState('');
   const theme = useTheme();
   const navigation = useNavigation();
@@ -34,9 +35,13 @@ export default function PlayerNamesScreen() {
   );
   const example = affected[0] ?? games[0];
   const exampleSide = example ? inferAttribution(example, editedSettings).mySide : null;
-  usePreventRemove(dirty, ({ data }) => {
+  usePreventRemove(dirty || busy, ({ data }) => {
     if (allowLeave.current) {
       navigation.dispatch(data.action);
+      return;
+    }
+    if (busyRef.current) {
+      Alert.alert('保存中です', '保存が終わるまでお待ちください。');
       return;
     }
     Alert.alert('変更を保存せずに戻りますか？', '対局者名の変更はまだ保存されていません。', [
@@ -52,20 +57,27 @@ export default function PlayerNamesScreen() {
     ]);
   });
   const persist = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
-      await updateSettings({ playerNames: draft.current });
+      await updateSettings({ playerNames: structuredClone(draft.current) });
       allowLeave.current = true;
       setDirty(false);
       router.back();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
   const save = () => {
-    if (busy) return;
+    if (busyRef.current) return;
+    if (!dirty) {
+      router.back();
+      return;
+    }
     const changed = games.filter(
       (game) =>
         game.attribution !== 'manual' &&
@@ -133,6 +145,7 @@ export default function PlayerNamesScreen() {
                   testID={index === 0 ? `names-${service}` : `names-${service}-${index}`}
                   accessibilityLabel={`${SERVICE_LABELS[service]}の対局者名${index + 1}`}
                   defaultValue={value}
+                  editable={!busy}
                   placeholder="名前を入力"
                   placeholderTextColor={theme.muted}
                   autoCapitalize="none"
@@ -154,6 +167,7 @@ export default function PlayerNamesScreen() {
           </Group>
           <TextButton
             label="名前を追加"
+            disabled={busy}
             icon="add"
             onPress={() => {
               draft.current[service].push('');

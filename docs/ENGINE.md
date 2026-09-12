@@ -46,16 +46,21 @@ initializeAsync()
   -> model path を native bundle から解決
   -> Rust が SEKIRW01 / size / SHA-256 / parser を検証
 
-analyzeAsync(sfen, nodes, multiPV)
+prepareRequest()
+  -> Rust が単調増加する requestId を返す
+
+analyzeAsync(sfen, nodes, multiPV, requestId)
   -> SFEN を Board に変換
   -> node_limit と MultiPV を設定
   -> score と候補手を JSON で返す
 
-cancelAsync()
-  -> 現在の AtomicBool を立てる
+cancelAsync(requestId)
+  -> requestId をキャンセル済みとして記録し、activeなら AtomicBool も立てる
 ```
 
-Rust 側は一つの検索を `Mutex` で直列化し、Rayon を一 worker、`SpecTopN=0` 相当で動かす。これにより、端末で複数局面を同時に探索して CPU と TT を奪い合うことを防ぐ。キャンセルは現在実行中の検索へ伝播し、検索後の mate proof にも同じ flag を使う。`Mutex` の取得を待っている呼び出しは、待機後にその解析専用の状態を初期化するため、先行する解析へのキャンセル要求を引き継がない。キャンセルされた解析は有効な保存結果に変換しない。
+Rust 側は一つの検索を `Mutex` で直列化し、Rayon を一 worker、`SpecTopN=0` 相当で動かす。これにより、端末で複数局面を同時に探索して CPU と TT を奪い合うことを防ぐ。requestId は active flag の登録前にキャンセルされても記録され、Mutex待機中やactive登録直後の検索開始を止める。activeになった検索のキャンセルは AtomicBool へ伝播し、検索後の mate proof にも同じ flag を使う。キャンセルされた解析は有効な保存結果に変換しない。
+
+解析へ渡す SFEN は TypeScript と Rust の両境界で検証する。盤面は9段×9筋で、先手・後手の玉をそれぞれ1つ含む必要があり、満たさない局面は検索前に拒否する。
 
 Sekirei の score は side-to-move 視点なので、結果に入れる前に次で先手視点へ変換する。
 

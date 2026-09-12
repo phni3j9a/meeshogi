@@ -91,6 +91,8 @@ export default function GameScreen() {
     ),
   );
   useEffect(() => {
+    focusRequest.current++;
+    setFocusBusy(false);
     setSelected(null);
     setFocusedAnalysis((previous) => (previous?.sfen === sfen ? previous : null));
     setError('');

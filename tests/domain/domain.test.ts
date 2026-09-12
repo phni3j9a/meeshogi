@@ -60,6 +60,7 @@ describe('parseKif', () => {
     );
     const game = parseKif(raw);
     expect(game.rawKif).toBe(raw);
+    expect(() => parseKif(raw.replace('００：００：０１', '００：００'))).toThrow('消費時間');
     expect(game.moves[0]).toMatchObject({ elapsedMs: 1000, totalElapsedMs: 1000 });
     const adjusted = parseKif(raw.replace('００：００：０１', '０９：０９：０９'));
     expect(adjusted.moves[0].totalElapsedMs).toBe((9 * 3600 + 9 * 60 + 9) * 1000);

@@ -9,7 +9,7 @@
 use std::ffi::{CStr, CString, c_char};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use sekirei_core::board::Board;
@@ -37,13 +37,21 @@ const MATE_THRESHOLD: i32 = MATE_SCORE - 1_000;
 
 static SEARCH_MUTEX: Mutex<()> = Mutex::new(());
 static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
-static ACTIVE_ABORT: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+static CANCELLED_REQUEST_ID: AtomicU64 = AtomicU64::new(0);
+static ACTIVE_ABORT: OnceLock<Mutex<Option<ActiveSearch>>> = OnceLock::new();
 static MODEL_STATE: OnceLock<Mutex<Option<ModelIdentity>>> = OnceLock::new();
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ModelIdentity {
     path: PathBuf,
     sha256: String,
+}
+
+#[derive(Clone, Debug)]
+struct ActiveSearch {
+    request_id: u64,
+    abort: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -119,7 +127,7 @@ impl<'a> ProofBudget<'a> {
     }
 }
 
-fn active_abort() -> &'static Mutex<Option<Arc<AtomicBool>>> {
+fn active_abort() -> &'static Mutex<Option<ActiveSearch>> {
     ACTIVE_ABORT.get_or_init(|| Mutex::new(None))
 }
 
@@ -127,19 +135,34 @@ fn model_state() -> &'static Mutex<Option<ModelIdentity>> {
     MODEL_STATE.get_or_init(|| Mutex::new(None))
 }
 
-fn set_active_abort(flag: Option<Arc<AtomicBool>>) {
+fn set_active_abort(request_id: u64, flag: Option<Arc<AtomicBool>>) {
     if let Ok(mut active) = active_abort().lock() {
-        *active = flag;
+        *active = flag.map(|abort| ActiveSearch { request_id, abort });
     }
 }
 
-/// Request cancellation of the currently running search, if any.
-pub fn cancel() {
+/// Allocate a monotonic request identity before enqueueing a native search.
+pub fn prepare_request() -> u64 {
+    NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn request_was_cancelled(request_id: u64) -> bool {
+    request_id != 0 && CANCELLED_REQUEST_ID.load(Ordering::Relaxed) == request_id
+}
+
+/// Request cancellation of one search, including a request that has not yet
+/// registered its active abort flag after waiting for the serial mutex.
+pub fn cancel(request_id: u64) {
+    if request_id == 0 {
+        return;
+    }
+    CANCELLED_REQUEST_ID.store(request_id, Ordering::Relaxed);
     if let Ok(active) = active_abort().lock()
-        && let Some(flag) = active.as_ref()
+        && let Some(search) = active.as_ref()
+        && search.request_id == request_id
     {
         CANCEL_REQUESTED.store(true, Ordering::Relaxed);
-        flag.store(true, Ordering::Relaxed);
+        search.abort.store(true, Ordering::Relaxed);
     }
 }
 
@@ -169,6 +192,67 @@ fn validate_model_file(path: &Path) -> Result<String, String> {
     // payloads before load_weights mutates Sekirei's process-global OnceLock.
     nnue::read_weights(path).map_err(|error| format!("model format is invalid: {error}"))?;
     Ok(digest)
+}
+
+fn validate_sfen_shape(sfen: &str) -> Result<(), String> {
+    let fields: Vec<&str> = sfen.split_whitespace().collect();
+    if fields.len() != 4 {
+        return Err("invalid SFEN: expected board, side, hand, and move fields".to_string());
+    }
+    if fields[1] != "b" && fields[1] != "w" {
+        return Err("invalid SFEN: side must be b or w".to_string());
+    }
+
+    let ranks: Vec<&str> = fields[0].split('/').collect();
+    if ranks.len() != 9 {
+        return Err("invalid SFEN: board must contain nine ranks".to_string());
+    }
+
+    let mut black_kings = 0;
+    let mut white_kings = 0;
+    for rank in ranks {
+        let mut files = 0;
+        let mut characters = rank.chars();
+        while let Some(character) = characters.next() {
+            match character {
+                '1'..='9' => files += character.to_digit(10).unwrap() as usize,
+                '+' => {
+                    let promoted = characters
+                        .next()
+                        .ok_or_else(|| "invalid SFEN: promotion marker has no piece".to_string())?;
+                    if !matches!(
+                        promoted,
+                        'P' | 'L' | 'N' | 'S' | 'B' | 'R' | 'p' | 'l' | 'n' | 's' | 'b' | 'r'
+                    ) {
+                        return Err("invalid SFEN: promoted piece is not valid".to_string());
+                    }
+                    files += 1;
+                }
+                'P' | 'L' | 'N' | 'S' | 'G' | 'B' | 'R' => {
+                    files += 1;
+                }
+                'p' | 'l' | 'n' | 's' | 'g' | 'b' | 'r' => {
+                    files += 1;
+                }
+                'K' => {
+                    black_kings += 1;
+                    files += 1;
+                }
+                'k' => {
+                    white_kings += 1;
+                    files += 1;
+                }
+                _ => return Err("invalid SFEN: board contains an unknown piece".to_string()),
+            }
+        }
+        if files != 9 {
+            return Err("invalid SFEN: every rank must contain nine files".to_string());
+        }
+    }
+    if black_kings != 1 || white_kings != 1 {
+        return Err("invalid SFEN: board must contain exactly one king per side".to_string());
+    }
+    Ok(())
 }
 
 /// Load and validate the one model this app was built against.
@@ -414,18 +498,33 @@ fn proof_output(result: ProofResult, side: Color) -> MateProofOutput {
     }
 }
 
-fn analyze_position(sfen: &str, nodes: u64, multi_pv: u32) -> Result<NativeAnalysis, String> {
+fn analyze_position(
+    sfen: &str,
+    nodes: u64,
+    multi_pv: u32,
+    request_id: u64,
+) -> Result<NativeAnalysis, String> {
+    if request_id == 0 {
+        return Err("request id must be non-zero".to_string());
+    }
     ensure_model_loaded()?;
+    if request_was_cancelled(request_id) {
+        return Err("analysis cancelled".to_string());
+    }
     if nodes == 0 || nodes > MAX_NODES {
         return Err(format!("nodes must be between 1 and {MAX_NODES}"));
     }
     if !(1..=MAX_MULTI_PV).contains(&multi_pv) {
         return Err(format!("multiPV must be between 1 and {MAX_MULTI_PV}"));
     }
+    validate_sfen_shape(sfen)?;
     let initial = Board::from_sfen(sfen).map_err(|error| format!("invalid SFEN: {error}"))?;
     let _serial = SEARCH_MUTEX
         .lock()
         .map_err(|_| "search lock poisoned".to_string())?;
+    if request_was_cancelled(request_id) {
+        return Err("analysis cancelled".to_string());
+    }
     // A cancel request only applies to an active request. Reset it after
     // taking the serial lock so a cancelled request cannot poison the next
     // position queued by the app.
@@ -439,7 +538,15 @@ fn analyze_position(sfen: &str, nodes: u64, multi_pv: u32) -> Result<NativeAnaly
     let searcher = SpeculativeSearcher::new(Tt::new(TT_SIZE_MB), 0);
     searcher.reset_abort_flag();
     let abort = searcher.abort_flag();
-    set_active_abort(Some(abort.clone()));
+    set_active_abort(request_id, Some(abort.clone()));
+    // Cancellation may arrive after the mutex check but before this request
+    // publishes its active abort flag. Re-check the request identity after
+    // registration so it cannot run to the node limit in that window.
+    if request_was_cancelled(request_id) {
+        set_active_abort(request_id, None);
+        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
+        return Err("analysis cancelled".to_string());
+    }
 
     let mut board = initial.clone();
     let info = searcher.search(
@@ -452,9 +559,11 @@ fn analyze_position(sfen: &str, nodes: u64, multi_pv: u32) -> Result<NativeAnaly
             multi_pv,
         },
     );
-    let cancelled = abort.load(Ordering::Relaxed) || CANCEL_REQUESTED.load(Ordering::Relaxed);
+    let cancelled = abort.load(Ordering::Relaxed)
+        || request_was_cancelled(request_id)
+        || CANCEL_REQUESTED.load(Ordering::Relaxed);
     if cancelled {
-        set_active_abort(None);
+        set_active_abort(request_id, None);
         CANCEL_REQUESTED.store(false, Ordering::Relaxed);
         return Err("analysis cancelled".to_string());
     }
@@ -490,8 +599,8 @@ fn analyze_position(sfen: &str, nodes: u64, multi_pv: u32) -> Result<NativeAnaly
         // invalidate the entire position result. An `incomplete` proof caused
         // only by the ordinary node budget remains a valid analysis result;
         // the caller can distinguish that state from this explicit error.
-        if CANCEL_REQUESTED.load(Ordering::Relaxed) {
-            set_active_abort(None);
+        if request_was_cancelled(request_id) || CANCEL_REQUESTED.load(Ordering::Relaxed) {
+            set_active_abort(request_id, None);
             CANCEL_REQUESTED.store(false, Ordering::Relaxed);
             return Err("analysis cancelled".to_string());
         }
@@ -518,12 +627,12 @@ fn analyze_position(sfen: &str, nodes: u64, multi_pv: u32) -> Result<NativeAnaly
     // The proof path above checks cancellation while it runs, but terminal
     // positions do not need a proof. Check once more before publishing any
     // result so a request arriving during PV/terminal assembly is never saved.
-    if CANCEL_REQUESTED.load(Ordering::Relaxed) {
-        set_active_abort(None);
+    if request_was_cancelled(request_id) || CANCEL_REQUESTED.load(Ordering::Relaxed) {
+        set_active_abort(request_id, None);
         CANCEL_REQUESTED.store(false, Ordering::Relaxed);
         return Err("analysis cancelled".to_string());
     }
-    set_active_abort(None);
+    set_active_abort(request_id, None);
     let output = NativeAnalysis {
         status: "complete",
         sfen: sfen.to_string(),
@@ -578,6 +687,12 @@ pub extern "C" fn meeshogi_sekirei_init(model_path: *const c_char) -> i32 {
     }
 }
 
+/// Allocate a request identity before dispatching an asynchronous search.
+#[unsafe(no_mangle)]
+pub extern "C" fn meeshogi_sekirei_prepare_request() -> u64 {
+    prepare_request()
+}
+
 /// Analyze one SFEN position. The returned string is owned by Rust and must be
 /// released with `meeshogi_sekirei_free_string`.
 #[unsafe(no_mangle)]
@@ -585,9 +700,10 @@ pub extern "C" fn meeshogi_sekirei_analyze(
     sfen: *const c_char,
     nodes: u64,
     multi_pv: u32,
+    request_id: u64,
 ) -> *mut c_char {
     let result = c_string(sfen).and_then(|sfen| {
-        analyze_position(&sfen, nodes, multi_pv).and_then(|analysis| {
+        analyze_position(&sfen, nodes, multi_pv, request_id).and_then(|analysis| {
             serde_json::to_string(&analysis).map_err(|error| error.to_string())
         })
     });
@@ -599,10 +715,10 @@ pub extern "C" fn meeshogi_sekirei_analyze(
     }
 }
 
-/// Request cancellation of the active analysis.
+/// Request cancellation of one analysis, even if it is waiting to register as active.
 #[unsafe(no_mangle)]
-pub extern "C" fn meeshogi_sekirei_cancel() {
-    cancel();
+pub extern "C" fn meeshogi_sekirei_cancel(request_id: u64) {
+    cancel(request_id);
 }
 
 /// Free a string returned by this crate.
@@ -641,12 +757,21 @@ mod android_jni {
     }
 
     #[unsafe(no_mangle)]
+    pub extern "system" fn Java_expo_modules_sekirei_SekireiModule_nativePrepareRequest(
+        _env: JNIEnv,
+        _class: JClass,
+    ) -> jlong {
+        prepare_request() as jlong
+    }
+
+    #[unsafe(no_mangle)]
     pub extern "system" fn Java_expo_modules_sekirei_SekireiModule_nativeAnalyze(
         mut env: JNIEnv,
         _class: JClass,
         sfen: JString,
         nodes: jlong,
         multi_pv: jint,
+        request_id: jlong,
     ) -> jstring {
         let Ok(sfen) = env.get_string(&sfen) else {
             return ptr::null_mut();
@@ -656,6 +781,7 @@ mod android_jni {
             &sfen.to_string_lossy(),
             nodes.max(0) as u64,
             multi_pv.max(0) as u32,
+            request_id.max(0) as u64,
         );
         result.unwrap_or(ptr::null_mut())
     }
@@ -664,8 +790,9 @@ mod android_jni {
     pub extern "system" fn Java_expo_modules_sekirei_SekireiModule_nativeCancel(
         _env: JNIEnv,
         _class: JClass,
+        request_id: jlong,
     ) {
-        cancel();
+        cancel(request_id.max(0) as u64);
     }
 
     fn c_string_to_jstring(
@@ -673,8 +800,9 @@ mod android_jni {
         sfen: &str,
         nodes: u64,
         multi_pv: u32,
+        request_id: u64,
     ) -> jni::errors::Result<jstring> {
-        let result = analyze_position(sfen, nodes, multi_pv)
+        let result = analyze_position(sfen, nodes, multi_pv, request_id)
             .and_then(|analysis| {
                 serde_json::to_string(&analysis).map_err(|error| error.to_string())
             })
@@ -686,6 +814,11 @@ mod android_jni {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex as TestMutex;
+    use std::thread;
+    use std::time::Duration;
+
+    static ANALYSIS_TEST_MUTEX: TestMutex<()> = TestMutex::new(());
 
     fn model_path() -> PathBuf {
         default_model_path()
@@ -738,9 +871,19 @@ mod tests {
     }
 
     #[test]
+    fn sfen_shape_rejects_extra_files_and_missing_king() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        for sfen in ["4k5/9/9/9/9/9/9/9/4K4 b - 1", "4k4/9/9/9/9/9/9/9/9 b - 1"] {
+            let result = analyze_position(sfen, 1, 1, prepare_request());
+            assert!(matches!(result, Err(error) if error.starts_with("invalid SFEN:")));
+        }
+    }
+
+    #[test]
     fn proof_finds_one_ply_mate() {
-        let board =
-            Board::from_sfen("4k4/3G1G3/5G3/9/9/9/9/9/4K4 b - 1").expect("one-ply mate SFEN");
+        let board = Board::from_sfen("4k4/9/4G4/9/9/9/9/9/K8 b G 1").expect("one-ply mate SFEN");
+        assert!(!is_in_check(&mut board.clone(), Color::White));
         let result = prove_short_mate(&board, 10_000, &AtomicBool::new(false));
         assert_eq!(result.status, ProofStatus::Proven(1));
         assert_eq!(result.pv.len(), 1);
@@ -749,24 +892,101 @@ mod tests {
     #[test]
     fn proof_finds_three_ply_mate_across_all_replies() {
         let board =
-            Board::from_sfen("4k4/5G3/1NGG1G3/9/9/9/9/9/4K4 b - 1").expect("three-ply mate SFEN");
+            Board::from_sfen("4k4/6S2/1N1BB4/9/9/9/9/2L6/4K4 b LP 1").expect("three-ply mate SFEN");
+        assert!(!is_in_check(&mut board.clone(), Color::White));
         let result = prove_short_mate(&board, 10_000, &AtomicBool::new(false));
-        println!(
-            "status={:?} pv={:?}",
-            result.status,
-            result.pv.iter().copied().map(move_to_usi).collect::<Vec<_>>()
-        );
         assert_eq!(result.status, ProofStatus::Proven(3));
         assert_eq!(result.pv.len(), 3);
     }
 
     #[test]
-    fn model_search_returns_black_perspective_candidates() {
+    fn proof_rejects_a_check_with_a_legal_escape() {
+        let board = Board::from_sfen("4k4/9/9/9/9/9/9/5R3/4K4 b - 1").expect("escape SFEN");
+        assert!(!is_in_check(&mut board.clone(), Color::White));
+        let result = prove_short_mate(&board, 10_000, &AtomicBool::new(false));
+        assert_eq!(result.status, ProofStatus::NotFound);
+    }
+
+    #[test]
+    fn proof_respects_a_side_already_in_check() {
+        let board = Board::from_sfen("4r3k/9/9/9/9/9/9/9/4K4 b - 1").expect("in-check SFEN");
+        assert!(is_in_check(&mut board.clone(), Color::Black));
+        let result = prove_short_mate(&board, 10_000, &AtomicBool::new(false));
+        assert_eq!(result.status, ProofStatus::NotFound);
+    }
+
+    #[test]
+    fn legal_moves_reject_pawn_drop_mate() {
+        let mut board =
+            Board::from_sfen("3lkl3/3p1p3/4G4/9/9/9/9/9/K8 b P 1").expect("pawn-drop mate SFEN");
+        assert!(!is_in_check(&mut board.clone(), Color::White));
+        let legal = generate_legal_moves(&mut board);
+        assert!(
+            !legal
+                .iter()
+                .copied()
+                .map(move_to_usi)
+                .any(|usi| usi == "P*5b")
+        );
+    }
+
+    #[test]
+    fn cancellation_is_honored_before_active_registration() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
         initialize_model(&model_path()).expect("load local model");
+        let request_id = prepare_request();
+        cancel(request_id);
+        let result = analyze_position(
+            "lnsgkgsnl/1r5b1/p1ppppp1p/9/9/9/P1PPPPPP1/1B5R1/LNSGKGSNL b - 1",
+            256,
+            1,
+            request_id,
+        );
+        assert!(matches!(result, Err(error) if error == "analysis cancelled"));
+    }
+
+    #[test]
+    fn cancellation_stops_an_active_model_search() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        let request_id = prepare_request();
+        let search = thread::spawn(move || {
+            analyze_position(
+                "lnsgkgsnl/1r5b1/p1ppppp1p/9/9/9/P1PPPPPP1/1B5R1/LNSGKGSNL b - 1",
+                MAX_NODES,
+                3,
+                request_id,
+            )
+        });
+        let mut registered = false;
+        for _ in 0..1_000 {
+            if active_abort()
+                .lock()
+                .expect("active search lock")
+                .as_ref()
+                .is_some_and(|active| active.request_id == request_id)
+            {
+                registered = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(registered, "search did not register its active request");
+        cancel(request_id);
+        let result = search.join().expect("search thread");
+        assert!(matches!(result, Err(error) if error == "analysis cancelled"));
+    }
+
+    #[test]
+    fn model_search_returns_black_perspective_candidates() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        let request_id = prepare_request();
         let result = analyze_position(
             "lnsgkgsnl/1r5b1/p1ppppp1p/9/9/9/P1PPPPPP1/1B5R1/LNSGKGSNL b - 1",
             256,
             2,
+            request_id,
         )
         .expect("search start position");
         assert_eq!(result.engine_id, ENGINE_ID);

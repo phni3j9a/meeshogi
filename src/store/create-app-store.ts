@@ -8,6 +8,7 @@ import {
   type Settings,
   type Side,
   type AnalysisConditions,
+  type GameResult,
 } from '../domain/model';
 import { inferAttribution } from '../domain';
 import type { LocalRepository } from '../storage/repository';
@@ -24,6 +25,7 @@ type ImportOptions = {
   mySide?: Side | null;
   allowCollision?: boolean;
   autoAnalyze?: boolean;
+  manualResult?: GameResult | null;
 };
 type GamePatch = Partial<
   Pick<
@@ -35,6 +37,7 @@ type GamePatch = Partial<
     | 'attribution'
     | 'service'
     | 'openings'
+    | 'manualResult'
   >
 >;
 export interface AppState {
@@ -70,6 +73,7 @@ export function makeAppStore(deps: Dependencies) {
   let cancellationBarrier: Promise<void> = Promise.resolve();
   let generation = 0;
   let focusGeneration = 0;
+  let focusResumeId: string | undefined;
   const write = <T>(operation: () => Promise<T>) => {
     const pending = writes.then(operation);
     writes = pending.then(
@@ -166,6 +170,7 @@ export function makeAppStore(deps: Dependencies) {
           const game: GameRecord = {
             ...selected,
             ...attribution,
+            manualResult: options.manualResult ?? null,
             id: deps.createId(),
             createdAt: new Date().toISOString(),
             favorite: false,
@@ -230,6 +235,7 @@ export function makeAppStore(deps: Dependencies) {
       stopAnalysis: () => {
         generation++;
         focusGeneration++;
+        focusResumeId = undefined;
         cancel();
         const job = get().analysisJob;
         if (job?.status === 'running') set({ analysisJob: { ...job, status: 'paused' } });
@@ -304,8 +310,9 @@ export function makeAppStore(deps: Dependencies) {
       },
       analyzePosition: async (sfen) => {
         const resumeId =
-          get().analysisJob?.status === 'running' ? get().analysisJob?.gameId : undefined;
+          get().analysisJob?.status === 'running' ? get().analysisJob?.gameId : focusResumeId;
         get().stopAnalysis();
+        focusResumeId = resumeId;
         const focus = ++focusGeneration;
         const conditions = {
           nodes: Math.min(1000000, get().settings.analysisNodes * 5),
@@ -320,7 +327,10 @@ export function makeAppStore(deps: Dependencies) {
           if (result.sfen !== sfen) throw new Error('解析結果の局面が一致しません。');
           return result;
         } finally {
-          if (resumeId && focus === focusGeneration) void get().startAnalysis(resumeId);
+          if (focus === focusGeneration) {
+            focusResumeId = undefined;
+            if (resumeId) void get().startAnalysis(resumeId);
+          }
         }
       },
     };

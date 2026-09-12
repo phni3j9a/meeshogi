@@ -14,18 +14,23 @@ appId: com.meeshogi.app
 - tapOn:
     text: 'Allow Paste|ペーストを許可'
     optional: true
-- assertVisible: KeroPona
-- assertVisible: asitaka_y
+- assertVisible: '.*KeroPona.*'
+- assertVisible: '.*asitaka_y.*'
 - takeScreenshot: ${ARTIFACT_DIR}/02-import
+- scrollUntilVisible:
+    element:
+      id: import-save
+    direction: DOWN
 - tapOn:
     id: import-save
 - extendedWaitUntil:
     visible:
       id: game-screen
     timeout: 30000
-- extendedWaitUntil:
-    visible:
+- scrollUntilVisible:
+    element:
       id: analysis-ready
+    direction: DOWN
     timeout: 180000
 - takeScreenshot: ${ARTIFACT_DIR}/03-analysis
 - tapOn:
@@ -41,7 +46,7 @@ appId: com.meeshogi.app
     visible:
       id: library-screen
     timeout: 60000
-- assertVisible: KeroPona
+- assertVisible: '.*KeroPona.*'
 - takeScreenshot: ${ARTIFACT_DIR}/05-library-restored
 - tapOn: '設定'
 - assertVisible:

@@ -4,13 +4,15 @@ import { GameRecord, OPENING_LABELS, SERVICE_LABELS, SIDE_LABELS } from '@/domai
 import { AppText, Icon } from './primitives';
 import { useTheme } from './theme';
 import { writtenDate } from './dates';
+import { effectiveResult } from '../domain/model';
 
 export function gameOutcome(game: GameRecord): '勝' | '負' | '分' | '中断' | '不明' | '観戦' {
   if (!game.mySide) return '観戦';
-  if (game.result === 'draw') return '分';
-  if (game.result === 'interrupted') return '中断';
-  if (game.result === 'unknown') return '不明';
-  return game.result === `${game.mySide}-win` ? '勝' : '負';
+  const result = effectiveResult(game);
+  if (result === 'draw') return '分';
+  if (result === 'interrupted') return '中断';
+  if (result === 'unknown') return '不明';
+  return result === `${game.mySide}-win` ? '勝' : '負';
 }
 export function gameTitle(game: GameRecord) {
   return game.mySide

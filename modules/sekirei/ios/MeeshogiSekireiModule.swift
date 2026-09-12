@@ -16,14 +16,23 @@ public final class SekireiModule: Module {
       try self.initializeModel()
     }.runOnQueue(initializationQueue)
 
-    AsyncFunction("analyzeAsync") { (sfen: String, nodes: Int, multiPV: Int) throws -> String in
+    Function("prepareRequest") {
+      Int(meeshogi_sekirei_prepare_request())
+    }
+
+    AsyncFunction("analyzeAsync") { (sfen: String, nodes: Int, multiPV: Int, requestId: Int) throws -> String in
       guard nodes > 0, nodes <= Int(UInt32.max) else {
         throw NSError(domain: "MeeshogiSekirei", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid node limit"])
       }
       guard let sfenPointer = sfen.cString(using: .utf8) else {
         throw NSError(domain: "MeeshogiSekirei", code: 2, userInfo: [NSLocalizedDescriptionKey: "SFEN is not UTF-8"])
       }
-      let resultPointer = meeshogi_sekirei_analyze(sfenPointer, UInt64(nodes), UInt32(max(0, multiPV)))
+      let resultPointer = meeshogi_sekirei_analyze(
+        sfenPointer,
+        UInt64(nodes),
+        UInt32(max(0, multiPV)),
+        UInt64(max(0, requestId))
+      )
       guard let resultPointer else {
         throw NSError(domain: "MeeshogiSekirei", code: 3, userInfo: [NSLocalizedDescriptionKey: "Sekirei returned no analysis"])
       }
@@ -33,8 +42,8 @@ public final class SekireiModule: Module {
 
     // The Rust cancellation path is one atomic store. Keep it synchronous so
     // it cannot queue behind the serial search worker that it is meant to stop.
-    Function("cancelAsync") {
-      meeshogi_sekirei_cancel()
+    Function("cancelAsync") { (requestId: Int) in
+      meeshogi_sekirei_cancel(UInt64(max(0, requestId)))
     }
   }
 

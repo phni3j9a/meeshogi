@@ -51,3 +51,12 @@ tasks.register('buildSekireiRust', Exec) {
 tasks.named('preBuild').configure {
   dependsOn tasks.named('buildSekireiRust')
 }
+
+// React Native treats the repository root as a bundle input. The Rust output
+// lives below that root, so Gradle also needs the bundle's explicit dependency.
+def rustBuild = tasks.named('buildSekireiRust')
+rootProject.project(':app').tasks.matching {
+  it.name.startsWith('createBundle') && it.name.endsWith('JsAndAssets')
+}.configureEach {
+  dependsOn rustBuild
+}

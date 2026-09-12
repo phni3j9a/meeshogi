@@ -8,6 +8,8 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { inferAttribution, parseKif } from '@/domain';
 import {
   OPENING_LABELS,
+  RESULT_LABELS,
+  GameResult,
   Opening,
   ParsedGame,
   SERVICE_LABELS,
@@ -42,6 +44,8 @@ export default function ImportScreen() {
   const [autoAnalyze, setAutoAnalyze] = useState(settings.autoAnalyze);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [manualResult, setManualResult] = useState<GameResult | null>(null);
   const [dirty, setDirty] = useState(false);
   const [collision, setCollision] = useState<{ existingId: string; collision: boolean } | null>(
     null,
@@ -51,9 +55,13 @@ export default function ImportScreen() {
   const allowLeave = useRef(false);
   const navigation = useNavigation();
   const choose = useChoice();
-  usePreventRemove(dirty, ({ data }) => {
+  usePreventRemove(dirty || saving, ({ data }) => {
     if (allowLeave.current) {
       navigation.dispatch(data.action);
+      return;
+    }
+    if (savingRef.current) {
+      Alert.alert('保存中です', '保存が終わるまでお待ちください。');
       return;
     }
     Alert.alert('取り込みをキャンセルしますか？', '入力した棋譜はまだ保存されていません。', [
@@ -74,6 +82,7 @@ export default function ImportScreen() {
     setError('');
     setCollision(null);
     setMySide(undefined);
+    setManualResult(null);
     try {
       const game = parseKif(text);
       setParsed(game);
@@ -139,11 +148,18 @@ export default function ImportScreen() {
       });
   };
   const save = async (allowCollision = false) => {
-    if (!parsed || saving || ambiguous) return;
+    if (!parsed || savingRef.current || ambiguous) return;
+    savingRef.current = true;
     setSaving(true);
     setError('');
     try {
-      const game = await saveImport(parsed, { service, mySide, autoAnalyze, allowCollision });
+      const game = await saveImport(parsed, {
+        service,
+        mySide,
+        manualResult,
+        autoAnalyze,
+        allowCollision,
+      });
       allowLeave.current = true;
       setDirty(false);
       router.replace({ pathname: '/game/[id]', params: { id: game.id } });
@@ -155,24 +171,25 @@ export default function ImportScreen() {
           collision: 'collision' in e && !!e.collision,
         });
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
-  const resultLabel = parsed
-    ? parsed.result === 'draw'
-      ? '引き分け'
-      : parsed.result === 'interrupted'
-        ? '中断'
-        : parsed.result === 'unknown'
-          ? '結果不明'
-          : selectedSide
-            ? parsed.result === `${selectedSide}-win`
-              ? '勝ち'
-              : '負け'
-            : parsed.result === 'black-win'
-              ? '先手の勝ち'
-              : '後手の勝ち'
+  const result = manualResult ?? parsed?.result;
+  const resultLabel = result
+    ? selectedSide && (result === 'black-win' || result === 'white-win')
+      ? result === `${selectedSide}-win`
+        ? '勝ち'
+        : '負け'
+      : RESULT_LABELS[result]
     : '';
+  const selectResult = async () => {
+    const choice = await choose('対局結果', [
+      { label: '棋譜の結果に戻す', value: 'original' },
+      ...Object.entries(RESULT_LABELS).map(([value, label]) => ({ value, label })),
+    ]);
+    if (choice) setManualResult(choice === 'original' ? null : (choice as GameResult));
+  };
   return (
     <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: theme.background }}>
       <View
@@ -184,12 +201,13 @@ export default function ImportScreen() {
           minHeight: 62,
         }}
       >
-        <TextButton label="キャンセル" onPress={() => router.back()} />
+        <TextButton label="キャンセル" onPress={() => router.back()} disabled={saving} />
         <AppText variant="headline" style={{ flex: 1, textAlign: 'center', paddingRight: 80 }}>
           棋譜を追加
         </AppText>
       </View>
       <ScrollView
+        pointerEvents={saving ? 'none' : 'auto'}
         contentContainerStyle={{
           paddingHorizontal: 20,
           paddingBottom: Math.max(insets.bottom, 16) + 12,
@@ -302,7 +320,12 @@ export default function ImportScreen() {
                 }
                 onPress={() => void selectSide()}
               />
-              <Row label="結果" value={resultLabel} />
+              <Row
+                label="結果"
+                value={`${resultLabel}${manualResult ? '（手動）' : ''}`}
+                onPress={() => void selectResult()}
+                testID="import-result"
+              />
               <Row
                 label="戦型"
                 value={`${OPENING_LABELS[parsed.openings.black.manual ?? parsed.openings.black.automatic]} 対 ${OPENING_LABELS[parsed.openings.white.manual ?? parsed.openings.white.automatic]}`}
@@ -319,6 +342,11 @@ export default function ImportScreen() {
                     : '選択した手番で保存します。'
                   : '自分を含まない棋譜も保存・解析できます。戦績には含めません。'}
             </AppText>
+            {manualResult && (
+              <AppText variant="caption" tone="secondary" style={{ marginBottom: 12 }}>
+                修正した結果を戦績に使います。KIFの書き出しでは元の棋譜を保ちます。
+              </AppText>
+            )}
             <Group>
               <Row label="保存後に解析する" last>
                 <Switch

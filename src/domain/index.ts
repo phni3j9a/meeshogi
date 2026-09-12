@@ -29,6 +29,7 @@ import type {
   Tally,
 } from './model';
 import type { ImmutableNode, ImmutableRecord } from 'tsshogi';
+import { effectiveResult } from './model';
 
 export * from './model';
 
@@ -154,7 +155,10 @@ function readMoveTime(text: string, line: number): Pick<RawMoveRow, 'text' | 'ti
   const time = /\s*\(\s*(\d+)\s*:\s*(\d+)\s*\/\s*(\d+)\s*:\s*(\d+)\s*:\s*(\d+)\s*\)\s*$/u.exec(
     normalised,
   );
-  if (!time) return { text: text.replace(/\s*\+\s*$/u, '').trim() };
+  if (!time) {
+    if (/\([^)]*[:/][^)]*\)\s*$/u.test(normalised)) fail('消費時間の形式が不正です', line);
+    return { text: text.replace(/\s*\+\s*$/u, '').trim() };
+  }
   const [, minutes, seconds, hoursTotal, minutesTotal, secondsTotal] = time.map(Number);
   const elapsedMs = (minutes * 60 + seconds) * 1000;
   const totalElapsedMs = (hoursTotal * 3600 + minutesTotal * 60 + secondsTotal) * 1000;
@@ -812,16 +816,17 @@ function emptyTally(): Tally {
 }
 
 function addOutcome(tally: Tally, game: GameRecord): void {
+  const result = effectiveResult(game);
   tally.total += 1;
-  if (game.result === 'draw') {
+  if (result === 'draw') {
     tally.draws += 1;
-  } else if (game.result === 'interrupted') {
+  } else if (result === 'interrupted') {
     tally.interrupted += 1;
-  } else if (game.result === 'unknown' || game.mySide === null) {
+  } else if (result === 'unknown' || game.mySide === null) {
     tally.unknown += 1;
   } else if (
-    (game.result === 'black-win' && game.mySide === 'black') ||
-    (game.result === 'white-win' && game.mySide === 'white')
+    (result === 'black-win' && game.mySide === 'black') ||
+    (result === 'white-win' && game.mySide === 'white')
   ) {
     tally.wins += 1;
   } else {

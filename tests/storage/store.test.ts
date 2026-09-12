@@ -6,7 +6,7 @@ import {
   type PositionAnalysis,
   type Settings,
 } from '../../src/domain/model';
-import { parseKif } from '../../src/domain';
+import { getStatistics, parseKif } from '../../src/domain';
 import { readFileSync } from 'node:fs';
 import type { LocalRepository } from '../../src/storage/repository';
 
@@ -162,5 +162,64 @@ describe('棋譜の更新と解析の隔離', () => {
     expect(repository.saveSettings.mock.calls[0]?.[1]).toEqual([]);
     await store.getState().updateGame(game.id, { favorite: true });
     expect(store.getState().games[0].favorite).toBe(true);
+  });
+  it('取込時と保存後に結果を修正し原本の結果へ戻せる', async () => {
+    const { store, persisted } = setup();
+    await store.getState().initialize();
+    const parsed = fixture();
+    const game = await store
+      .getState()
+      .saveImport(parsed, { service: 'shogiwars', mySide: 'white', manualResult: 'black-win' });
+    expect(getStatistics(store.getState().games).losses).toBe(1);
+    await store.getState().updateGame(game.id, { manualResult: 'draw' });
+    expect(getStatistics(store.getState().games).draws).toBe(1);
+    expect(persisted()[0]).toMatchObject({
+      rawKif: parsed.rawKif,
+      result: parsed.result,
+      manualResult: 'draw',
+    });
+    await store.getState().updateGame(game.id, { manualResult: null });
+    expect(getStatistics(store.getState().games).wins).toBe(1);
+  });
+  it('連続した局面解析の置換後も中断した全局解析へ戻る', async () => {
+    const { store, analyze } = setup();
+    await store.getState().initialize();
+    const game = await store.getState().saveImport(fixture(), { service: 'shogiwars' });
+    const pending = Array.from({ length: 4 }, () => deferred<PositionAnalysis>());
+    const entered = Array.from({ length: 4 }, () => deferred<void>());
+    let call = 0;
+    analyze.mockImplementation(async () => {
+      const index = call++;
+      entered[index].resolve();
+      return pending[index].promise;
+    });
+    const result = (sfen: string): PositionAnalysis => ({
+      sfen,
+      engineId: 'engine',
+      modelId: 'model',
+      conditions: { nodes: 50000, multiPV: 2 },
+      candidates: [],
+      mateProof: null,
+      completedAt: 'now',
+    });
+    const all = store.getState().startAnalysis(game.id);
+    await entered[0].promise;
+    const firstFocus = store.getState().analyzePosition(game.positions[1]);
+    const firstCancelled = expect(firstFocus).rejects.toThrow('中止');
+    pending[0].resolve(result(game.positions[0]));
+    await all;
+    await entered[1].promise;
+    const secondFocus = store.getState().analyzePosition(game.positions[2]);
+    pending[1].resolve(result(game.positions[1]));
+    await firstCancelled;
+    await entered[2].promise;
+    pending[2].resolve(result(game.positions[2]));
+    await secondFocus;
+    await entered[3].promise;
+    expect(store.getState().analysisJob).toMatchObject({ gameId: game.id, status: 'running' });
+    store.getState().stopAnalysis();
+    pending[3].resolve(result(game.positions[0]));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(store.getState().games[0].analysis).toEqual({});
   });
 });

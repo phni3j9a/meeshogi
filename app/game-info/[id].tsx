@@ -3,6 +3,9 @@ import { Alert } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   OPENING_LABELS,
+  RESULT_LABELS,
+  effectiveResult,
+  GameResult,
   Opening,
   SERVICE_LABELS,
   Service,
@@ -77,18 +80,31 @@ export default function GameInfoScreen() {
         <Row label="時間設定" value={game.timeControl || '記載なし'} />
         <Row
           label="結果"
-          value={
-            {
-              'black-win': '先手の勝ち',
-              'white-win': '後手の勝ち',
-              draw: '引き分け',
-              interrupted: '中断',
-              unknown: '結果不明',
-            }[game.result]
+          value={`${RESULT_LABELS[effectiveResult(game)]}${game.manualResult ? '（手動）' : ''}`}
+          testID="game-result"
+          onPress={() =>
+            void choose('対局結果', [
+              { label: '棋譜の結果に戻す', value: 'original' },
+              ...Object.entries(RESULT_LABELS).map(([value, label]) => ({ value, label })),
+            ]).then(async (value) => {
+              if (!value) return;
+              try {
+                await updateGame(id, {
+                  manualResult: value === 'original' ? null : (value as GameResult),
+                });
+              } catch (e) {
+                setError(errorMessage(e));
+              }
+            })
           }
           last
         />
       </Group>
+      {game.manualResult && (
+        <AppText variant="caption" tone="secondary" style={{ paddingTop: 8 }}>
+          修正した結果を戦績に使います。KIFの書き出しでは元の棋譜を保ちます。
+        </AppText>
+      )}
       <SectionLabel>自分の戦績</SectionLabel>
       <Group>
         <Row

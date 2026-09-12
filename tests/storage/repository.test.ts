@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LocalRepository, type Database } from '../../src/storage/repository';
 import { DEFAULT_SETTINGS, type GameRecord } from '../../src/domain/model';
-import { parseKif } from '../../src/domain';
+import { getStatistics, parseKif } from '../../src/domain';
 import { readFileSync } from 'node:fs';
 function database(path: string) {
   const db = new DatabaseSync(path);
@@ -77,6 +77,31 @@ describe('端末保存', () => {
     expect(await repository.load()).toEqual({ games: [game], settings: DEFAULT_SETTINGS });
     db.close();
   });
+  it('手動結果だけを保存し原本と本譜を保ったまま戦績へ反映し元へ戻せる', async () => {
+    const { db, repository } = database(':memory:');
+    await repository.initialize();
+    const game = sample();
+    await repository.insert(game);
+    await repository.save({ ...game, manualResult: 'draw' });
+    const corrected = (await repository.load()).games[0];
+    expect(corrected.result).toBe('white-win');
+    expect(corrected.rawKif).toBe(game.rawKif);
+    expect(corrected.identity).toBe(game.identity);
+    expect(corrected.positions).toEqual(game.positions);
+    expect(getStatistics([corrected])).toMatchObject({
+      wins: 0,
+      losses: 0,
+      draws: 1,
+      winRate: null,
+    });
+    await repository.save({ ...corrected, manualResult: null });
+    expect(getStatistics((await repository.load()).games)).toMatchObject({
+      wins: 1,
+      draws: 0,
+      winRate: 1,
+    });
+    db.close();
+  });
   it('破損した棋譜を黙って空データで置き換えない', async () => {
     const { db, repository } = database(':memory:');
     await repository.initialize();
@@ -94,6 +119,7 @@ describe('端末保存', () => {
   });
   it.each([
     { result: 'corrupted-result' },
+    { manualResult: 'corrupted-result' },
     { openings: [] },
     { positions: [null], moves: [] },
     { analysis: [] },

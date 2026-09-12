@@ -84,6 +84,17 @@ export function decodeGame(value: unknown, id: string, identity: string): GameRe
     ['blackRank', 'whiteRank', 'endedAt'].every((key) => value[key] === null || string(value[key])),
   );
   requireValid(value.lastOpenedAt === undefined || string(value.lastOpenedAt));
+  requireValid(
+    member(value.manualResult, [
+      undefined,
+      null,
+      'black-win',
+      'white-win',
+      'draw',
+      'interrupted',
+      'unknown',
+    ]),
+  );
   requireValid(object(value.headers) && Object.values(value.headers).every(string));
   requireValid(
     member(value.service, services) &&

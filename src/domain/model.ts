@@ -62,6 +62,8 @@ export interface PositionAnalysis {
   completedAt: string;
 }
 export interface GameRecord extends ParsedGame {
+  /** App-only correction; the result parsed from rawKif remains unchanged. */
+  manualResult?: GameResult | null;
   id: string;
   createdAt: string;
   favorite: boolean;
@@ -132,3 +134,13 @@ export const OPENING_LABELS: Record<Opening, string> = {
   unknown: '未分類',
 };
 export const SIDE_LABELS: Record<Side, string> = { black: '先手', white: '後手' };
+export const RESULT_LABELS: Record<GameResult, string> = {
+  'black-win': '先手の勝ち',
+  'white-win': '後手の勝ち',
+  draw: '引き分け',
+  interrupted: '中断',
+  unknown: '結果不明',
+};
+export function effectiveResult(game: Pick<GameRecord, 'result' | 'manualResult'>): GameResult {
+  return game.manualResult ?? game.result;
+}

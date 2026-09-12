@@ -6,12 +6,13 @@ Pod::Spec.new do |s|
   s.name             = 'MeeshogiSekirei'
   s.version          = package['version']
   s.summary          = package['description']
-  s.description      = package['description']
+  s.description      = 'Local Expo module for validated, cancellable Sekirei analysis and short-mate proof.'
+  s.homepage         = 'https://github.com/phni3j9a/meeshogi'
   s.license          = { :type => 'MIT OR Apache-2.0', :file => '../../../native/sekirei/NOTICE' }
   s.author           = 'meeshogi contributors'
   s.platforms        = { :ios => '16.4' }
   s.swift_version    = '5.9'
-  s.source           = { :path => '.' }
+  s.source           = { :git => 'https://github.com/phni3j9a/meeshogi.git' }
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'

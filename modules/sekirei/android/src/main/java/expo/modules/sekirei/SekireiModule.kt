@@ -2,6 +2,7 @@ package expo.modules.sekirei
 
 import android.content.Context
 import expo.modules.kotlin.exception.Exceptions
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,7 @@ class SekireiModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("MeeshogiSekirei")
 
-    AsyncFunction("initializeAsync") Coroutine {
+    AsyncFunction("initializeAsync") Coroutine { ->
       withContext(Dispatchers.IO) {
         val path = ensureModelFile()
         if (nativeInit(path) != 0) {
@@ -36,16 +37,20 @@ class SekireiModule : Module() {
       }
     }
 
-    AsyncFunction("analyzeAsync") Coroutine { sfen: String, nodes: Long, multiPV: Int ->
+    Function("prepareRequest") {
+      nativePrepareRequest()
+    }
+
+    AsyncFunction("analyzeAsync") Coroutine { sfen: String, nodes: Long, multiPV: Int, requestId: Long ->
       withContext(Dispatchers.Default) {
-        val result = nativeAnalyze(sfen, nodes, multiPV)
+        val result = nativeAnalyze(sfen, nodes, multiPV, requestId)
           ?: throw IllegalStateException("Sekirei returned no analysis")
         result
       }
     }
 
-    AsyncFunction("cancelAsync") {
-      nativeCancel()
+    Function("cancelAsync") { requestId: Long ->
+      nativeCancel(requestId)
     }
   }
 
@@ -67,6 +72,7 @@ class SekireiModule : Module() {
   }
 
   private external fun nativeInit(modelPath: String): Int
-  private external fun nativeAnalyze(sfen: String, nodes: Long, multiPV: Int): String?
-  private external fun nativeCancel()
+  private external fun nativePrepareRequest(): Long
+  private external fun nativeAnalyze(sfen: String, nodes: Long, multiPV: Int, requestId: Long): String?
+  private external fun nativeCancel(requestId: Long)
 }
