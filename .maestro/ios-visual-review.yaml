@@ -5,9 +5,9 @@ appId: com.meeshogi.app
 # the remaining routes without adding synthetic state or requiring full-game
 # analysis.
 
-# Settings and player names: inputText is deliberate here so the keyboard is
-# visible in the screenshot; the full flow separately verifies OS clipboard
-# pasting for both services.
+# The host helper has put the exact player name on the OS clipboard. Paste
+# avoids dropped keyboard events on a loaded Simulator, while keeping the
+# keyboard visible for the screenshot.
 - launchApp
 - extendedWaitUntil:
     visible:
@@ -27,8 +27,17 @@ appId: com.meeshogi.app
 - tapOn:
     id: names-shogiwars
 - eraseText: 100
-- inputText: asitaka_y
-- assertVisible: '.*asitaka_y.*'
+- longPressOn:
+    id: names-shogiwars
+- tapOn: 'Paste|貼り付け|ペースト'
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: names-shogiwars
+      text: '.*asitaka_y.*'
+    timeout: 60000
 - takeScreenshot: ios-visual-names-keyboard
 - assertVisible:
     id: names-save

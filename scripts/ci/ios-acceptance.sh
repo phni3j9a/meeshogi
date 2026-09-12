@@ -176,6 +176,7 @@ run_flow() {
 run_flow import-review .maestro/import-review.yaml
 
 if [[ "$acceptance_mode" == visual ]]; then
+  copy_via_helper "$clipboard_wars"
   run_flow ios-visual-review .maestro/ios-visual-review.yaml
   exit 0
 fi
