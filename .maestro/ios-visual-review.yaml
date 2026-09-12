@@ -143,10 +143,15 @@ appId: com.meeshogi.app
 - takeScreenshot: ios-visual-game-board-analysis
 - tapOn:
     id: move-last
-- tapOn:
-    id: move-prev
-    repeat: 13
-    delay: 350
+# Check the displayed ply between individual taps. A burst of repeated taps
+# can stop at the wrong ply on a loaded Simulator.
+- repeat:
+    times: 20
+    while:
+      notVisible: '67 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
 - assertVisible: '67 / 80手'
 - scrollUntilVisible:
     element:
