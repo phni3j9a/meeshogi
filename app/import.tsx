@@ -243,7 +243,7 @@ export default function ImportScreen() {
             autoCorrect={false}
             autoCapitalize="none"
             textAlignVertical="top"
-            placeholder="開始日時：\n先手：\n後手：\n手数----指手---------消費時間--"
+            placeholder={'開始日時：\n先手：\n後手：\n手数----指手---------消費時間--'}
             placeholderTextColor={theme.muted}
             onChangeText={(text) => {
               raw.current = text;

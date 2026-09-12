@@ -11,11 +11,19 @@ env:
 - takeScreenshot: 01-library-empty
 - tapOn:
     id: import-button
+- extendedWaitUntil:
+    visible:
+      id: import-paste
+    timeout: 60000
+- takeScreenshot: 02-import-empty
 - tapOn:
     id: import-paste
 - tapOn:
     text: 'Allow Paste|ペーストを許可'
     optional: true
+- extendedWaitUntil:
+    visible: '.*80手の棋譜を読み取りました.*'
+    timeout: 60000
 - assertVisible: '.*KeroPona.*'
 - assertVisible: '.*asitaka_y.*'
 - takeScreenshot: 02-import
