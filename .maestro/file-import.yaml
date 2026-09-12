@@ -1,6 +1,10 @@
 appId: com.meeshogi.app
 ---
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
 - tapOn: 棋譜
 - tapOn:
     id: import-button
@@ -39,7 +43,15 @@ appId: com.meeshogi.app
 - takeScreenshot: 17-kiou-analysis
 - stopApp
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
 - tapOn: 戦績
+- extendedWaitUntil:
+    visible:
+      id: statistics-screen
+    timeout: 30000
 - tapOn: 全期間
 - assertVisible: '.*2局.*2勝 0敗.*'
 - takeScreenshot: 18-two-games-statistics
@@ -70,6 +82,14 @@ appId: com.meeshogi.app
 - assertVisible: '0 / 77手'
 - stopApp
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
 - tapOn: 戦績
+- extendedWaitUntil:
+    visible:
+      id: statistics-screen
+    timeout: 30000
 - tapOn: 全期間
 - assertVisible: '.*2局.*2勝 0敗.*'

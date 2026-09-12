@@ -18,7 +18,7 @@ trace() {
 trace acceptance.start
 
 # Keep the clipboard inputs in the ignored artifact tree so the exact bytes
-# used by simctl pbcopy remain available with the CI artifact.
+# sent through the CI-only iOS helper remain available with the CI artifact.
 clipboard_wars="$run_dir/clipboard-wars.txt"
 clipboard_kiou="$run_dir/clipboard-kiou.txt"
 printf '%s' 'asitaka_y' > "$clipboard_wars"
@@ -66,7 +66,7 @@ cleanup() {
     wait "$record_pid" 2>/dev/null || true
   fi
   xcrun simctl io "$device" screenshot "$run_dir/final.png" || true
-  xcrun simctl spawn "$device" log show --last 10m --style compact --predicate 'process == "meeshogi"' > "$run_dir/simulator.log" || true
+  xcrun simctl spawn "$device" log show --last 10m --style compact --predicate 'process == "meeshogi" OR process == "MeeshogiFixtures"' > "$run_dir/simulator.log" || true
   exit "$status"
 }
 trap cleanup EXIT
@@ -92,38 +92,59 @@ trace app.install.end
 IOS_FILES_HELPER_OUT="$run_dir/files-helper" \
   bash scripts/ci/ios-fixture-files.sh "$device" "$utf8_fixture" "$shift_jis_fixture"
 
-# The import flow consumes the KIF clipboard. The player-name flows receive
-# their independent real OS clipboard values after the import has been saved.
-pbcopy_file() {
+copy_via_helper() {
   local input_file="$1"
+  local request_id
+  local payload
+  local helper_container
+  local result_path
   local attempt
-  local delay
-  local status=1
 
-  for ((attempt = 1; attempt <= 3; attempt += 1)); do
-    trace "pbcopy.attempt file=$input_file attempt=$attempt/3"
-    # Keep the redirection inside the loop so every retry opens the file again.
-    if xcrun simctl pbcopy "$device" < "$input_file"; then
-      trace "pbcopy.success file=$input_file attempt=$attempt/3 status=0"
-      return 0
-    else
-      status=$?
-      trace "pbcopy.failure file=$input_file attempt=$attempt/3 status=$status"
-    fi
-    if (( attempt < 3 )); then
-      delay=$((attempt * 5))
-      trace "pbcopy.retry file=$input_file backoff=${delay}s"
-      if ! sleep "$delay"; then
-        trace "pbcopy.retry-sleep-failed file=$input_file backoff=${delay}s"
+  if ! request_id="$(python3 -c 'import uuid; print(uuid.uuid4())')"; then
+    trace "clipboard-helper.failure file=$input_file reason=uuid"
+    return 1
+  fi
+  trace "clipboard-helper.start file=$input_file request=$request_id"
+  if ! payload="$(base64 < "$input_file" | tr -d '\r\n')"; then
+    trace "clipboard-helper.failure file=$input_file request=$request_id reason=base64"
+    return 1
+  fi
+  if [[ "$payload" == *$'\n'* || "$payload" == *$'\r'* ]]; then
+    trace "clipboard-helper.failure file=$input_file request=$request_id reason=base64-newline"
+    return 1
+  fi
+  if ! helper_container="$(xcrun simctl get_app_container "$device" com.meeshogi.testfiles data)"; then
+    trace "clipboard-helper.failure file=$input_file request=$request_id reason=container"
+    return 1
+  fi
+  result_path="$helper_container/Library/Caches/clipboard-${request_id}.txt"
+  xcrun simctl terminate "$device" com.meeshogi.testfiles >/dev/null 2>&1 || true
+  if ! xcrun simctl launch "$device" com.meeshogi.testfiles \
+      --clipboard-base64 "$payload" --clipboard-request "$request_id"; then
+    trace "clipboard-helper.failure file=$input_file request=$request_id reason=launch"
+    return 1
+  fi
+
+  for ((attempt = 1; attempt <= 61; attempt += 1)); do
+    if [[ -f "$result_path" ]]; then
+      if cmp -s "$input_file" "$result_path"; then
+        trace "clipboard-helper.end file=$input_file request=$request_id attempts=$attempt"
+        return 0
       fi
+      trace "clipboard-helper.failure file=$input_file request=$request_id reason=mismatch"
+      return 1
+    fi
+    if (( attempt < 61 )); then
+      sleep 2
     fi
   done
-
-  trace "pbcopy.failed file=$input_file attempts=3 status=$status"
-  return "$status"
+  trace "clipboard-helper.failure file=$input_file request=$request_id reason=timeout"
+  return 1
 }
 
-pbcopy_file fixtures/kif/shogiwars.kif
+# The import flow consumes the KIF clipboard. The player-name flows receive
+# their independent real OS clipboard values after the import has been saved.
+copy_via_helper fixtures/kif/shogiwars.kif
 
 run_flow() {
   local name=$1
@@ -141,9 +162,9 @@ run_flow() {
 }
 
 run_flow import-review .maestro/import-review.yaml
-pbcopy_file "$clipboard_wars"
+copy_via_helper "$clipboard_wars"
 run_flow player-names .maestro/player-names.yaml
-pbcopy_file "$clipboard_kiou"
+copy_via_helper "$clipboard_kiou"
 run_flow player-names-kiou .maestro/player-names-kiou.yaml
 run_flow analysis-review .maestro/analysis-review.yaml
 run_flow candidate-review .maestro/candidate-review.yaml

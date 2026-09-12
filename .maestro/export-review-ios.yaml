@@ -17,14 +17,14 @@ appId: com.meeshogi.app
     text: 'Save to Files|ファイルに保存'
 - extendedWaitUntil:
     visible:
-      text: 'On My iPhone|このiPhone内|Meeshogi Fixtures'
+      text: 'On My iPhone|このiPhone内|Meeshogi ?Fixtures'
     timeout: 30000
 # The picker can reopen at the last location. If it is at the root, enter the
 # local-device location; otherwise the helper folder is already visible.
 - tapOn:
     text: 'On My iPhone|このiPhone内'
     optional: true
-- tapOn: Meeshogi Fixtures
+- tapOn: Meeshogi ?Fixtures
 - extendedWaitUntil:
     visible:
       text: 'Save|保存'
