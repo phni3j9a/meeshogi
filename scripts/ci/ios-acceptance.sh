@@ -174,6 +174,7 @@ run_flow() {
   trace "flow.end $name"
 }
 
+run_flow licenses-review .maestro/licenses-review.yaml
 run_flow import-review .maestro/import-review.yaml
 
 if [[ "$acceptance_mode" == visual ]]; then

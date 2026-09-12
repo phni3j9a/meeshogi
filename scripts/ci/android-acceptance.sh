@@ -118,6 +118,7 @@ run_flow() {
     "$flow"
 }
 
+run_flow licenses-review .maestro/licenses-review.yaml
 run_flow import-review .maestro/import-review.yaml
 bash scripts/ci/android-clipboard.sh "$clipboard_wars"
 run_flow player-names .maestro/player-names.yaml
