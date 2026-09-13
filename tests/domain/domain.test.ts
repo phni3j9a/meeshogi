@@ -18,6 +18,7 @@ import {
   type Opening,
   type Settings,
 } from '../../src/domain/model';
+import { InitialPositionSFEN, Move as TsshogiMove, Position, formatKIFMove } from 'tsshogi';
 
 const fixture = (name: string): string => readFileSync(`fixtures/kif/${name}`, 'utf8');
 
@@ -40,6 +41,94 @@ function prefixFixture(
   output.push(`${lastPly + 1} 投了`);
   return output.join('\n');
 }
+
+function generatedKif(
+  usiMoves: readonly string[],
+  shortNotation?: { long: string; short: string },
+): string {
+  const position = Position.newBySFEN(InitialPositionSFEN.STANDARD);
+  if (!position) {
+    throw new Error('failed to create the standard starting position');
+  }
+  let previous: TsshogiMove | undefined;
+  const rows = usiMoves.map((usi, index) => {
+    const move = position.createMoveByUSI(usi);
+    if (!move || !position.isValidMove(move)) {
+      throw new Error(`invalid test move at ply ${index + 1}: ${usi}`);
+    }
+    let notation = formatKIFMove(move, { prev: previous });
+    if (shortNotation) {
+      notation = notation.replace(shortNotation.long, shortNotation.short);
+    }
+    if (!position.doMove(move)) {
+      throw new Error(`failed to apply test move at ply ${index + 1}: ${usi}`);
+    }
+    previous = move;
+    return `${String(index + 1).padStart(4, ' ')} ${notation}`;
+  });
+  return [
+    '開始日時：2026/09/13 00:00:00',
+    '手合割：平手',
+    '手数----指手---------消費時間--',
+    ...rows,
+    `${usiMoves.length + 1} 投了`,
+    `まで${usiMoves.length}手で先手の勝ち`,
+  ].join('\n');
+}
+
+const PROMOTED_MOVE_CASES = [
+  {
+    long: '成香',
+    short: '杏',
+    usiMoves: [
+      '1i1h',
+      '3c3d',
+      '9i9h',
+      '5a4b',
+      '7g7f',
+      '2b4d',
+      '8g8f',
+      '8b7b',
+      '6i7h',
+      '4a3b',
+      '5i6h',
+      '4d1g+',
+      '1h1g',
+      '7a6b',
+      '1g1c+',
+      '7b9b',
+      '1c1d',
+    ],
+  },
+  {
+    long: '成桂',
+    short: '圭',
+    usiMoves: ['9g9f', '5a5b', '8i9g', '8c8d', '9g8e', '7a7b', '8e9c+', '3c3d', '9c9d'],
+  },
+  {
+    long: '成銀',
+    short: '全',
+    usiMoves: [
+      '7i7h',
+      '7c7d',
+      '3i3h',
+      '8a7c',
+      '6g6f',
+      '7c8e',
+      '7h6g',
+      '8e9g',
+      '6g7f',
+      '3a3b',
+      '7f6e',
+      '3c3d',
+      '6e7d',
+      '3b3c',
+      '7d8c+',
+      '4a3a',
+      '8c7c',
+    ],
+  },
+] as const;
 
 function recordFromKif(
   name: string,
@@ -92,10 +181,33 @@ describe('parseKif', () => {
     expect(kiou.result).toBe('black-win');
     expect(kiou.moves).toHaveLength(77);
     expect(kiou.positions).toHaveLength(78);
-    expect(kiou.openings.black.automatic).toBe('third-file');
+    expect(kiou.openings.black.automatic).toBe('unknown');
     expect(kiou.openings.white.automatic).toBe('central');
     expect(wars.openings.black.automatic).toBe('static');
     expect(wars.openings.white.automatic).toBe('unknown');
+  });
+
+  it('accepts short and long names for promoted lance, knight, and silver', () => {
+    for (const testCase of PROMOTED_MOVE_CASES) {
+      const longKif = generatedKif(testCase.usiMoves);
+      const shortKif = generatedKif(testCase.usiMoves, {
+        long: testCase.long,
+        short: testCase.short,
+      });
+      expect(longKif).toContain(testCase.long);
+      expect(shortKif).toContain(testCase.short);
+
+      const longGame = parseKif(longKif);
+      const shortGame = parseKif(shortKif);
+      expect(longGame.rawKif).toBe(longKif);
+      expect(shortGame.rawKif).toBe(shortKif);
+      expect(shortGame.moves.map((move) => move.usi)).toEqual(
+        longGame.moves.map((move) => move.usi),
+      );
+      expect(shortGame.positions).toEqual(longGame.positions);
+      expect(shortGame.result).toBe(longGame.result);
+      expect(shortGame.identity).toBe(longGame.identity);
+    }
   });
 
   it('rejects a notation that tsshogi would otherwise accept with ignoreValidation', () => {
@@ -134,6 +246,41 @@ describe('parseKif', () => {
     expect(blackFourth.openings.black.automatic).toBe('fourth-file');
     expect(whiteFourth.openings.white.automatic).toBe('fourth-file');
     expect(whiteThird.openings.white.automatic).toBe('third-file');
+  });
+
+  it('classifies third-file only on the correct side-specific file and reflects it in stats', () => {
+    const blackThird = parseKif(prefixFixture('kiou.kif', 1, { 1: '   1 ７八飛(28)' }));
+    const blackNotThird = parseKif(prefixFixture('kiou.kif', 1, { 1: '   1 ３八飛(28)' }));
+    const whiteThird = parseKif(prefixFixture('kiou.kif', 2, { 2: '   2 ３二飛(82)' }));
+    expect(blackThird.openings.black.automatic).toBe('third-file');
+    expect(blackNotThird.openings.black.automatic).toBe('unknown');
+    expect(whiteThird.openings.white.automatic).toBe('third-file');
+
+    const bothSides = parseKif(
+      prefixFixture('kiou.kif', 2, {
+        1: '   1 ７八飛(28)',
+        2: '   2 ５二飛(82)',
+      }),
+    );
+    expect(bothSides.openings.black.automatic).toBe('third-file');
+    expect(bothSides.openings.white.automatic).toBe('central');
+    const game: GameRecord = {
+      ...bothSides,
+      id: 'side-specific-third-file',
+      createdAt: '2026-09-13T00:00:00.000Z',
+      favorite: false,
+      lastViewedPly: 0,
+      mySide: 'black',
+      attribution: 'manual',
+      analysis: {},
+    };
+    expect(getStatistics([game], { opening: 'third-file', openingSide: 'self' }).total).toBe(1);
+    expect(getStatistics([game], { opening: 'central', openingSide: 'opponent' }).total).toBe(1);
+    expect(gameFormation(game)).toBe('double-ranging');
+    expect(
+      getStatistics([game]).formations.find(({ formation }) => formation === 'double-ranging')
+        ?.tally.total,
+    ).toBe(1);
   });
 });
 

@@ -25,6 +25,12 @@ import { gameTitle, openingDescription } from '@/ui/game-row';
 import { openMateSession } from '@/ui/mate-session';
 import { useTheme } from '@/ui/theme';
 import { errorMessage, useChoice } from '@/ui/use-choice';
+import {
+  formatEvaluation,
+  isDisplayableMateProof,
+  toEvaluationChartValue,
+  toEvaluationValue,
+} from '@/ui/evaluation';
 import { currentGameAnalysis, isCompatibleAnalysis } from '@/analysis/cache';
 
 type Branch = { origin: number; positions: string[]; moves: string[]; cursor: number };
@@ -76,6 +82,7 @@ export default function GameScreen() {
         : null;
   const candidates =
     currentAnalysis?.candidates.filter((candidate) => validMoves.includes(candidate.usi)) ?? [];
+  const currentEvaluation = toEvaluationValue(candidates[0]);
   const bottomSide: Side = flipped
     ? game?.mySide === 'white'
       ? 'black'
@@ -246,11 +253,7 @@ export default function GameScreen() {
     }
   };
   const proof = currentAnalysis?.mateProof;
-  const proven =
-    settings.showMateBadges &&
-    proof?.status === 'proven' &&
-    (proof.plies === 1 || proof.plies === 3) &&
-    proof.side === position?.turn;
+  const proven = settings.showMateBadges && isDisplayableMateProof(proof, position?.turn);
   if (!game || !sfen)
     return (
       <EmptyState
@@ -355,9 +358,7 @@ export default function GameScreen() {
                 fontVariant: ['tabular-nums'],
               }}
             >
-              {candidates[0]?.scoreCp !== null && candidates[0]?.scoreCp !== undefined
-                ? `${candidates[0].scoreCp > 0 ? '+' : ''}${candidates[0].scoreCp}`
-                : '—'}
+              {formatEvaluation(currentEvaluation)}
             </AppText>
             <AppText variant="caption" tone="secondary">
               先手評価
@@ -394,7 +395,9 @@ export default function GameScreen() {
         </View>
         {!branch && (
           <LineChart
-            values={mainlineAnalysis.map((result) => result?.candidates[0]?.scoreCp ?? null)}
+            values={mainlineAnalysis.map((result) =>
+              toEvaluationChartValue(toEvaluationValue(result?.candidates[0])),
+            )}
             selected={ply}
             onSelect={(next) => go(next)}
             height={82}
@@ -473,9 +476,7 @@ export default function GameScreen() {
                 </View>
                 <AppText style={{ flex: 1 }}>{moveLabel(sfen, candidate.usi)}</AppText>
                 <AppText style={{ fontVariant: ['tabular-nums'] }}>
-                  {candidate.scoreCp !== null
-                    ? `${candidate.scoreCp > 0 ? '+' : ''}${candidate.scoreCp}`
-                    : '—'}
+                  {formatEvaluation(toEvaluationValue(candidate))}
                 </AppText>
                 <Icon name="next" size={16} color={theme.muted} />
               </Pressable>

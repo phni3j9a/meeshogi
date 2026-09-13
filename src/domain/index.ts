@@ -51,8 +51,11 @@ const KIF_PIECES: Record<string, TsshogiPieceType> = {
   玉: TsshogiPieceType.KING,
   王: TsshogiPieceType.KING,
   と: TsshogiPieceType.PROM_PAWN,
+  成香: TsshogiPieceType.PROM_LANCE,
   杏: TsshogiPieceType.PROM_LANCE,
+  成桂: TsshogiPieceType.PROM_KNIGHT,
   圭: TsshogiPieceType.PROM_KNIGHT,
+  成銀: TsshogiPieceType.PROM_SILVER,
   全: TsshogiPieceType.PROM_SILVER,
   馬: TsshogiPieceType.HORSE,
   龍: TsshogiPieceType.DRAGON,
@@ -509,7 +512,7 @@ function inferOpeningForSide(nodes: ImmutableNode[], side: Side): Opening {
   const initialFile = side === 'black' ? 2 : 8;
   const targetFiles: Record<number, Opening> =
     side === 'black'
-      ? { 3: 'third-file', 5: 'central', 6: 'fourth-file', 8: 'opposing' }
+      ? { 5: 'central', 6: 'fourth-file', 7: 'third-file', 8: 'opposing' }
       : { 2: 'opposing', 3: 'third-file', 4: 'fourth-file', 5: 'central' };
   let rookSquare: Square | null = new Square(initialFile, side === 'black' ? 8 : 2);
   let rookAlive = true;

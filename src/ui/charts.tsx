@@ -3,6 +3,7 @@ import { Pressable, useWindowDimensions, View } from 'react-native';
 import Svg, { Circle, Line, Polyline } from 'react-native-svg';
 import { AppText } from './primitives';
 import { useTheme } from './theme';
+import { EVALUATION_CHART_EDGE } from './evaluation';
 
 export function LineChart({
   values,
@@ -21,8 +22,8 @@ export function LineChart({
   const { width: windowWidth } = useWindowDimensions();
   const width = Math.min(windowWidth - 40, 480);
   const chartWidth = width - 26;
-  const min = percent ? 0 : -1500;
-  const max = percent ? 100 : 1500;
+  const min = percent ? 0 : -EVALUATION_CHART_EDGE;
+  const max = percent ? 100 : EVALUATION_CHART_EDGE;
   const x = (i: number) =>
     values.length <= 1 ? chartWidth / 2 : (i / (values.length - 1)) * chartWidth;
   const y = (n: number) =>
