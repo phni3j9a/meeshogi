@@ -6,7 +6,39 @@
 
 ## 状態
 
-仕様と主要9画面のデザインモックを採用済みです。このリポジトリには初期版の仕様、[採用モックとデザイン基準](docs/design/README.md)、開発方針、取り込み検証用の棋譜を置いています。アプリ本体、棋譜パーサー、解析連携、GitHub Actionsのワークフローはまだ実装されていません。
+無料版の機能実装と、今回合意した受入検証を完了しました。[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)で統合前レビュー中です。KIFの取り込み・合法手検証、SQLite保存、戦績集計、Sekireiの端末内解析と分岐検討を利用できます。ログイン・通信・課金は利用条件に含めません。
+
+Androidは実機での主要操作とCIの全14フローを確認しました。iOSはRelease Simulatorで各ページを撮影して目視し、詳細操作・全テーマ・文字拡大・実機性能の未検証分は継続検証として区別しています。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
+
+## 開発
+
+Node.js 22.23.2、Rust 1.96.0を使用します。JavaScript依存は `package-lock.json`、Rust依存は `native/sekirei/Cargo.lock` で固定しています。
+
+```sh
+npm ci
+npm run check
+cargo test --manifest-path native/sekirei/Cargo.toml --locked
+```
+
+ネイティブ解析を含むため、開発用アプリをビルドします。AndroidはJDK 17 / SDK 36 / NDK 27.1.12297006、iOSはmacOS / Xcodeが必要です。`android/` と `ios/` はExpo CNGの生成物として扱います。
+
+```sh
+rustup target add aarch64-linux-android x86_64-linux-android
+cargo install cargo-ndk --version 4.1.2 --locked
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
+npx expo prebuild --platform android --no-install
+npm run android
+# macOS:
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+npx expo prebuild --platform ios --no-install
+bash scripts/engine/build-ios.sh
+pod install --project-directory=ios
+npm run ios
+```
+
+iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインストールします。CIの操作検証と、ビルド済みSimulatorアプリを使う再検証の手順は[開発状況](docs/DEVELOPMENT.md#操作検証の実行)を参照してください。
+
+解析にはsekirei-weightの現行候補 `c-leaf-wrm-seed42` を同梱し、読み込み時にSHA-256を確認します。固定したruntime・モデルの来歴と利用条件は[解析エンジン](docs/ENGINE.md)、戦型の判定条件は[分類ルール](docs/OPENINGS.md)を参照してください。
 
 ## 初期版の体験
 

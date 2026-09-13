@@ -1,0 +1,80 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- tapOn: 棋譜の操作
+- tapOn: お気に入りに追加
+- stopApp
+- launchApp
+- tapOn: お気に入り
+- assertVisible: '.*最近の対局.*1局.*'
+- takeScreenshot: 20-favorite
+- tapOn: '.*KeroPona.*'
+- tapOn: 棋譜の操作
+- tapOn: 対局情報を確認・修正
+- scrollUntilVisible:
+    element:
+      text: 先手の戦型
+    direction: DOWN
+- tapOn: 先手の戦型
+- tapOn: 居飛車
+- assertVisible: '.*居飛車（手動）.*'
+- scrollUntilVisible:
+    element:
+      text: 後手の戦型
+    direction: DOWN
+- tapOn: 後手の戦型
+- tapOn: 四間飛車
+- assertVisible: '.*四間飛車（手動）.*'
+- assertVisible: 対抗形
+- takeScreenshot: 21-manual-openings
+- scrollUntilVisible:
+    element:
+      id: game-result
+    direction: UP
+- tapOn:
+    id: game-result
+- tapOn: 引き分け
+- assertVisible: '.*引き分け（手動）.*'
+- stopApp
+- launchApp
+- tapOn: '戦績.*'
+- tapOn: 全期間
+- assertVisible: '.*2局.*1勝 0敗.*'
+- assertVisible: '.*引き分け 1.*'
+- assertVisible: '100.0'
+- takeScreenshot: 22-draw-excluded-from-win-rate
+- scrollUntilVisible:
+    element:
+      text: 四間飛車
+    direction: DOWN
+- tapOn: 四間飛車
+- takeScreenshot: 23-opening-detail
+# Restore the original result. Opening overrides remain intentionally visible.
+- stopApp
+- launchApp
+- tapOn: '.*KeroPona.*'
+- tapOn: 棋譜の操作
+- tapOn: 対局情報を確認・修正
+- tapOn:
+    id: game-result
+- tapOn: 棋譜の結果に戻す
+- assertVisible: 後手の勝ち
+- stopApp
+- launchApp
+- tapOn: '戦績.*'
+- tapOn: 全期間
+- assertVisible: '.*2局.*2勝 0敗.*'
+- scrollUntilVisible:
+    element:
+      text: '先後：すべて'
+    direction: DOWN
+- tapOn: '先後：すべて'
+- tapOn: 先手
+- scrollUntilVisible:
+    element:
+      text: '.*1局.*1勝 0敗.*'
+    direction: UP
+- assertVisible: '.*1局.*1勝 0敗.*'
+- takeScreenshot: 24-side-filter

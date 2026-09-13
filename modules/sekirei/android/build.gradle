@@ -1,0 +1,62 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.meeshogi'
+version = '0.1.0'
+
+android {
+  namespace 'expo.modules.sekirei'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+    minSdkVersion 24
+  }
+  sourceSets {
+    main {
+      // The model and Rust output are kept once in the app repository. Use
+      // the generated Android project's parent so this also works when Expo
+      // resolves the local module through node_modules.
+      assets.srcDirs = [file("$rootProject.projectDir/../assets/model")]
+      jniLibs.srcDirs = [file("$rootProject.projectDir/../native/target/android-libs")]
+    }
+  }
+}
+
+def repositoryRoot = file("$rootProject.projectDir/../")
+def rustScript = file("$repositoryRoot/scripts/engine/build-android.sh")
+def androidAbis = (findProperty('reactNativeArchitectures') ?: 'arm64-v8a,x86_64').toString()
+def androidPlatform = (findProperty('minSdkVersion') ?: (rootProject.ext.has('minSdkVersion') ? rootProject.ext.minSdkVersion : 24)).toString()
+
+tasks.register('buildSekireiRust', Exec) {
+  workingDir repositoryRoot
+  inputs.files(
+    file("$repositoryRoot/native/sekirei/Cargo.toml"),
+    file("$repositoryRoot/native/sekirei/Cargo.lock"),
+    fileTree("$repositoryRoot/native/sekirei/src"),
+    fileTree("$repositoryRoot/native/sekirei/include"),
+    file("$repositoryRoot/scripts/engine/build-android.sh"),
+    file("$repositoryRoot/scripts/engine/verify-model.mjs"),
+    file("$repositoryRoot/assets/model/c-leaf-wrm-seed42.bin")
+  )
+  inputs.property('androidAbis', androidAbis)
+  inputs.property('androidPlatform', androidPlatform)
+  outputs.dir(file("$repositoryRoot/native/target/android-libs"))
+  environment 'MEESHOGI_ANDROID_ABIS', androidAbis
+  environment 'MEESHOGI_ANDROID_PLATFORM', androidPlatform
+  commandLine 'bash', rustScript.absolutePath
+}
+
+tasks.named('preBuild').configure {
+  dependsOn tasks.named('buildSekireiRust')
+}
+
+// React Native treats the repository root as a bundle input. The Rust output
+// lives below that root, so Gradle also needs the bundle's explicit dependency.
+def rustBuild = tasks.named('buildSekireiRust')
+rootProject.project(':app').tasks.matching {
+  it.name.startsWith('createBundle') && it.name.endsWith('JsAndAssets')
+}.configureEach {
+  dependsOn rustBuild
+}

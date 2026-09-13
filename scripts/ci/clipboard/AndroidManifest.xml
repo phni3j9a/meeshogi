@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.meeshogi.testclipboard">
+  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+  <application android:label="meeshogi test clipboard" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+    <activity android:name=".ClipboardActivity" android:exported="true" />
+    <activity
+        android:name=".ShareReceiverActivity"
+        android:exported="true"
+        android:label="Meeshogi Export Test"
+        android:launchMode="singleTop">
+      <intent-filter android:label="Meeshogi Export Test">
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/plain" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

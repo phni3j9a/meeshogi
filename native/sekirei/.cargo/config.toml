@@ -1,0 +1,5 @@
+# The upstream Sekirei workspace enables `target-cpu=native`, which is unsafe
+# for a mobile cross build. Keep the bridge portable for every configured
+# Android/iOS architecture.
+[build]
+rustflags = []

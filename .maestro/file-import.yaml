@@ -1,0 +1,95 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '棋譜.*'
+- tapOn:
+    id: import-button
+- runFlow:
+    file: subflows/pick-kif.yaml
+    env:
+      KIF_FILE: kiou.kif
+- assertVisible: '.*77手の棋譜を読み取りました.*'
+- swipe:
+    start: 95%, 85%
+    end: 95%, 30%
+- scrollUntilVisible:
+    element:
+      text: サービス
+    direction: DOWN
+- tapOn: サービス
+- tapOn: 棋桜
+- scrollUntilVisible:
+    element:
+      id: import-save
+    direction: DOWN
+- assertVisible: '.*登録した対局者名から判定しました.*'
+- takeScreenshot: 16-file-import-confirmation
+- tapOn:
+    id: import-save
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- assertVisible: '0 / 77手'
+- scrollUntilVisible:
+    element:
+      id: analysis-ready
+    direction: DOWN
+    timeout: 180000
+- takeScreenshot: 17-kiou-analysis
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '戦績.*'
+- extendedWaitUntil:
+    visible:
+      id: statistics-screen
+    timeout: 30000
+- tapOn: 全期間
+- assertVisible: '.*2局.*2勝 0敗.*'
+- takeScreenshot: 18-two-games-statistics
+# The same game in Shift_JIS must parse and be rejected as a duplicate.
+- tapOn: '棋譜.*'
+- tapOn:
+    id: import-button
+- runFlow:
+    file: subflows/pick-kif.yaml
+    env:
+      KIF_FILE: kiou-shift-jis.kif
+- assertVisible: '.*77手の棋譜を読み取りました.*'
+- swipe:
+    start: 95%, 85%
+    end: 95%, 30%
+- scrollUntilVisible:
+    element:
+      id: import-save
+    direction: DOWN
+- tapOn:
+    id: import-save
+- scrollUntilVisible:
+    element:
+      text: '.*この棋譜は保存済みです.*'
+    direction: UP
+- takeScreenshot: 19-duplicate-shift-jis
+- tapOn: 保存済みの棋譜を開く
+- assertVisible: '0 / 77手'
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '戦績.*'
+- extendedWaitUntil:
+    visible:
+      id: statistics-screen
+    timeout: 30000
+- tapOn: 全期間
+- assertVisible: '.*2局.*2勝 0敗.*'

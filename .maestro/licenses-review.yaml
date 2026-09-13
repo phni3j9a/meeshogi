@@ -1,0 +1,35 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*ライセンス.*'
+    direction: DOWN
+    timeout: 30000
+- tapOn: '.*ライセンス.*'
+- extendedWaitUntil:
+    visible:
+      id: licenses-screen
+    timeout: 30000
+- assertVisible: '.*@babel/code-frame@.*'
+- assertVisible: '.*MIT License.*'
+- takeScreenshot: licenses-notice
+- scrollUntilVisible:
+    element:
+      id: license-packages-0
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+- takeScreenshot: licenses-packages
+- stopApp

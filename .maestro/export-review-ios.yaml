@@ -1,0 +1,34 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- tapOn: 棋譜の操作
+- tapOn: KIFを書き出す
+- takeScreenshot: 33-ios-system-share
+# Save to Files is a system share-sheet action. It may be below the first
+# row of activities on a compact Simulator, so scroll before selecting it.
+- scrollUntilVisible:
+    element:
+      text: 'Save to Files|ファイルに保存'
+    direction: DOWN
+    timeout: 30000
+- tapOn:
+    text: 'Save to Files|ファイルに保存'
+- extendedWaitUntil:
+    visible:
+      text: 'On My iPhone|このiPhone内|Meeshogi ?Fixtures'
+    timeout: 30000
+# The picker can reopen at the last location. If it is at the root, enter the
+# local-device location; otherwise the helper folder is already visible.
+- tapOn:
+    text: 'On My iPhone|このiPhone内'
+    optional: true
+- tapOn: Meeshogi ?Fixtures
+- extendedWaitUntil:
+    visible:
+      text: 'Save|保存'
+    timeout: 30000
+- tapOn:
+    text: 'Save|保存'
+- takeScreenshot: 34-ios-files-saved

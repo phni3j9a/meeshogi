@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "meeshogi",
+    "slug": "meeshogi",
+    "version": "0.1.0",
+    "icon": "./assets/brand/icon.png",
+    "scheme": "meeshogi",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.meeshogi.app",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.meeshogi.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/brand/adaptive-foreground.png",
+        "monochromeImage": "./assets/brand/monochrome.png",
+        "backgroundColor": "#FAF9F6"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-sharing",
+      "expo-image",
+      "expo-build-properties",
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

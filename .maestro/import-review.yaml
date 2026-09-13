@@ -1,0 +1,73 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+  IMPORT_SAVE_TIMEOUT: ${IMPORT_SAVE_TIMEOUT || 30000}
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- takeScreenshot: 01-library-empty
+- tapOn:
+    id: import-button
+- extendedWaitUntil:
+    visible:
+      id: import-paste
+    timeout: 60000
+- takeScreenshot: 02-import-empty
+- tapOn:
+    id: import-paste
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- extendedWaitUntil:
+    visible: '.*80手の棋譜を読み取りました.*'
+    timeout: 60000
+- assertVisible: '.*KeroPona.*'
+- assertVisible: '.*asitaka_y.*'
+- takeScreenshot: 02-import
+# Scroll the sheet outside the independently scrollable KIF text field.
+- swipe:
+    start: 95%, 85%
+    end: 95%, 30%
+- scrollUntilVisible:
+    element:
+      id: import-save
+    direction: DOWN
+- tapOn:
+    id: import-save
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: ${IMPORT_SAVE_TIMEOUT}
+- scrollUntilVisible:
+    element:
+      id: analysis-ready
+    direction: DOWN
+    timeout: 180000
+- takeScreenshot: 03-analysis
+- tapOn:
+    id: analysis-stop
+    optional: true
+- tapOn:
+    id: move-next
+- assertVisible: '1 / 80手'
+- takeScreenshot: 04-replay
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- assertVisible: '.*KeroPona.*'
+- takeScreenshot: 05-library-restored
+- tapOn: '設定.*'
+- assertVisible:
+    id: settings-screen
+- takeScreenshot: 06-settings
+- tapOn: '戦績.*'
+- assertVisible:
+    id: statistics-screen
+- takeScreenshot: 07-statistics

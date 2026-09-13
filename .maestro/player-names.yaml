@@ -1,0 +1,31 @@
+# The OS clipboard contains asitaka_y. Paste avoids Japanese IME transliteration.
+appId: com.meeshogi.app
+---
+- launchApp
+- tapOn: '設定.*'
+- tapOn:
+    id: player-names-link
+- tapOn:
+    id: names-shogiwars
+- eraseText: 100
+- longPressOn:
+    id: names-shogiwars
+- tapOn: 'Paste|貼り付け|ペースト'
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- assertVisible: '.*asitaka_y.*'
+- takeScreenshot: 08-player-names
+- hideKeyboard
+- tapOn:
+    id: names-save
+- tapOn: 保存して反映
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- tapOn: '戦績.*'
+- tapOn: 全期間
+- assertVisible: '.*1局.*1勝 0敗.*'
+- assertVisible: '100.0'
+- takeScreenshot: 09-one-win

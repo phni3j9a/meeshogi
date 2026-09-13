@@ -1,0 +1,53 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- tapOn: '.*KeroPona.*'
+- tapOn:
+    id: move-first
+- scrollUntilVisible:
+    element:
+      id: candidate-0
+    direction: DOWN
+- tapOn:
+    id: candidate-0
+- assertVisible: 分岐検討
+- scrollUntilVisible:
+    element:
+      text: '0手目から分岐'
+    direction: UP
+- takeScreenshot: 45-candidate-variation
+- tapOn:
+    id: move-first
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - pressKey: Back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: 本譜に戻る
+- assertVisible: '0 / 80手'
+- scrollUntilVisible:
+    element:
+      id: analysis-focus
+    direction: DOWN
+- tapOn:
+    id: analysis-focus
+- extendedWaitUntil:
+    visible:
+      id: focused-analysis-ready
+    timeout: 180000
+- takeScreenshot: 46-focused-analysis
+- stopApp
+- launchApp
+- tapOn: '.*KeroPona.*'
+- assertVisible: '0 / 80手'
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- assertNotVisible:
+    id: focused-analysis-ready
+- takeScreenshot: 47-mainline-after-candidate
