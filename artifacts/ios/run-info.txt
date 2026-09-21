@@ -1,0 +1,26 @@
+meeshogi iOS acceptance validation (visual mode)
+================================================
+commit:        29cd8e2f2b3f2586db87489cf464c118ecfcf503 (origin/main, merge of PR #9)
+date:          2026-09-21 UTC
+host:          macOS arm64 (Apple Silicon), Xcode 26.6 (17F113), iphonesimulator26.5 SDK
+simulator:     iPhone 18 Pro, iOS 27.0 (udid 1308A109-3EE0-4711-9287-85246639DBC7)
+run dir:       runs/20260921T103852Z-10350
+
+pipeline:
+  expo prebuild --platform ios --no-install   OK
+  scripts/engine/build-ios.sh                 OK (MeeshogiSekireiCore.xcframework)
+  pod install                                 OK (110 pods)
+  xcodebuild Release iphonesimulator arm64    BUILD SUCCEEDED (see build.log)
+  scripts/ci/ios-acceptance.sh (visual)       exit 0 (see runs/<id>/timeline.log)
+
+flows (maestro junit, tests=1 failures=0 each):
+  licenses-review     PASSED (38s)
+  import-review       PASSED (49s)
+  ios-visual-review   PASSED (2m 25s)
+
+notes:
+  - ios-visual-review/logs/device-simulator.log.gz was gzip-compressed in place
+    (raw log was 109M, over GitHub's 100MB file limit).
+  - xcodebuild initially reported "iOS 26.5 is not installed"; resolved via
+    `xcodebuild -downloadPlatform iOS` (installed iOS 26.5 sim runtime 23F77).
+  - ios-fixture-files.sh was run with IOS_SIM_ARCH=arm64 (host is arm64).
