@@ -2,7 +2,7 @@
 
 ## 現在地
 
-2026年9月13日、Issue #4の無料版M1〜M3の機能実装と、今回合意した受入検証を完了した。[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)は統合前レビューの状態で、未マージ。Expo SDK 57 / React Native 0.86.3、tsshogi 2.3.4、SQLiteとRustの解析経路を採用し、`.github/workflows/mobile.yml` で共通ロジック・Android・iOSを検証する。
+2026年9月13日、Issue #4の無料版M1〜M3の機能実装と、今回合意した受入検証を完了した。[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)は統合前レビューの状態で、未マージ。Expo SDK 57 / React Native 0.86.3、tsshogi 2.3.4、SQLiteとRustの解析経路を採用した。2026年9月21日にモバイル受入をDevin Cloud常駐セッションへ移行し（Issue #8）、GitHub Actionsの `ci.yml` は共通ロジック・型検査・Rustテストのみを検証する。
 
 2026年9月13日時点で、TypeScript・SQLiteの47テストと型検査、実モデルを使うRustの13テストが通過した。日時表記の違う同一棋譜の重複防止、保存待ち中の先後戦型の連続修正、解析停止・条件変更・結果保存の競合、225局の一括読込と後半のデータ破損時の保持も回帰対象に含む。
 
@@ -64,9 +64,44 @@ AIチャット・LLM解説、ログイン、クラウド同期、課金、分岐
 
 M1〜M3で無料の初期版を構成する。LLM・課金は次の独立した開発段階とする。
 
-## GitHub Actionsの検証方針
+## 検証方針
 
-meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機能に合わせて検証する。自動実行はコミット単位で重複を整理し、手動実行はrun IDごとに独立させる。遅れて到着した古いpushイベントが、新しいコミットや手動の受入検証をキャンセルしないようにする。不要になった手動実行は明示的に停止する。
+meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機能に合わせて検証する。2026年9月から、エミュレーター／Simulatorを使う受入検証はDevin Cloudの常駐セッションで実行する。GitHub Actionsの `ci.yml` は共通ロジック・型検査・Rustテストの高速チェックのみを担い、モバイル実機相当の受入はブロックするstatus checkにはしない。
+
+## Devin Cloudのモバイル検証
+
+受入検証は次の常駐セッションで実行する。
+
+| セッション | 環境 | 用途 |
+| --- | --- | --- |
+| [`a1f26864422748319e24fcab5b2b0e85`](https://app.devin.ai/sessions/a1f26864422748319e24fcab5b2b0e85) | Devin Cloud macOS (Apple Silicon) | iOS Simulator受入（visual / full） |
+| [`43b7a4407f3b4965a5bafba70b089b7d`](https://app.devin.ai/sessions/43b7a4407f3b4965a5bafba70b089b7d) | Devin Cloud Linux (KVM) | Android ビルド・エミュレーター・Maestro受入 |
+
+実行の流れ:
+
+1. 検証したいコミットとスイートをMain（このCLI）へ依頼する。MainがSessions APIで対象セッションへ指示を送り、完了まで監視する。
+2. セッションは `git fetch && git reset --hard <SHA>` で正確なコミットへ合わせ、`npm install`・prebuild・ビルド・受入スクリプトを実行する。永続VMのツールチェーンは再利用するが、VMの状態をソースの正本として扱わない。
+3. 結果は `artifacts/<OS>/` ごと `evidence/<platform>-<yyyymmdd>` のorphanブランチへpushされる。Mainがブランチをfetchしてスクリーンショットを実際に開き、証拠つきで報告する。最終判定は人間が行う。
+4. 失敗時は同じセッションでその場調査できる（liveのadb/xcrun、エミュレーター状態の観察）。これがホスト型ランナーのログだけの運用に対する利点。
+
+セッションはDevin Web UIでSWE-2モードとして手動作成する（Sessions APIはSWE-2を選べない）。汚染・コンテキスト圧迫で作り直す場合は新しいSWE-2セッションを立て、上の表のIDを更新する。Linux側は `.devin/blueprint.yaml` のスナップショットでツールチェーンが暖機済みになる。macOS側は現状blueprintの `runs-on: macos` ビルドがこのorgでは利用できないため、新規セッションへ次のブートストラップを1回送る:
+
+```bash
+mkdir -p ~/.cargo/bin
+RUSTUP_BIN="$(brew --prefix rustup)/libexec/bin/rustup"
+for t in cargo rustc rustdoc rustfmt cargo-clippy clippy-driver cargo-fmt; do
+  ln -sf "$RUSTUP_BIN" "$HOME/.cargo/bin/$t"
+done
+export PATH="$HOME/.cargo/bin:$PATH"
+rustup default 1.96.0
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+HOMEBREW_NO_AUTO_UPDATE=1 brew install cocoapods node@22
+brew link --overwrite node@22 || true
+bash scripts/ci/install-maestro.sh  # RUNNER_TEMP未設定時は/tmp配下
+echo 'export PATH="$HOME/.cargo/bin:/opt/homebrew/opt/node@22/bin:$PATH"' >> ~/.zprofile
+```
+
+`/opt/homebrew/bin/rustup` はargv\[0]を落とすbrewのラッパーなので、proxyはlibexecの実バイナリへリンクする。
 
 | 検証           | 必要な証拠                                                                           |
 | -------------- | ------------------------------------------------------------------------------------ |
@@ -85,7 +120,7 @@ meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機
 
 ## 操作検証の実行
 
-`.maestro/` にライセンス・取り込み・対局者名・全局解析・候補手・分岐・詰み・ファイル・戦績修正・表示・KIF出力・背景停止・文字拡大・検索・削除のフローを置く。CIでは次のスクリプトがOSのクリップボード、ファイル入力、録画、実行結果をまとめる。
+`.maestro/` にライセンス・取り込み・対局者名・全局解析・候補手・分岐・詰み・ファイル・戦績修正・表示・KIF出力・背景停止・文字拡大・検索・削除のフローを置く。受入実行では次のスクリプトがOSのクリップボード、ファイル入力、録画、実行結果をまとめる。いずれもDevin Cloudの該当セッション内で実行される。
 
 ```sh
 # ビルド済みAPKと接続済みAndroid emulator/deviceを使用
@@ -98,15 +133,9 @@ bash scripts/ci/ios-acceptance.sh
 IOS_ACCEPTANCE_MODE=full bash scripts/ci/ios-acceptance.sh
 ```
 
-受入フローはアプリのデータを消去して固定サンプルを取り込む。AndroidとiOSのfullモードは、最後にサンプル1局を削除する。両OSで最初にライセンス原文と対象パッケージ一覧を撮影する。iOSの既定visualモードは、その後の取り込みと基本解析を通して、主要9画面と対局情報・ライセンスを撮影する。個人の棋譜を保存したアプリでは実行しない。クリップボード・ファイル共有を確認する補助アプリはCI専用で、製品アプリへ同梱しない。AndroidとiOSのfullモードでは、出力KIFを共有先から回収し、原本とバイト単位で比較する。各回の証拠は `artifacts/<OS>/runs/` の個別ディレクトリへ保存する。
+受入フローはアプリのデータを消去して固定サンプルを取り込む。AndroidとiOSのfullモードは、最後にサンプル1局を削除する。両OSで最初にライセンス原文と対象パッケージ一覧を撮影する。iOSの既定visualモードは、その後の取り込みと基本解析を通して、主要9画面と対局情報・ライセンスを撮影する。個人の棋譜を保存したアプリでは実行しない。クリップボード・ファイル共有を確認する補助アプリはCI専用で、製品アプリへ同梱しない。AndroidとiOSのfullモードでは、出力KIFを共有先から回収し、原本とバイト単位で比較する。各回の証拠は `artifacts/<OS>/runs/` の個別ディレクトリへ保存し、実行後にevidenceブランチへpushする。
 
-iOSの通常CIはビルド直後に `ios-simulator-app` artifactを保存する。操作フローだけを修正した場合は、同じブランチの `workflow_dispatch` で `ios_app_run_id` にその実行番号を指定して再検証できる。
-
-```sh
-gh workflow run mobile.yml --ref feat/4-free-mobile-app -f ios_app_run_id=<元の実行番号>
-```
-
-再利用は同リポジトリ・同ワークフローの完了したpush／手動実行を対象とし、アプリ・ネイティブ・モデル・設定・ワークフローのソース一致とアーカイブのSHA-256を検査する。これらが変わった場合は通常ビルドが必要。`.maestro/`、CIスクリプト、文書の変更では同じアプリを使える。再検証だけの実行では共通ロジック・Android・通常iOSビルドをスキップするため、両OSを含む通常CIの代わりにはしない。
+常駐セッションではビルド済みの `.app` がVM上に残るため、操作フロー（`.maestro/`・受入スクリプト・文書）だけを修正した場合は `scripts/ci/ios-app-artifact.sh` の package / verify / restore で同じアプリを再利用して再検証できる。再利用は製品ソース（`app`・`src`・`modules`・`native`・`assets`・`scripts/engine`・`ci.yml` 等）のフィンガープリント一致とSHA-256を検査した場合に限る。製品・ネイティブ・モデル・設定が変わった場合は通常ビルドが必要。再検証だけの実行は両OSを含む受入の代わりにはしない。
 
 ## 取り込み・将棋ロジックの重点確認
 
