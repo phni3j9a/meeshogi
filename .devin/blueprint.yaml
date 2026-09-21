@@ -1,0 +1,220 @@
+# Devin Cloud blueprint for meeshogi.
+#
+# New sessions created for this repository boot with the mobile validation
+# toolchain already installed, so validation sessions can be recreated freely
+# (fresh context, warm VM). See docs/DEVELOPMENT.md ("Devin Cloudのモバイル検証")
+# for the validation runbook.
+#
+# Multi-document blueprint: one document per platform. `runs-on` selects the
+# platform each document builds a snapshot for.
+
+runs-on: linux
+
+initialize:
+  - name: "Pinned Node.js 22"
+    run: |
+      export NVM_DIR="$HOME/.nvm"
+      if [ -s "$NVM_DIR/nvm.sh" ]; then
+        . "$NVM_DIR/nvm.sh"
+        nvm install 22.23.2
+        nvm alias default 22.23.2
+        echo "export NVM_DIR=\"$HOME/.nvm\"" >> "$ENVRC"
+        echo "PATH=\"$NVM_DIR/versions/node/v22.23.2/bin:\$PATH\"" >> "$ENVRC"
+      else
+        echo "nvm not present; keeping the image Node" >&2
+      fi
+
+  - name: "Pinned Rust toolchain and Android targets"
+    run: |
+      if ! command -v rustup >/dev/null 2>&1; then
+        curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.96.0 --profile minimal
+        . "$HOME/.cargo/env"
+      fi
+      echo "PATH=\"$HOME/.cargo/bin:\$PATH\"" >> "$ENVRC"
+      rustup toolchain install 1.96.0 --profile minimal
+      rustup default 1.96.0
+      rustup target add aarch64-linux-android x86_64-linux-android
+      cargo install cargo-ndk --version 4.1.2 --locked
+
+  - name: "Android SDK packages"
+    run: |
+      export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+      yes | sdkmanager --licenses >/dev/null 2>&1 || true
+      sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0" "ndk;27.1.12297006" "cmake;3.22.1" "system-images;android-36;google_apis;x86_64"
+      JAVA_HOME_DETECTED="$(dirname "$(dirname "$(readlink -f "$(command -v javac || command -v java)")")")"
+      {
+        echo "export ANDROID_HOME=\"$HOME/android-sdk\""
+        echo "export ANDROID_NDK_HOME=\"\$ANDROID_HOME/ndk/27.1.12297006\""
+        echo "export ANDROID_NDK_ROOT=\"\$ANDROID_NDK_HOME\""
+        echo "export JAVA_HOME=\"$JAVA_HOME_DETECTED\""
+        echo 'export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"'
+      } >> "$ENVRC"
+
+  - name: "Android API 36 AVD (pixel_7, google_apis, x86_64)"
+    run: |
+      export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/emulator:$PATH"
+      export JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac || command -v java)")")")}"
+      avdmanager list device | grep -q 'id: .*pixel_7' \
+        && echo "no" | avdmanager create avd -n acceptance -k "system-images;android-36;google_apis;x86_64" --device pixel_7 --force \
+        || echo "no" | avdmanager create avd -n acceptance -k "system-images;android-36;google_apis;x86_64" --force
+
+  - name: "Maven Central mirror workaround"
+    run: |
+      mkdir -p "$HOME/.gradle"
+      cat > "$HOME/.gradle/init.gradle" <<'GRADLE'
+      // Maven Central is blocked by the org network policy.
+      // Route all repositories through Google's official Maven Central mirror.
+      // plugins.gradle.org redirects artifact downloads to blocked Maven Central,
+      // so plugin resolution also needs a mirror of the plugin portal.
+      // beforeSettings fires for every build in the composite, including
+      // includeBuild() builds such as @react-native/gradle-plugin.
+      def mcMirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+      def pluginMirror = 'https://maven.aliyun.com/repository/gradle-plugin/'
+      beforeSettings { settings ->
+          settings.pluginManagement {
+              repositories {
+                  maven { url mcMirror }
+                  maven { url pluginMirror }
+                  google()
+                  gradlePluginPortal()
+                  mavenCentral()
+              }
+          }
+          try {
+              settings.dependencyResolutionManagement {
+                  repositories {
+                      maven { url mcMirror }
+                      google()
+                  }
+              }
+          } catch (ignored) {
+              // older Gradle without dependencyResolutionManagement
+          }
+      }
+      allprojects {
+          buildscript {
+              repositories {
+                  maven { url mcMirror }
+                  google()
+              }
+          }
+          repositories {
+              maven { url mcMirror }
+              google()
+          }
+      }
+      GRADLE
+
+  - name: "Maestro 2.10.0 (pinned, sha256-verified)"
+    run: |
+      dest="$HOME/maestro-2.10.0"
+      mkdir -p "$dest"
+      curl --fail --location --retry 3 https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.10.0/maestro.zip -o /tmp/maestro.zip
+      python3 - /tmp/maestro.zip <<'PY'
+      import hashlib, sys
+      assert hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest() == "29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991"
+      PY
+      unzip -q /tmp/maestro.zip -d "$dest"
+      echo "PATH=\"$dest/maestro/bin:\$PATH\"" >> "$ENVRC"
+      rm /tmp/maestro.zip
+
+maintenance:
+  - name: "Install JavaScript dependencies"
+    run: npm install
+
+knowledge:
+  - name: validation
+    contents: |
+      Mobile validation runs on this session per docs/DEVELOPMENT.md
+      ("Devin Cloudのモバイル検証"). Common flow:
+      git fetch origin && git reset --hard <SHA> && npm install.
+      Android: npx expo prebuild --platform android --no-install, boot the
+      `acceptance` AVD headless (emulator -avd acceptance -no-window -gpu
+      swiftshader -no-snapshot -noaudio -no-boot-anim), then
+      (cd android && ./gradlew :app:assembleRelease
+      -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon --max-workers=2),
+      cp the APK to artifacts/android/meeshogi.apk, and run
+      bash scripts/ci/android-acceptance.sh.
+      Push artifacts/ to an evidence/<platform>-<yyyymmdd> orphan branch after
+      each run and report the branch, commit, and flow results.
+  - name: test
+    contents: |
+      Fast checks (also in ci.yml): npm run check, npx expo install --check,
+      cargo test --manifest-path native/sekirei/Cargo.toml --locked.
+      Rust toolchain is pinned to 1.96.0.
+
+---
+runs-on: macos
+
+initialize:
+  - name: "Rust proxies and iOS targets"
+    run: |
+      # The macOS image ships rustup via Homebrew (rustup home ~/.rustup, with
+      # the iOS targets already installed), but brew's rustup does not create
+      # the ~/.cargo/bin proxies, so `rustc`/`cargo` do not resolve on PATH.
+      # rustup acts as a proxy when invoked under a tool name, so link the
+      # proxies ourselves and put them on PATH via ENVRC.
+      # NOTE: /opt/homebrew/bin/rustup is a brew shell wrapper that drops
+      # argv[0]; proxies must link to the real binary under libexec.
+      mkdir -p "$HOME/.cargo/bin"
+      RUSTUP_BIN="$(brew --prefix rustup)/libexec/bin/rustup"
+      for tool in cargo rustc rustdoc rustfmt cargo-clippy clippy-driver cargo-fmt; do
+        ln -sf "$RUSTUP_BIN" "$HOME/.cargo/bin/$tool"
+      done
+      export PATH="$HOME/.cargo/bin:$PATH"
+      rustup toolchain install 1.96.0 --profile minimal
+      rustup default 1.96.0
+      rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+      echo "PATH=\"$HOME/.cargo/bin:\$PATH\"" >> "$ENVRC"
+
+  - name: "Pinned Node.js 22"
+    run: |
+      HOMEBREW_NO_AUTO_UPDATE=1 brew install node@22
+      brew link --overwrite node@22 || true
+      echo "PATH=\"/opt/homebrew/opt/node@22/bin:\$PATH\"" >> "$ENVRC"
+
+  - name: "iOS test dependencies"
+    run: |
+      HOMEBREW_NO_AUTO_UPDATE=1 brew install cocoapods
+
+  - name: "Maestro 2.10.0 (pinned, sha256-verified)"
+    run: |
+      dest="$HOME/maestro-2.10.0"
+      mkdir -p "$dest"
+      curl --fail --location --retry 3 https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.10.0/maestro.zip -o /tmp/maestro.zip
+      python3 - /tmp/maestro.zip <<'PY'
+      import hashlib, sys
+      assert hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest() == "29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991"
+      PY
+      unzip -q /tmp/maestro.zip -d "$dest"
+      echo "PATH=\"$dest/maestro/bin:\$PATH\"" >> "$ENVRC"
+      rm /tmp/maestro.zip
+
+maintenance:
+  - name: "Install JavaScript dependencies"
+    run: npm install
+
+knowledge:
+  - name: validation
+    contents: |
+      Mobile validation runs on this session per docs/DEVELOPMENT.md
+      ("Devin Cloudのモバイル検証"). Common flow:
+      git fetch origin && git reset --hard <SHA> && npm install.
+      iOS: npx expo prebuild --platform ios --no-install,
+      bash scripts/engine/build-ios.sh, pod install --project-directory=ios,
+      then xcodebuild -workspace ios/meeshogi.xcworkspace -scheme meeshogi
+      -configuration Release -sdk iphonesimulator -destination
+      'generic/platform=iOS Simulator' -derivedDataPath <dd>
+      CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
+      (ARCHS=arm64 is required on this Apple Silicon host; the retired Intel
+      runner used x86_64), package the .app with
+      scripts/ci/ios-app-artifact.sh if it will be reused, then run
+      bash scripts/ci/ios-acceptance.sh (IOS_ACCEPTANCE_MODE=full for the
+      extended flow set).
+      Push artifacts/ to an evidence/<platform>-<yyyymmdd> orphan branch after
+      each run and report the branch, commit, and flow results.
+  - name: test
+    contents: |
+      Fast checks (also in ci.yml): npm run check, npx expo install --check,
+      cargo test --manifest-path native/sekirei/Cargo.toml --locked.
+      Rust toolchain is pinned to 1.96.0.

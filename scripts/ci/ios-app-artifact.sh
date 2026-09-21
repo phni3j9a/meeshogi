@@ -49,7 +49,7 @@ source_files() {
   fi
   # The replay must use an app built under this exact CI/build contract. A
   # workflow change therefore requires a fresh native artifact.
-  printf '%s\n' '.github/workflows/mobile.yml' >> "$root_file_list"
+  printf '%s\n' '.github/workflows/ci.yml' >> "$root_file_list"
 
   # Keep root-level build/configuration inputs explicit. Globs that have no
   # match are harmless because each candidate is checked with -f first.
