@@ -17,7 +17,7 @@ appId: com.meeshogi.app
     direction: DOWN
 - tapOn: 解析の長さ
 - tapOn: 標準
-- tapOn: '棋譜.*'
+- tapOn: '棋譜$'
 - extendedWaitUntil:
     visible:
       text: '.*KeroPona.*'
@@ -44,6 +44,18 @@ appId: com.meeshogi.app
     id: move-prev
     repeat: 39
     delay: 350
+- runFlow:
+    when:
+      visible: '42 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
+- runFlow:
+    when:
+      visible: '40 / 80手'
+    commands:
+      - tapOn:
+          id: move-next
 - assertVisible: '41 / 80手'
 - scrollUntilVisible:
     element:
