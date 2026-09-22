@@ -1,0 +1,25 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- tapOn: 棋譜の操作
+- tapOn: KIFを書き出す
+- runFlow:
+    when:
+      visible: 'KIFを書き出す'
+    commands:
+      - tapOn: KIFを書き出す
+- takeScreenshot: 33-ios-system-share
+# SharesheetRemoteUI and the document-picker are remote UIs: their elements
+# are not in the queried a11y tree, so text taps miss (scrim dismiss). Drive
+# by coordinates: Save to Files icon, Meeshogi Fixtures folder, Save button.
+- tapOn:
+    point: '38%,89%'
+- takeScreenshot: 33b-files-dialog
+- tapOn:
+    point: '18%,28%'
+- takeScreenshot: 34-ios-files-folder
+- tapOn:
+    point: '87%,11%'
+- takeScreenshot: 34-ios-files-saved

@@ -1,0 +1,23 @@
+# The OS clipboard contains シシ神, seeded by the acceptance script.
+appId: com.meeshogi.app
+---
+- launchApp
+- tapOn: '設定.*'
+- tapOn:
+    id: player-names-link
+- tapOn:
+    id: names-kiou
+- eraseText: 100
+- longPressOn:
+    id: names-kiou
+- tapOn: 'Paste|貼り付け|ペースト'
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- assertVisible: '.*シシ神.*'
+- tapOn: '完了.*'
+- takeScreenshot: 08-player-names-both-services
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000

@@ -149,3 +149,75 @@ mate SFEN: {"status":"complete","terminal":"checkmate","nodes":0,...}
   recording; the host `ps` CPU burst on the app PID is the positive evidence
   that the retry engine run happened.
 - No tracked files modified. All helper flows live under `helpers/`.
+
+---
+
+# RUN-D — f376ee7 suite-wiring validation (2026-09-22)
+
+Scope: full acceptance suite in the NEW order (analysis-partial-review wired
+between analysis-review and candidate-review; background-review initial
+asserts updated for the shared 50k state). Product code is identical to
+1887617 (RUN-C) — `.maestro/**` + runner scripts only — so RUN-C product
+checks stand; this run validates the suite definition end-to-end on iOS.
+
+## Build / environment
+
+- Commit: `f376ee7` (issue-7-engine-correctness). `npm ci`; product code
+  unchanged vs 1887617 → existing RUN-C binary reused (verified: no
+  src/**, native/**, package.json diffs).
+- Device: iPhone 18 Pro, iOS 27.0 (udid 1308A109-3EE0-4711-9287-85246639DBC7)
+- Run dir: `runs/20260922T184318Z-12026/` (junit.xml per flow, screenshots,
+  hierarchy dumps, commands.json per step)
+
+## Per-flow results (15/16 PASS)
+
+| Flow | Result | Notes |
+|---|---|---|
+| licenses-review | PASS | stock yaml |
+| import-review | PASS | stock yaml |
+| player-names | PASS (ios helper) | `hideKeyboard` → `完了` nav button (commits + pops to settings); Android `names-save`/`保存して反映` steps are subsumed on iOS — `asitaka_y` persisted in settings.playerNames.shogiwars |
+| player-names-kiou | PASS (ios helper) | same `完了` behavior; `シシ神` persisted in settings.playerNames.kiou |
+| analysis-review | PASS (ios helper) | 50k full completion → `全局解析が完了しました`; mate badges ply 67 `後手・3手詰め ›`, ply 51 `先手・1手詰め ›`; SQLite reload; post-settings tab via `棋譜, tab.*` (the `棋譜.*` selector hits 棋譜解析 heading on iOS — same trap the 7448f94 fix addresses); move-prev guard taps for dropped-tap drift |
+| analysis-partial-review | PASS (ios helper) | partial end at 標準: `解析処理が終了しました` + `65 / 81局面を解析済み、16局面は探索量不足です`; ply-41 `—`/no candidates; `解析を再開` retries missing only → partial again |
+| candidate-review | PASS (ios helper) | candidate-0 at 標準 (ply 0 re-analyzed); swipe needed — in-tree off-viewport element |
+| file-import | PASS (ios helper) | `サービス.*` merged label |
+| management-review | PASS (ios helper) | merged-label stats rows; action-sheet retap guards; idempotent favorite |
+| appearance-review | PASS (ios helper) | `表示テーマ.*` merged label |
+| appearance-dark | PASS (ios helper) | dark theme applied + persisted |
+| export-review-ios | PASS (ios helper) | share-sheet + document-picker are RemoteUI — no a11y tree → coordinate taps (38%,89% / 18%,28% / 87%,11%) |
+| exported .kifu cmp | PASS | `meeshogi-*.kifu` in helper Documents byte-identical to `fixtures/kif/shogiwars.kif` |
+| background-review | **FAIL** | see below |
+| large-text-review | PASS (ios helper) | `後手の戦型.*` merged label |
+| search-delete-review | PASS (ios helper) | `この棋譜を削除` row not exposed to a11y tree → swipe + coordinate tap; delete confirm + `1局` stats verified |
+
+## background-review — partial verification + suite-prep limitation
+
+- The flow's decisive asserts PASSED on device (screenshots
+  `34-changed-analysis-conditions.png`, `35-background-paused.png`):
+  `以前のモデル・解析条件の結果が5局面あります` old-conditions notice,
+  `解析済み 76 / 81局面` status, analysis-start → `analysis-stop` visible,
+  Home → relaunch → `解析を停止中` (background pause verified).
+- Final step FAILED: after resume + optional stop, the 300s wait for
+  `解析を停止中|全局解析が完了しました` timed out mid-scan.
+- Root cause is suite-prep, not product: on iOS the KeroPona game already had
+  all 81 plies at 50k (RUN-C data), so nothing remained to pause/resume at
+  長め. To create old-condition rows I rewrote `conditions.nodes`→10000 on
+  plies 76–80 via sqlite — the app's load-time validation REJECTED the forged
+  entries (`保存したデータを読み込めません` error screen) whenever meta was
+  internally inconsistent OR proof data didn't match claimed conditions.
+  Reverting to original values restores normal loading (verified).
+- Net: background-review is verified through the background-pause assert;
+  the resume-end-state wait is unverifiable without real old-condition data
+  (needs an actual 10k bulk analysis on the game, not a DB forge).
+
+## Suite-level iOS differences observed (not product defects)
+
+- `hideKeyboard` unsupported by the app's 完了 keyboard → nav `完了` both
+  commits and pops; stock `names-save` unreachable on iOS (values persist).
+- Merged a11y labels need `X.*`/`.*X.*` (fullmatch regex), incl. the
+  `棋譜.*` post-settings trap fixed in 7448f94 (`棋譜$` — expected to match
+  the iOS tab inner element; if not, this is the one untested-on-iOS spot).
+- `scrollUntilVisible` treats in-tree off-viewport elements as visible;
+  bottom rows of the 対局情報 sheet are outside the a11y tree entirely.
+- Share sheet / document picker are RemoteUI with no a11y tree (point taps).
+- No product defects found on f376ee7.

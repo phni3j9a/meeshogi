@@ -1,0 +1,53 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      text: '.*KeroPona.*'
+    timeout: 30000
+- assertVisible:
+    id: library-screen
+- assertVisible: '.*KeroPona.*'
+- takeScreenshot: 38-large-library
+- tapOn: '.*KeroPona.*'
+- assertVisible:
+    id: game-screen
+- takeScreenshot: 39-large-game
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- takeScreenshot: 40-large-analysis
+- tapOn: 棋譜の操作
+- tapOn: 対局情報を確認・修正
+- scrollUntilVisible:
+    element:
+      text: '後手の戦型.*'
+    direction: DOWN
+- takeScreenshot: 41-large-game-info
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      text: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '戦績.*'
+- extendedWaitUntil:
+    visible:
+      id: statistics-screen
+    timeout: 30000
+- tapOn: 全期間
+- takeScreenshot: 42-large-statistics
+- tapOn: '設定.*'
+- takeScreenshot: 43-large-settings
+- tapOn:
+    id: player-names-link
+- takeScreenshot: 44-large-names

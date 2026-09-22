@@ -1,0 +1,45 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- assertVisible: '.*KeroPona.*'
+- tapOn:
+    id: library-search-toggle
+- tapOn:
+    id: library-search-input
+- inputText: '2099'
+- assertVisible: 棋譜が見つかりません
+- tapOn: '棋譜が見つかりません'
+- takeScreenshot: 48-search-empty
+- tapOn: 検索を閉じる
+- assertVisible: '.*最近の対局.*2局.*'
+- assertNotVisible:
+    id: library-search-input
+- scrollUntilVisible:
+    element:
+      text: '.*SiGototti.*'
+    direction: DOWN
+- tapOn: '.*SiGototti.*'
+
+- tapOn: 棋譜の操作
+- tapOn: 対局情報を確認・修正
+- swipe:
+    start: '50%,75%'
+    end: '50%,35%'
+- tapOn:
+    point: '26%,90%'
+- assertVisible: 棋譜を削除しますか？
+- takeScreenshot: 49-delete-confirmation
+- tapOn: 削除
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 30000
+- assertVisible: '.*最近の対局.*1局.*'
+- assertNotVisible: '.*SiGototti.*'
+- stopApp
+- launchApp
+- assertNotVisible: '.*SiGototti.*'
+- tapOn: '戦績.*'
+- tapOn: 全期間
+- assertVisible: '.*1局.*1勝 0敗.*'
+- takeScreenshot: 50-deletion-statistics

@@ -1,0 +1,87 @@
+appId: com.meeshogi.app
+env:
+  APPEARANCE_LABEL: ${APPEARANCE_LABEL || 'ライト'}
+  SHOT_PREFIX: ${SHOT_PREFIX || 'light'}
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      text: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '設定.*'
+- scrollUntilVisible:
+    element:
+      text: '表示テーマ.*'
+    direction: DOWN
+- tapOn: '表示テーマ.*'
+- tapOn: ${APPEARANCE_LABEL}
+- takeScreenshot: 25-${SHOT_PREFIX}-settings
+- scrollUntilVisible:
+    element:
+      id: player-names-link
+    direction: UP
+- takeScreenshot: 26-${SHOT_PREFIX}-settings-top
+- tapOn:
+    id: player-names-link
+- assertVisible:
+    id: names-save
+- takeScreenshot: 27-${SHOT_PREFIX}-player-names
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      text: '.*KeroPona.*'
+    timeout: 30000
+- takeScreenshot: 28-${SHOT_PREFIX}-library
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 29-${SHOT_PREFIX}-game
+- tapOn:
+    id: move-first
+- tapOn:
+    id: square-2g
+- tapOn:
+    id: square-2f
+- assertVisible: 分岐検討
+- takeScreenshot: 30-${SHOT_PREFIX}-branch
+- tapOn: 本譜に戻る
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 350
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: DOWN
+- tapOn: '後手・3手詰め ›'
+- takeScreenshot: 31-${SHOT_PREFIX}-mate
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      text: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '戦績.*'
+- extendedWaitUntil:
+    visible:
+      id: statistics-screen
+    timeout: 30000
+- tapOn: 全期間
+- takeScreenshot: 32-${SHOT_PREFIX}-statistics

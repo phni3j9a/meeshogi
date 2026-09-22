@@ -1,0 +1,23 @@
+appId: com.meeshogi.app
+---
+- tapOn: ファイル
+- tapOn:
+    id: import-file
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn: 'Show roots|ルートを表示.*'
+      - tapOn:
+          id: android:id/title
+          text: 'Downloads|ダウンロード'
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: 'Browse|ブラウズ'
+          optional: true
+      - tapOn: 'On My iPhone|このiPhone内'
+      - tapOn: Meeshogi ?Fixtures
+- tapOn: '${KIF_FILE}, kif.*'
