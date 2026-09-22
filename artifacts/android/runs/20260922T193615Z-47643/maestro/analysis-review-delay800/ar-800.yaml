@@ -1,0 +1,149 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 解析の長さ
+    direction: DOWN
+- tapOn: 解析の長さ
+- tapOn: 長め
+- tapOn: '棋譜$'
+- tapOn: '.*KeroPona.*'
+- scrollUntilVisible:
+    element:
+      id: analysis-start
+    direction: DOWN
+- runFlow:
+    when:
+      notVisible: 全局解析が完了しました
+    commands:
+      - tapOn:
+          id: analysis-start
+- extendedWaitUntil:
+    visible: 全局解析が完了しました
+    timeout: 600000
+- takeScreenshot: 10-full-analysis
+# A fresh process must load all computed positions from SQLite.
+- stopApp
+- launchApp
+- tapOn: '.*KeroPona.*'
+- scrollUntilVisible:
+    element:
+      text: 全局解析が完了しました
+    direction: DOWN
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 800
+- runFlow:
+    when:
+      visible: '68 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
+- runFlow:
+    when:
+      visible: '66 / 80手'
+    commands:
+      - tapOn:
+          id: move-next
+- assertVisible: '67 / 80手'
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- takeScreenshot: 11-mate-badge
+- tapOn: '後手・3手詰め ›'
+- assertVisible: '0 / 3手'
+- takeScreenshot: 12-three-move-mate
+- tapOn:
+    text: 一手進む
+    repeat: 3
+    delay: 800
+- assertVisible: '3 / 3手'
+- takeScreenshot: 13-mate-completed
+- tapOn: 詰め手順を閉じる
+- assertVisible: '67 / 80手'
+- tapOn:
+    id: move-prev
+    repeat: 16
+    delay: 800
+- runFlow:
+    when:
+      visible: '52 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
+- runFlow:
+    when:
+      visible: '50 / 80手'
+    commands:
+      - tapOn:
+          id: move-next
+- assertVisible: '51 / 80手'
+- tapOn: '後手・1手詰め ›'
+- assertVisible: '0 / 1手'
+- tapOn: 一手進む
+- assertVisible: '1 / 1手'
+- takeScreenshot: 14-one-move-mate
+- tapOn: 詰め手順を閉じる
+- assertVisible: '51 / 80手'
+# The sample opens 7g7f; 2g2f therefore creates a legal temporary branch.
+- tapOn:
+    id: move-first
+- scrollUntilVisible:
+    element:
+      id: square-2g
+    direction: UP
+- tapOn:
+    id: square-2g
+- tapOn:
+    id: square-2f
+- assertVisible: 分岐検討
+- scrollUntilVisible:
+    element:
+      text: '0手目から分岐'
+    direction: UP
+- assertVisible: '0手目から分岐'
+- scrollUntilVisible:
+    element:
+      id: analysis-ready
+    direction: DOWN
+    timeout: 180000
+- takeScreenshot: 15-variation
+- scrollUntilVisible:
+    element:
+      text: 本譜に戻る
+    direction: UP
+- tapOn: 本譜に戻る
+- assertVisible: '0 / 80手'
+- tapOn:
+    id: move-next
+- assertVisible: '1 / 80手'
+- stopApp
+- launchApp
+- assertVisible: '.*1手目から再開.*'
+# Leave the shared app state at the default budget for subsequent flows.
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 解析の長さ
+    direction: DOWN
+- tapOn: 解析の長さ
+- tapOn: 標準
+- tapOn: '棋譜$'
