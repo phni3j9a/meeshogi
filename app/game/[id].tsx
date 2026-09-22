@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,9 +10,7 @@ import { useAppStore } from '@/store/app-store';
 import { shareKif } from '@/platform/kif-files';
 import {
   AppText,
-  Button,
   EmptyState,
-  Group,
   Icon,
   IconButton,
   Notice,
@@ -21,7 +19,7 @@ import {
 } from '@/ui/primitives';
 import { Playback, ShogiBoard } from '@/ui/board';
 import { LineChart } from '@/ui/charts';
-import { gameTitle, openingDescription } from '@/ui/game-row';
+import { openingDescription } from '@/ui/game-row';
 import { openMateSession } from '@/ui/mate-session';
 import { useTheme } from '@/ui/theme';
 import { errorMessage, useChoice } from '@/ui/use-choice';
@@ -34,6 +32,23 @@ import {
 import { currentGameAnalysis, isCompatibleAnalysis } from '@/analysis/cache';
 
 type Branch = { origin: number; positions: string[]; moves: string[]; cursor: number };
+
+/** Render only the legal prefix of the actual engine line, in board notation. */
+function principalVariationLabel(sfen: string, moves: string[]): string {
+  const labels: string[] = [];
+  let position = sfen;
+  for (const move of moves.slice(0, 3)) {
+    try {
+      const next = applyUsi(position, move);
+      labels.push(moveLabel(position, move));
+      position = next;
+    } catch {
+      break;
+    }
+  }
+  return labels.join('  ');
+}
+
 export default function GameScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const game = useAppStore((state) => state.games.find((item) => item.id === id));
@@ -266,6 +281,40 @@ export default function GameScreen() {
   const completed = mainlineAnalysis.filter(Boolean).length;
   const fullyAnalyzed = completed >= game.positions.length;
   const previousResults = Object.keys(game.analysis).length - completed;
+  const lastMove = branch
+    ? branch.cursor > 0
+      ? branch.moves[branch.cursor - 1]
+      : game.moves[branch.origin - 1]?.usi
+    : game.moves[ply - 1]?.usi;
+  const currentMoveLabel = branch
+    ? branch.cursor > 0
+      ? moveLabel(branch.positions[branch.cursor - 1], branch.moves[branch.cursor - 1])
+      : (game.moves[branch.origin - 1]?.label ?? '初期局面')
+    : (game.moves[ply - 1]?.label ?? '初期局面');
+  const evaluationColor =
+    currentEvaluation.kind === 'missing'
+      ? theme.muted
+      : currentEvaluation.kind === 'white-mate' ||
+          (currentEvaluation.kind === 'centipawn' && currentEvaluation.value < 0)
+        ? theme.loss
+        : theme.win;
+  const statusLabel = branch
+    ? focusBusy
+      ? '分岐を解析中'
+      : currentAnalysis
+        ? '分岐の解析結果'
+        : '分岐は未解析'
+    : fullyAnalyzed
+      ? '全局解析が完了しました'
+      : job?.status === 'running'
+        ? `解析中 ${completed} / ${job.total}局面`
+        : job?.status === 'paused'
+          ? `解析を停止中 ${completed} / ${job.total}局面`
+          : job?.status === 'error'
+            ? '解析を再開できます'
+            : completed
+              ? `${completed}局面を解析済み`
+              : 'この棋譜は未解析です';
   return (
     <View
       style={{ flex: 1, backgroundColor: theme.background, paddingBottom: insets.bottom }}
@@ -273,7 +322,7 @@ export default function GameScreen() {
     >
       <Stack.Screen
         options={{
-          title: branch ? '分岐検討' : '検討',
+          title: branch ? '分岐検討' : '棋譜解析',
           headerLeft: branch
             ? () => <IconButton label="本譜に戻る" name="previous" onPress={leaveBranch} />
             : undefined,
@@ -283,337 +332,416 @@ export default function GameScreen() {
         }}
       />
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 16 }}
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.scrollContent}
         contentInsetAdjustmentBehavior="automatic"
       >
-        {branch ? (
-          <View
-            style={{
-              backgroundColor: theme.accentSoft,
-              borderRadius: 12,
-              paddingHorizontal: 12,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8,
-              marginBottom: 8,
-            }}
-          >
-            <Icon name="branch" size={19} />
-            <AppText variant="caption" style={{ flex: 1 }}>
-              {branch.origin}手目から分岐
-            </AppText>
-            <TextButton label="本譜に戻る" onPress={leaveBranch} />
-          </View>
-        ) : (
-          <View style={{ paddingVertical: 8 }}>
-            <AppText variant="headline" numberOfLines={2}>
-              {gameTitle(game)}
-            </AppText>
-            <AppText variant="caption" tone="secondary">
-              {openingDescription(game)}
-            </AppText>
-          </View>
-        )}
-        <ShogiBoard
-          sfen={sfen}
-          bottomSide={bottomSide}
-          names={{ black: game.blackName, white: game.whiteName }}
-          selected={selected}
-          targets={
-            selected
-              ? validMoves
-                  .filter((move) => move.startsWith(selected))
-                  .map((move) => move.slice(2, 4))
-              : []
-          }
-          onSquare={selectSquare}
-          onHand={(piece) => {
-            const key = `${piece}*`;
-            setSelected(selected === key ? null : key);
-            setError('');
-          }}
-          arrow={settings.showArrows && !selected ? candidates[0]?.usi : undefined}
-        />
-        {error && <Notice text={error} error action="閉じる" onAction={() => setError('')} />}
-        <View
-          testID={
-            candidates.length > 0 && currentAnalysis?.sfen === sfen ? 'analysis-ready' : undefined
-          }
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 10,
-            marginTop: 6,
-            flexWrap: 'wrap',
-          }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-            <AppText
-              selectable
-              style={{
-                fontWeight: '700',
-                fontSize: 26,
-                lineHeight: 34,
-                fontVariant: ['tabular-nums'],
-              }}
+        <View style={styles.content}>
+          <View style={styles.metadata}>
+            <View
+              style={[styles.mode, { backgroundColor: branch ? theme.accentSoft : theme.winSoft }]}
             >
-              {formatEvaluation(currentEvaluation)}
-            </AppText>
-            <AppText variant="caption" tone="secondary">
-              先手評価
-            </AppText>
-          </View>
-          {proven && proof && (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                const session = openMateSession({
-                  sfen,
-                  proof,
-                  origin: branch
-                    ? `${branch.origin}手目からの分岐・${branch.cursor}手`
-                    : `${ply}手目の局面`,
-                  bottomSide,
-                });
-                setPlaying(false);
-                router.push({ pathname: '/mate', params: { session } });
-              }}
-              style={{
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-                borderColor: theme.accent,
-                borderWidth: 1,
-                borderRadius: 12,
-              }}
-            >
-              <AppText variant="caption" tone="accent">
-                {SIDE_LABELS[proof.side]}・{proof.plies}手詰め ›
-              </AppText>
-            </Pressable>
-          )}
-        </View>
-        {!branch && (
-          <LineChart
-            values={mainlineAnalysis.map((result) =>
-              toEvaluationChartValue(toEvaluationValue(result?.candidates[0])),
-            )}
-            selected={ply}
-            onSelect={(next) => go(next)}
-            height={82}
-          />
-        )}
-        {branch && (
-          <>
-            <AppText variant="headline" style={{ marginTop: 18, marginBottom: 8 }}>
-              分岐の手順
-            </AppText>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 6 }}
-            >
-              {branch.moves.map((move, index) => (
-                <Pressable
-                  key={`${index}-${move}`}
-                  accessibilityRole="button"
-                  onPress={() => go(index + 1)}
-                  style={{
-                    paddingHorizontal: 12,
-                    paddingVertical: 10,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: index + 1 === branch.cursor ? theme.accent : theme.border,
-                    backgroundColor: index + 1 === branch.cursor ? theme.accentSoft : theme.surface,
-                  }}
-                >
-                  <AppText variant="caption">
-                    {branch.origin + index + 1}　{moveLabel(branch.positions[index], move)}
-                  </AppText>
-                </Pressable>
-              ))}
-            </ScrollView>
-            <AppText variant="small" tone="secondary" style={{ marginTop: 6 }}>
-              この分岐は保存されません。本譜と戦績は変わりません。
-            </AppText>
-          </>
-        )}
-        {!branch && <Segment labels={['候補手', '棋譜']} selected={tab} onChange={setTab} />}
-        {tab === 0 || branch ? (
-          <View>
-            {candidates.map((candidate, index) => (
-              <Pressable
-                key={candidate.usi}
-                testID={`candidate-${index}`}
-                accessibilityRole="button"
-                onPress={() =>
-                  previewCandidate(candidate.pv.length ? candidate.pv : [candidate.usi])
-                }
-                style={({ pressed }) => ({
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  minHeight: 48,
-                  gap: 12,
-                  paddingVertical: 10,
-                  borderBottomColor: theme.border,
-                  borderBottomWidth: 0.5,
-                  backgroundColor: pressed ? theme.inset : 'transparent',
-                })}
+              {branch && <Icon name="branch" size={13} />}
+              <AppText
+                variant="small"
+                tone={branch ? 'accent' : 'win'}
+                style={{ fontWeight: '600' }}
               >
-                <View
-                  style={{
-                    width: 25,
-                    height: 25,
-                    borderRadius: 14,
-                    backgroundColor: index === 0 ? theme.win : theme.secondary,
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                  }}
-                >
-                  <AppText variant="caption" style={{ color: theme.background }}>
-                    {index + 1}
-                  </AppText>
-                </View>
-                <AppText style={{ flex: 1 }}>{moveLabel(sfen, candidate.usi)}</AppText>
-                <AppText style={{ fontVariant: ['tabular-nums'] }}>
-                  {formatEvaluation(toEvaluationValue(candidate))}
+                {branch ? '分岐' : '本譜'}
+              </AppText>
+            </View>
+            <AppText variant="caption" tone="secondary" numberOfLines={2} style={{ flex: 1 }}>
+              {branch ? `${branch.origin}手目から分岐` : openingDescription(game)}
+            </AppText>
+            <IconButton
+              name="flip"
+              label="盤面を反転"
+              testID="board-flip"
+              size={20}
+              onPress={() => setFlipped((value) => !value)}
+            />
+          </View>
+          {branch && (
+            <View style={[styles.branchBanner, { backgroundColor: theme.accentSoft }]}>
+              <AppText variant="caption" tone="accent" style={{ flex: 1 }}>
+                {branch.cursor === 0 ? '分岐の開始局面' : `本譜から ${branch.cursor}手進行`}
+              </AppText>
+              <TextButton label="本譜に戻る" icon="previous" onPress={leaveBranch} />
+            </View>
+          )}
+          <ShogiBoard
+            sfen={sfen}
+            bottomSide={bottomSide}
+            names={{ black: game.blackName, white: game.whiteName }}
+            lastMove={lastMove}
+            selected={selected}
+            targets={
+              selected
+                ? validMoves
+                    .filter((move) => move.startsWith(selected))
+                    .map((move) => move.slice(2, 4))
+                : []
+            }
+            onSquare={selectSquare}
+            onHand={(piece) => {
+              const key = `${piece}*`;
+              setSelected(selected === key ? null : key);
+              setError('');
+            }}
+            arrow={settings.showArrows && !selected ? candidates[0]?.usi : undefined}
+          />
+          {error ? <Notice text={error} error action="閉じる" onAction={() => setError('')} /> : null}
+          <View
+            testID={
+              candidates.length > 0 && currentAnalysis?.sfen === sfen ? 'analysis-ready' : undefined
+            }
+            style={[
+              styles.evaluationCard,
+              { backgroundColor: theme.surface, borderColor: theme.border },
+            ]}
+          >
+            <View style={styles.evaluationHeader}>
+              <View style={{ flex: 1, minWidth: 100 }}>
+                <AppText variant="small" tone="secondary">
+                  評価値 · 先手視点
                 </AppText>
-                <Icon name="next" size={16} color={theme.muted} />
-              </Pressable>
-            ))}
-            {!candidates.length && (
-              <View style={{ minHeight: 60, justifyContent: 'center' }}>
-                <AppText variant="caption" tone="secondary">
-                  {focusBusy
-                    ? 'この局面を解析しています…'
-                    : !validMoves.length
-                      ? 'この局面には合法手がありません。'
-                      : '解析すると候補手を確認できます。'}
+                <AppText
+                  selectable
+                  accessibilityLabel={`先手視点の評価値 ${formatEvaluation(currentEvaluation)}`}
+                  style={[styles.evaluationValue, { color: evaluationColor }]}
+                >
+                  {formatEvaluation(currentEvaluation)}
                 </AppText>
               </View>
+              <View style={{ alignItems: 'flex-end', gap: 4, flexShrink: 1 }}>
+                {proven && proof ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      const session = openMateSession({
+                        sfen,
+                        proof,
+                        origin: branch
+                          ? `${branch.origin}手目からの分岐・${branch.cursor}手`
+                          : `${ply}手目の局面`,
+                        bottomSide,
+                      });
+                      setPlaying(false);
+                      router.push({ pathname: '/mate', params: { session } });
+                    }}
+                    style={[styles.mateBadge, { backgroundColor: theme.accentSoft }]}
+                  >
+                    <AppText variant="caption" tone="accent" style={{ fontWeight: '600' }}>
+                      {SIDE_LABELS[proof.side]}・{proof.plies}手詰め ›
+                    </AppText>
+                  </Pressable>
+                ) : (
+                  <View style={styles.inline}>
+                    {(focusBusy || (!branch && job?.status === 'running')) && (
+                      <ActivityIndicator size="small" color={theme.win} />
+                    )}
+                    <AppText variant="small" tone="secondary" style={{ flexShrink: 1 }}>
+                      {branch
+                        ? focusBusy
+                          ? '局面を解析中'
+                          : '分岐の評価'
+                        : focusBusy
+                          ? '追加解析中'
+                          : `全局解析 ${completed} / ${game.positions.length}`}
+                    </AppText>
+                  </View>
+                )}
+                {!branch && currentAnalysis === focusedAnalysis && currentAnalysis && (
+                  <AppText variant="small" tone="accent">
+                    追加解析の評価値
+                  </AppText>
+                )}
+              </View>
+            </View>
+            {!branch && (
+              <LineChart
+                values={mainlineAnalysis.map((result) =>
+                  toEvaluationChartValue(toEvaluationValue(result?.candidates[0])),
+                )}
+                selected={ply}
+                onSelect={(next) => go(next)}
+                height={96}
+              />
+            )}
+            {branch && (
+              <AppText variant="small" tone="secondary">
+                {branch.origin + branch.cursor}手目の局面 · 評価は盤面の向きによらず先手視点
+              </AppText>
             )}
           </View>
-        ) : (
-          <View style={{ gap: 2, paddingVertical: 8 }}>
-            <AppText variant="caption" tone="secondary">
-              {ply === 0 ? '初期局面' : `${ply}手目 ${game.moves[ply - 1].label}`}
-            </AppText>
-            {game.moves
-              .slice(Math.max(0, ply - 3), Math.min(game.moves.length, ply + 5))
-              .map((move, index) => {
-                const movePly = Math.max(0, ply - 3) + index + 1;
+          {branch && (
+            <View style={{ gap: 8, marginBottom: 16 }}>
+              <AppText variant="caption" style={{ fontWeight: '600' }}>
+                分岐の手順
+              </AppText>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 6 }}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: branch.cursor === 0 }}
+                  onPress={() => go(0)}
+                  style={[
+                    styles.variationMove,
+                    {
+                      borderColor: branch.cursor === 0 ? theme.accent : theme.border,
+                      backgroundColor: branch.cursor === 0 ? theme.accentSoft : theme.surface,
+                    },
+                  ]}
+                >
+                  <AppText variant="caption">開始局面</AppText>
+                </Pressable>
+                {branch.moves.map((move, index) => (
+                  <Pressable
+                    key={`${index}-${move}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: index + 1 === branch.cursor }}
+                    onPress={() => go(index + 1)}
+                    style={[
+                      styles.variationMove,
+                      {
+                        borderColor: index + 1 === branch.cursor ? theme.accent : theme.border,
+                        backgroundColor:
+                          index + 1 === branch.cursor ? theme.accentSoft : theme.surface,
+                      },
+                    ]}
+                  >
+                    <AppText variant="caption">
+                      {branch.origin + index + 1}　{moveLabel(branch.positions[index], move)}
+                    </AppText>
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <AppText variant="small" tone="secondary">
+                この分岐は保存されません。本譜と戦績は変わりません。
+              </AppText>
+            </View>
+          )}
+          {!branch && <Segment labels={['候補手', '棋譜']} selected={tab} onChange={setTab} />}
+          {tab === 0 || branch ? (
+            <View style={{ gap: 8, paddingTop: 8 }}>
+              {candidates.map((candidate, index) => {
+                const pv = principalVariationLabel(
+                  sfen,
+                  candidate.pv.length ? candidate.pv : [candidate.usi],
+                );
                 return (
                   <Pressable
-                    key={movePly}
-                    onPress={() => go(movePly)}
+                    key={candidate.usi}
+                    testID={`candidate-${index}`}
                     accessibilityRole="button"
-                    style={{
-                      flexDirection: 'row',
-                      minHeight: 44,
-                      alignItems: 'center',
-                      gap: 16,
-                      borderRadius: 8,
-                      paddingHorizontal: 10,
-                      backgroundColor: movePly === ply ? theme.accentSoft : 'transparent',
-                    }}
+                    accessibilityLabel={`候補${index + 1}、${moveLabel(sfen, candidate.usi)}、評価値${formatEvaluation(toEvaluationValue(candidate))}、タップして分岐を検討`}
+                    onPress={() =>
+                      previewCandidate(candidate.pv.length ? candidate.pv : [candidate.usi])
+                    }
+                    style={({ pressed }) => [
+                      styles.candidateCard,
+                      {
+                        borderColor: index === 0 ? theme.win : theme.border,
+                        backgroundColor: pressed ? theme.inset : theme.surface,
+                      },
+                    ]}
                   >
-                    <AppText variant="caption" tone="secondary">
-                      {movePly}
-                    </AppText>
-                    <AppText style={{ flex: 1 }}>{move.label}</AppText>
-                    <AppText variant="caption" tone="secondary">
-                      {Math.floor(move.elapsedMs / 1000)}秒
-                    </AppText>
+                    <View
+                      style={[
+                        styles.rank,
+                        { backgroundColor: index === 0 ? theme.winSoft : theme.inset },
+                      ]}
+                    >
+                      <AppText
+                        variant="caption"
+                        style={{
+                          color: index === 0 ? theme.win : theme.secondary,
+                          fontWeight: '700',
+                        }}
+                      >
+                        {index + 1}
+                      </AppText>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+                      <View style={styles.candidateHeading}>
+                        <AppText variant="headline" style={{ flexShrink: 1 }}>
+                          {moveLabel(sfen, candidate.usi)}
+                        </AppText>
+                        <AppText
+                          variant="headline"
+                          style={{
+                            color: index === 0 ? theme.win : theme.text,
+                            fontVariant: ['tabular-nums'],
+                          }}
+                        >
+                          {formatEvaluation(toEvaluationValue(candidate))}
+                        </AppText>
+                      </View>
+                      <AppText variant="small" tone="secondary" numberOfLines={2}>
+                        {pv ? `読み筋  ${pv}` : 'タップして盤上で検討'}
+                      </AppText>
+                    </View>
+                    <Icon name="next" size={13} color={theme.muted} />
                   </Pressable>
                 );
               })}
-          </View>
-        )}
-        <View style={{ marginTop: 10 }}>
-          {!branch && previousResults > 0 && (
-            <Notice
-              text={`以前のモデル・解析条件の結果が${previousResults}局面あります。現在の設定で解析し直せます。`}
-            />
-          )}
-          <AppText variant="caption" tone="secondary" testID="analysis-status">
-            {branch
-              ? focusBusy
-                ? '分岐を解析中'
-                : currentAnalysis
-                  ? '分岐の解析結果'
-                  : '分岐は未解析'
-              : fullyAnalyzed
-                ? '全局解析が完了しました'
-                : job?.status === 'running'
-                  ? `解析中 ${completed} / ${job.total}局面`
-                  : job?.status === 'paused'
-                    ? `解析を停止中 ${completed} / ${job.total}局面`
-                    : job?.status === 'error'
-                      ? '解析を再開できます'
-                      : completed
-                        ? `${completed}局面を解析済み`
-                        : 'この棋譜は未解析です'}
-          </AppText>
-          {!branch && currentAnalysis && currentAnalysis === focusedAnalysis && (
-            <AppText variant="caption" tone="secondary" testID="focused-analysis-ready">
-              この局面の追加解析結果を表示中
-            </AppText>
-          )}
-          {job?.status === 'error' && (
-            <Notice text={job.error ?? '解析に失敗しました。もう一度解析できます。'} error />
-          )}
-          {job?.status === 'running' && !branch && (
+              {!candidates.length && (
+                <View
+                  style={[
+                    styles.emptyCandidates,
+                    { backgroundColor: theme.surface, borderColor: theme.border },
+                  ]}
+                >
+                  {focusBusy || (!branch && job?.status === 'running') ? (
+                    <ActivityIndicator size="small" color={theme.win} />
+                  ) : (
+                    <Icon
+                      name={!validMoves.length ? 'check' : 'stats'}
+                      size={22}
+                      color={theme.muted}
+                    />
+                  )}
+                  <View style={{ flex: 1, gap: 3 }}>
+                    <AppText variant="caption" style={{ fontWeight: '600' }}>
+                      {focusBusy
+                        ? 'この局面を解析しています'
+                        : !validMoves.length
+                          ? 'この局面には合法手がありません'
+                          : job?.status === 'running' && !branch
+                            ? '候補手の解析を待っています'
+                            : job?.status === 'paused' && !branch
+                              ? '解析を停止しています'
+                              : '候補手はまだありません'}
+                    </AppText>
+                    <AppText variant="small" tone="secondary">
+                      {focusBusy || (!branch && job?.status === 'running')
+                        ? '解析中も盤面を動かして検討できます。'
+                        : !validMoves.length
+                          ? '手を戻して、気になる局面を振り返れます。'
+                          : '下の解析ボタンから候補手を確認できます。'}
+                    </AppText>
+                  </View>
+                </View>
+              )}
+            </View>
+          ) : (
             <View
-              accessibilityRole="progressbar"
-              accessibilityValue={{ now: completed, min: 0, max: job.total }}
-              style={{
-                backgroundColor: theme.inset,
-                height: 4,
-                borderRadius: 4,
-                marginVertical: 8,
-              }}
+              style={[
+                styles.movesCard,
+                { backgroundColor: theme.surface, borderColor: theme.border },
+              ]}
             >
-              <View
-                style={{
-                  backgroundColor: theme.win,
-                  height: 4,
-                  borderRadius: 4,
-                  width: `${(completed / job.total) * 100}%`,
-                }}
-              />
+              <AppText
+                variant="small"
+                tone="secondary"
+                style={{ paddingHorizontal: 10, paddingBottom: 8 }}
+              >
+                {ply === 0 ? '初期局面' : `${ply}手目 ${game.moves[ply - 1].label}`}
+              </AppText>
+              {game.moves
+                .slice(Math.max(0, ply - 3), Math.min(game.moves.length, ply + 5))
+                .map((move, index) => {
+                  const movePly = Math.max(0, ply - 3) + index + 1;
+                  return (
+                    <Pressable
+                      key={movePly}
+                      onPress={() => go(movePly)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: movePly === ply }}
+                      style={[
+                        styles.recordMove,
+                        { backgroundColor: movePly === ply ? theme.winSoft : 'transparent' },
+                      ]}
+                    >
+                      <AppText
+                        variant="caption"
+                        tone="secondary"
+                        style={{ minWidth: 24, fontVariant: ['tabular-nums'] }}
+                      >
+                        {movePly}
+                      </AppText>
+                      <AppText style={{ flex: 1, fontWeight: movePly === ply ? '600' : '400' }}>
+                        {move.label}
+                      </AppText>
+                      <AppText variant="small" tone="secondary">
+                        {Math.floor(move.elapsedMs / 1000)}秒
+                      </AppText>
+                    </Pressable>
+                  );
+                })}
             </View>
           )}
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'space-between',
-              columnGap: 16,
-            }}
-          >
-            {!branch &&
-              (job?.status === 'running' ? (
-                <TextButton
-                  label="解析を停止"
-                  testID="analysis-stop"
-                  onPress={stopAnalysis}
-                  icon="pause"
+          <View style={[styles.analysisActions, { borderColor: theme.border }]}>
+            {!branch && previousResults > 0 && (
+              <Notice
+                text={`以前のモデル・解析条件の結果が${previousResults}局面あります。現在の設定で解析し直せます。`}
+              />
+            )}
+            <View style={styles.inline}>
+              {fullyAnalyzed && !branch && <Icon name="check" size={14} color={theme.win} />}
+              <AppText
+                variant="caption"
+                tone="secondary"
+                testID="analysis-status"
+                style={{ flex: 1 }}
+              >
+                {statusLabel}
+              </AppText>
+            </View>
+            {!branch && currentAnalysis && currentAnalysis === focusedAnalysis && (
+              <AppText variant="caption" tone="secondary" testID="focused-analysis-ready">
+                この局面の追加解析結果を表示中
+              </AppText>
+            )}
+            {job?.status === 'error' && (
+              <Notice text={job.error ?? '解析に失敗しました。もう一度解析できます。'} error />
+            )}
+            {job?.status === 'running' && !branch && (
+              <View
+                accessibilityRole="progressbar"
+                accessibilityLabel="全局解析の進捗"
+                accessibilityValue={{ now: completed, min: 0, max: job.total }}
+                style={[styles.progressTrack, { backgroundColor: theme.inset }]}
+              >
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      backgroundColor: theme.win,
+                      width: `${job.total ? (completed / job.total) * 100 : 0}%`,
+                    },
+                  ]}
                 />
-              ) : (
-                <TextButton
-                  label={fullyAnalyzed ? '解析済み' : completed ? '解析を再開' : '解析する'}
-                  disabled={fullyAnalyzed}
-                  testID="analysis-start"
-                  onPress={() => void startAnalysis(id).catch((e) => setError(errorMessage(e)))}
-                  icon="play"
-                />
-              ))}
-            <TextButton
-              testID="analysis-focus"
-              label={focusBusy ? '追加解析中…' : 'この局面を深く解析'}
-              onPress={() => void focus(sfen)}
-              disabled={focusBusy}
-            />
+              </View>
+            )}
+            <View style={styles.actionButtons}>
+              {!branch &&
+                (job?.status === 'running' ? (
+                  <TextButton
+                    label="解析を停止"
+                    testID="analysis-stop"
+                    onPress={stopAnalysis}
+                    icon="pause"
+                  />
+                ) : (
+                  <TextButton
+                    label={fullyAnalyzed ? '解析済み' : completed ? '解析を再開' : '解析する'}
+                    disabled={fullyAnalyzed}
+                    testID="analysis-start"
+                    onPress={() => void startAnalysis(id).catch((e) => setError(errorMessage(e)))}
+                    icon={fullyAnalyzed ? 'check' : 'play'}
+                  />
+                ))}
+              <TextButton
+                testID="analysis-focus"
+                label={focusBusy ? '追加解析中…' : 'この局面を深く解析'}
+                onPress={() => void focus(sfen)}
+                disabled={focusBusy}
+              />
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -627,7 +755,115 @@ export default function GameScreen() {
           setPlaying((value) => !value);
         }}
         label={branch ? `${branch.origin + branch.cursor}手目・分岐${branch.cursor}手` : undefined}
+        moveLabel={currentMoveLabel}
       />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  scrollContent: { paddingHorizontal: 12, paddingTop: 0, paddingBottom: 16, alignItems: 'center' },
+  content: { width: '100%', maxWidth: 500 },
+  metadata: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 },
+  mode: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  branchBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  evaluationCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 12,
+    marginTop: 8,
+    marginBottom: 12,
+    gap: 8,
+  },
+  evaluationHeader: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  evaluationValue: {
+    fontWeight: '700',
+    fontSize: 30,
+    lineHeight: 36,
+    fontVariant: ['tabular-nums'],
+  },
+  inline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  mateBadge: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  variationMove: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+  },
+  candidateCard: {
+    minHeight: 72,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  rank: {
+    width: 28,
+    minHeight: 28,
+    paddingVertical: 3,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  candidateHeading: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    columnGap: 8,
+  },
+  emptyCandidates: {
+    minHeight: 88,
+    padding: 16,
+    borderWidth: 1,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  movesCard: { borderWidth: 1, borderRadius: 14, padding: 8, marginTop: 8 },
+  recordMove: {
+    flexDirection: 'row',
+    minHeight: 44,
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  analysisActions: { marginTop: 16, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
+  progressTrack: { height: 4, borderRadius: 4, marginVertical: 8, overflow: 'hidden' },
+  progressFill: { height: 4, borderRadius: 4 },
+  actionButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    columnGap: 16,
+  },
+});

@@ -6,7 +6,9 @@
 
 ## 状態
 
-無料版の機能実装と、今回合意した受入検証を完了しました。[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)で統合前レビュー中です。KIFの取り込み・合法手検証、SQLite保存、戦績集計、Sekireiの端末内解析と分岐検討を利用できます。ログイン・通信・課金は利用条件に含めません。
+無料版の機能実装は[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)で統合済みです。KIFの取り込み・合法手検証、SQLite保存、戦績集計、Sekireiの端末内解析と分岐検討を利用できます。ログイン・通信・課金は利用条件に含めません。
+
+2026年9月22日、[棋譜解析画面の改善](docs/design/analysis-refresh.md)と、ChatGPT Imageで個別生成した15種類の駒を追加しました。この変更のiOS・Androidネイティブ画面での受入検証は未実施です。以下の過去の受入結果とは区別します。
 
 Androidは実機での主要操作とCIの全14フローを確認しました。iOSはRelease Simulatorで各ページを撮影して目視し、詳細操作・全テーマ・文字拡大・実機性能の未検証分は継続検証として区別しています。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
 
@@ -52,7 +54,7 @@ iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインス�
 
 ## 開発方針
 
-- iOS・Androidを同時に進め、GitHub Actionsで両OSのビルド・起動・主要操作を検証する。
+- iOS・Androidを同時に進める。GitHub Actionsで共通チェック、Devin Cloudの常駐セッションで両OSのビルド・起動・主要操作を検証する。
 - `sekirei-weight`は実用的なweightの開発、本リポジトリはモバイル統合とアプリ体験を担当する。
 - モックや固定の解析結果による画面検証と、実エンジンによる解析を区別する。
 - まず無料版の一巡する体験を作る。LLM機能のためのサーバーや課金基盤を先行実装しない。
