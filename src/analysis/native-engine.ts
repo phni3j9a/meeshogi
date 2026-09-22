@@ -302,12 +302,18 @@ function parseNativeResult(
     if (meta.fallback || meta.completedDepth === 0) {
       throw new Error('未完了のネイティブ解析を完了結果として保存できません。');
     }
+    if (candidates.some((candidate) => candidate.depth !== meta.completedDepth)) {
+      throw new Error('ネイティブ解析結果の候補手 depth が meta.completedDepth と一致しません。');
+    }
     const expectedCandidates = Math.min(conditions.multiPV, positionLegalMoves.length);
     if (candidates.length !== expectedCandidates) {
       throw new Error(`ネイティブ解析結果の候補手数が不正です。期待値: ${expectedCandidates}`);
     }
   } else {
     if (candidates.length !== 0) throw new Error('終局解析には候補手を設定できません。');
+    if (meta.nodes !== 0 || meta.completedDepth !== 0) {
+      throw new Error('終局解析の meta.nodes と meta.completedDepth は0である必要があります。');
+    }
     if (positionLegalMoves.length !== 0)
       throw new Error('候補手のない解析結果ですが、局面に合法手があります。');
     let inCheck: boolean;

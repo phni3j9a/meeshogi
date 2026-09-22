@@ -218,6 +218,42 @@ describe('native result contract', () => {
     );
   });
 
+  it('rejects a non-terminal candidate depth that disagrees with meta.completedDepth', async () => {
+    vi.mocked(requireOptionalNativeModule).mockReturnValue(
+      nativeModuleFor(
+        completePayload(initialSfen, {
+          candidates: [{ usi: '8c8d', pv: ['8c8d'], scoreCp: 0, mate: null, depth: 2 }],
+        }),
+      ),
+    );
+    await expect(analyzeNative(initialSfen, { nodes: 1, multiPV: 1 })).rejects.toThrow(
+      '候補手 depth が meta.completedDepth と一致しません',
+    );
+  });
+
+  it('rejects terminal metadata with non-zero nodes or completedDepth', async () => {
+    vi.mocked(requireOptionalNativeModule).mockReturnValue(
+      nativeModuleFor(
+        completePayload(whiteCheckmateSfen, {
+          candidates: [],
+          terminal: 'checkmate',
+          nodes: 1,
+          depth: 1,
+          meta: {
+            requestedNodes: 1,
+            nodes: 1,
+            completedDepth: 1,
+            fallback: false,
+            budgetReached: true,
+          },
+        }),
+      ),
+    );
+    await expect(analyzeNative(whiteCheckmateSfen, { nodes: 1, multiPV: 1 })).rejects.toThrow(
+      '終局解析の meta.nodes と meta.completedDepth は0である必要があります',
+    );
+  });
+
   it('accepts both terminal kinds only when they match check state and legal moves', async () => {
     for (const [sfen, terminal] of [
       [whiteCheckmateSfen, 'checkmate'],
