@@ -79,7 +79,7 @@ export default function GameScreen() {
   // player rails, evaluation, tabs, a candidate row, and the fixed playback bar.
   const boardMaxEdge = Math.max(
     260,
-    Math.min(440, (rootHeight ?? windowHeight - 91) - insets.bottom - 422),
+    Math.min(440, (rootHeight ?? windowHeight - 91) - insets.bottom - 427),
   );
   const sfen = branch ? branch.positions[branch.cursor] : game?.positions[ply];
   const validMoves = useMemo(() => (sfen ? legalMoves(sfen) : []), [sfen]);
@@ -492,8 +492,13 @@ export default function GameScreen() {
                 values={mainlineAnalysis.map((result) =>
                   toEvaluationChartValue(toEvaluationValue(result?.candidates[0])),
                 )}
+                valueLabels={mainlineAnalysis.map((result) => {
+                  const evaluation = toEvaluationValue(result?.candidates[0]);
+                  return evaluation.kind === 'missing' ? '未解析' : formatEvaluation(evaluation);
+                })}
                 selected={ply}
                 onSelect={(next) => go(next)}
+                onScrubStart={() => setPlaying(false)}
                 height={74}
               />
             )}
