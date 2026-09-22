@@ -1,0 +1,37 @@
+appId: com.meeshogi.app
+---
+# Trimmed import-review: stages the shogiwars game only (no analysis wait).
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 180000
+- tapOn:
+    id: import-button
+- extendedWaitUntil:
+    visible:
+      id: import-paste
+    timeout: 60000
+- tapOn:
+    id: import-paste
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- extendedWaitUntil:
+    visible: '.*80手の棋譜を読み取りました.*'
+    timeout: 60000
+- swipe:
+    start: 95%, 85%
+    end: 95%, 30%
+- scrollUntilVisible:
+    element:
+      id: import-save
+    direction: DOWN
+- tapOn:
+    id: import-save
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 120000
+- takeScreenshot: imported-game-screen

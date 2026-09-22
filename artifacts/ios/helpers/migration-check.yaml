@@ -1,0 +1,75 @@
+appId: com.meeshogi.app
+---
+# Issue #7 migration check: new build over old-ENGINE_ID analysis data.
+# Old records must be readable but excluded from display/graph/badge/counts.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 180000
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+# Kifu remains readable: navigation works, all 81 positions present.
+- assertVisible: '1 / 80手'
+- takeScreenshot: migration-01-game-open
+- tapOn:
+    id: move-next
+- assertVisible: '2 / 80手'
+- tapOn:
+    id: move-last
+- assertVisible: '80 / 80手'
+- takeScreenshot: migration-02-positions-readable
+# Old-ENGINE_ID analysis must NOT surface: no analysis-ready, no completion text, no mate badges.
+- assertNotVisible:
+    id: analysis-ready
+- assertNotVisible: 全局解析が完了しました
+- assertNotVisible: '後手・3手詰め ›'
+- assertNotVisible: '後手・1手詰め ›'
+- tapOn:
+    id: move-first
+- scrollUntilVisible:
+    element:
+      id: square-2g
+    direction: UP
+    timeout: 30000
+- takeScreenshot: migration-03-board-no-old-points
+# Re-analysis attempt (autoAnalyze may have already tried and errored).
+- scrollUntilVisible:
+    element:
+      id: analysis-start
+    direction: DOWN
+    timeout: 30000
+- runFlow:
+    when:
+      visible:
+        id: analysis-start
+    commands:
+      - tapOn:
+          id: analysis-start
+- takeScreenshot: migration-04-reanalysis-attempt
+- extendedWaitUntil:
+    visible: '.*meta の整数範囲が不正です.*'
+    timeout: 120000
+- takeScreenshot: migration-05-after-reanalysis
+# Restart: exclusion must persist.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 180000
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- assertNotVisible:
+    id: analysis-ready
+- assertNotVisible: '後手・3手詰め ›'
+- assertNotVisible: '後手・1手詰め ›'
+- takeScreenshot: migration-06-after-restart
