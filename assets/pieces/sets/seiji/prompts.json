@@ -1,0 +1,120 @@
+{
+  "generator": "ChatGPT Image (built-in image_gen tool)",
+  "set": "seiji",
+  "purpose": "One shared material image per owner; all piece types reuse the same surface and the existing generated glyphs.",
+  "processing": "Trim transparent margins (threshold1); normalize body to220x256; add8px transparent padding (236x272 total); PNG palette optimization. No recoloring or manually drawn material.",
+  "generation": {
+    "set": "seiji",
+    "tool": "built-in ChatGPT image_gen edit",
+    "assets": [
+      {
+        "name": "sente",
+        "prompt": "Use case: precise-object-edit. Asset: meeshogi \"Seiji\" blank shogi piece body, sente side.\nEdit target is the attached blank wooden shogi piece.\nChange ONLY its material to elegant opaque celadon porcelain in a fresh LIGHT PALE BLUE-GREEN JADE hue. Preserve the exact upright pentagonal silhouette, proportions, centered framing, perfectly straight overhead orthographic view, thin delicate bevel, soft upper-left lighting, shallow edge depth, and transparent alpha background. The face remains completely blank with no letters or symbols.\nReplace ALL wood and wood grain with clean opaque porcelain, a refined satin glaze sheen, very subtle microscopic glaze texture. Fresh clear pale blue-green color, bright and luminous enough for black and vermilion lettering that will be added later. Smooth consistent tone across the face with natural restrained highlights at the slender rim.\nAvoid gray, muddy or desaturated color; avoid speckles, spots, marble veining, cracks, wood grain, heavy reflections, shiny plastic, thick 3D edges or translucency. No cast shadow, extra objects, text, emblem, symbols, watermark, background or checkerboard. Genuine transparent alpha only outside the opaque piece. Output one blank piece on square canvas with margins matching the edit target.",
+        "input": "/workspace/scratch/913b74a5a03b/piece-sources/shared-wood/wood-sente.png",
+        "output": "/workspace/scratch/913b74a5a03b/generated_images/exec-5e50cbe4-438c-48a8-87ce-1c6733014e12.png",
+        "destination": "/workspace/scratch/913b74a5a03b/piece-sources/sets/seiji/sente.png",
+        "input_sha256": "7f9cdcb559fc22c43c1a8368353b454e952fc50914b89de2c17f53e73d037328",
+        "output_sha256": "c7eb7d5ee5b51c19842cc8faef9168883432fd8964a009f0dc6a454aac7b7e83",
+        "size": [
+          1254,
+          1254
+        ],
+        "mode": "RGBA",
+        "alpha_extrema": [
+          0,
+          255
+        ],
+        "alpha_bbox": [
+          0,
+          32,
+          1085,
+          1184
+        ],
+        "center_rgba": [
+          185,
+          222,
+          219,
+          253
+        ],
+        "corner_rgba": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bytes": 883596,
+        "visual_review": "Blank opaque celadon porcelain; straight overhead pentagonal silhouette preserved; satin glaze; no wood grain, text or added shadow. Gote is visibly deeper blue-green than sente."
+      },
+      {
+        "name": "gote",
+        "prompt": "Use case: precise-object-edit. Asset: meeshogi \"Seiji\" blank shogi piece body, gote side.\nEdit target is the attached blank pale blue-green celadon porcelain shogi piece. It is the approved sente material reference.\nChange ONLY the ceramic color to a SLIGHTLY DEEPER, richer fresh blue-green celadon jade tone than the input. The gote version must be visibly deeper blue-green, never paler or washed out. Preserve luminous clarity and enough brightness for black or vermilion calligraphy to be added later. Keep the same elegant opaque porcelain, clean satin glaze sheen, very subtle microscopic glaze texture and restrained slender rim highlight.\nPreserve the exact original upright pentagonal silhouette, proportions, centered square framing, straight overhead orthographic view, thin delicate bevel, shallow edge depth, soft upper-left lighting and actual transparent alpha background. Face remains completely blank, no text or marks.\nNo wood or grain, no cloudy gray or muddy desaturation, no spots, speckles, veins or cracks, no harsh reflections, shiny plastic, thick raised edges, translucency or glass. No shadow, board, background color, checkerboard, letters, symbols, logo or watermark. Output exactly one blank opaque piece with transparent surroundings.",
+        "input": "/workspace/scratch/913b74a5a03b/generated_images/exec-5e50cbe4-438c-48a8-87ce-1c6733014e12.png",
+        "output": "/workspace/scratch/913b74a5a03b/generated_images/exec-748adbfa-a5fd-4df0-94f9-dc179e407249.png",
+        "destination": "/workspace/scratch/913b74a5a03b/piece-sources/sets/seiji/gote.png",
+        "input_sha256": "c7eb7d5ee5b51c19842cc8faef9168883432fd8964a009f0dc6a454aac7b7e83",
+        "output_sha256": "96a621772fd3d7a78d2538affefcb9bac437af8a4e57c713a8031e85ca01419b",
+        "size": [
+          1254,
+          1254
+        ],
+        "mode": "RGBA",
+        "alpha_extrema": [
+          0,
+          255
+        ],
+        "alpha_bbox": [
+          0,
+          95,
+          1232,
+          1254
+        ],
+        "center_rgba": [
+          146,
+          204,
+          200,
+          253
+        ],
+        "corner_rgba": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bytes": 859836,
+        "visual_review": "Blank opaque celadon porcelain; straight overhead pentagonal silhouette preserved; satin glaze; no wood grain, text or added shadow. Gote is visibly deeper blue-green than sente."
+      }
+    ]
+  },
+  "assets": [
+    {
+      "file": "assets/pieces/sets/seiji/sente.png",
+      "side": "sente",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceSha256": "c7eb7d5ee5b51c19842cc8faef9168883432fd8964a009f0dc6a454aac7b7e83",
+      "size": [
+        236,
+        272
+      ],
+      "sha256": "8d29e2c990fd0fc0d65032178e4c002f93b88ae1ccb98ef55eff778811dc7e45",
+      "bytes": 31162
+    },
+    {
+      "file": "assets/pieces/sets/seiji/gote.png",
+      "side": "gote",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceSha256": "96a621772fd3d7a78d2538affefcb9bac437af8a4e57c713a8031e85ca01419b",
+      "size": [
+        236,
+        272
+      ],
+      "sha256": "30a8abda46119327cd11e783d069445e6f0801f20e7d89142997b6e4b23b8fbc",
+      "bytes": 28653
+    }
+  ]
+}

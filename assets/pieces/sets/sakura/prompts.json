@@ -1,0 +1,93 @@
+{
+  "generator": "ChatGPT Image (built-in image_gen tool)",
+  "set": "sakura",
+  "purpose": "One shared material image per owner; all piece types reuse the same surface and the existing generated glyphs.",
+  "processing": "Trim transparent margins (threshold1); normalize body to220x256; add8px transparent padding (236x272 total); PNG palette optimization. No recoloring or manually drawn material.",
+  "generation": {
+    "set": "sakura",
+    "generator": "ChatGPT Image built-in image_gen.imagegen",
+    "mode": "precise-object-edit",
+    "assets": [
+      {
+        "name": "sente",
+        "prompt": "Use case: precise-object-edit. Asset: meeshogi sakura cherrywood shogi-piece body, sente variant. This reference image is the EXACT EDIT TARGET. Preserve its exact pentagonal silhouette, pointed top, proportions, composition, straight overhead view, subtle thin bevel, shallow edge depth, natural fine vertical wood grain, soft upper-left highlights, and transparent alpha cutout. Change ONLY the material and color of its wooden face and narrow bevel: instead of golden yellow honey boxwood, use luminous light Japanese cherrywood with a clearly different warm pale peach-beige / soft salmon-pink tan base, delicate natural fine vertical grain and gentle satin sheen. Color should be refined light sakura wood, not a flower illustration. Midtones rosy peach beige, highlights pale warm ivory blush, thin edges soft light peach tan. Keep the entire flat face bright enough for later near-black and saturated vermilion-red text overlays to both remain very readable. The new wood must visibly differ from the golden honey original with a natural pale pink-peach cast, but never vivid magenta, hot pink, gray, dull/muddy washed-out color, dark brown, strongly saturated red, or orange honey. Blank wooden face with absolutely NO TEXT and no symbol, character, pattern, blossom, logo, watermark, outline graphic or additional object. Preserve an actual transparent alpha background, not white or checkerboard; no added exterior cast shadow. One single upright blank piece centered on the same square transparent PNG canvas.",
+        "input": "/workspace/scratch/913b74a5a03b/piece-sources/shared-wood/wood-sente.png",
+        "source": "/workspace/scratch/913b74a5a03b/generated_images/exec-736d06e9-5c82-4ba5-b177-c2d52bcb4f3b.png",
+        "path": "/workspace/scratch/913b74a5a03b/piece-sources/sets/sakura/sente.png",
+        "input_sha256": "7f9cdcb559fc22c43c1a8368353b454e952fc50914b89de2c17f53e73d037328",
+        "output_sha256": "bb4967848e4656e1c9353225f78f71b61ebd84af2e066be081a9102efd2931d7",
+        "width": 1254,
+        "height": 1254,
+        "mode": "RGBA",
+        "bytes": 1138200,
+        "alpha_extrema": [
+          0,
+          255
+        ],
+        "alpha_bbox": [
+          0,
+          19,
+          1232,
+          1161
+        ],
+        "alpha_zero_pixels": 820837
+      },
+      {
+        "name": "gote",
+        "prompt": "Use case: precise-object-edit. Asset: meeshogi sakura cherrywood shogi-piece body, gote variant. This input image is the exact edit target and matching set reference. Preserve its exact blank pentagonal silhouette, pointed top, proportions, composition, straight overhead view, very thin bevel, shallow edge depth, natural fine vertical cherrywood grain, soft upper-left highlights, satin texture and genuine transparent alpha cutout. Change ONLY its wood color/material to a subtly but visibly DEEPER and WARMER version of the input's luminous pale sakura cherrywood. The gote face has richer warm peach-rose / soft salmon-tan midtones than this sente input, while retaining bright pale peach-cream highlights and a clear luminous appearance. Do not make it lighter or paler than the input. Keep it within natural light cherrywood and sufficiently light for near-black and saturated vermilion-red text overlays to both read strongly later. No gray, dull or muddy brown wash, dark brown, magenta, candy pink, red paint, golden honey or strong orange. Do not add new texture patterns or any additional object. Entire face remains absolutely BLANK: no text, symbol, character, blossom, stamp, logo, watermark or border graphic. Preserve real transparent alpha background, no painted white/checkerboard, no new exterior shadow. Deliver one single upright blank wooden piece in the same square PNG composition.",
+        "input": "/workspace/scratch/913b74a5a03b/piece-sources/sets/sakura/sente.png",
+        "source": "/workspace/scratch/913b74a5a03b/generated_images/exec-98b555ba-2241-430c-9e49-8d09d40876c4.png",
+        "path": "/workspace/scratch/913b74a5a03b/piece-sources/sets/sakura/gote.png",
+        "input_sha256": "bb4967848e4656e1c9353225f78f71b61ebd84af2e066be081a9102efd2931d7",
+        "output_sha256": "ce6112f506978dfe0ad711e14c406468d29f32dc81ec95fca4212bc169313fcb",
+        "width": 1254,
+        "height": 1254,
+        "mode": "RGBA",
+        "bytes": 1137261,
+        "alpha_extrema": [
+          0,
+          255
+        ],
+        "alpha_bbox": [
+          0,
+          21,
+          1230,
+          1161
+        ],
+        "alpha_zero_pixels": 815872
+      }
+    ]
+  },
+  "assets": [
+    {
+      "file": "assets/pieces/sets/sakura/sente.png",
+      "side": "sente",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceSha256": "bb4967848e4656e1c9353225f78f71b61ebd84af2e066be081a9102efd2931d7",
+      "size": [
+        236,
+        272
+      ],
+      "sha256": "a58cdde17b47500a74787c3bea4fc3ec4d7a65538c24b5aad57fc4f1ab6d5a35",
+      "bytes": 37808
+    },
+    {
+      "file": "assets/pieces/sets/sakura/gote.png",
+      "side": "gote",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceSha256": "ce6112f506978dfe0ad711e14c406468d29f32dc81ec95fca4212bc169313fcb",
+      "size": [
+        236,
+        272
+      ],
+      "sha256": "93455de1604de0bb484968c2c7e3686427a4d7065714158303f787ec28d0f0cd",
+      "bytes": 39467
+    }
+  ]
+}

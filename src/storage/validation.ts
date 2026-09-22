@@ -1,5 +1,5 @@
 import { Position } from 'tsshogi';
-import { DEFAULT_SETTINGS, type GameRecord, type Settings } from '../domain/model';
+import { DEFAULT_SETTINGS, PIECE_SET_IDS, type GameRecord, type Settings } from '../domain/model';
 
 const services = ['shogiwars', 'kiou', 'unknown'];
 const sides = ['black', 'white'];
@@ -157,6 +157,8 @@ export function decodeSettings(value: unknown): Settings {
   const settings = {
     ...DEFAULT_SETTINGS,
     ...value,
+    // An unavailable visual preset must not prevent saved games from loading.
+    pieceSet: PIECE_SET_IDS.find((id) => id === value.pieceSet) ?? DEFAULT_SETTINGS.pieceSet,
     playerNames: { ...DEFAULT_SETTINGS.playerNames, ...savedNames },
   };
   requireValid(

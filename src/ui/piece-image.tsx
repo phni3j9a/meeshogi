@@ -1,7 +1,8 @@
-import React, { memo } from 'react';
+import React, { memo, useContext } from 'react';
 import { Image, ImageSourcePropType, View } from 'react-native';
 import { PieceType } from 'tsshogi';
-import { Side } from '@/domain/model';
+import type { PieceSetId, Side } from '@/domain/model';
+import { PIECE_SETS, PieceSetContext } from './piece-sets';
 
 // Static requires keep every generated wood surface and ink glyph in the bundle.
 const glyphs: Record<PieceType, ImageSourcePropType> = {
@@ -21,11 +22,7 @@ const glyphs: Record<PieceType, ImageSourcePropType> = {
   [PieceType.DRAGON]: require('../../assets/pieces/glyphs/dragon.png'),
 };
 const jewel = require('../../assets/pieces/glyphs/jewel.png');
-const wood: Record<Side, ImageSourcePropType> = {
-  black: require('../../assets/pieces/shared/wood-sente.png'),
-  white: require('../../assets/pieces/shared/wood-gote.png'),
-};
-// Both wood images use the same 236 × 272 frame, including transparent margins.
+// Every surface uses the same 236 × 272 frame, including transparent margins.
 const woodAspect = 236 / 272;
 
 /** The enclosing square/hand button supplies the accessible piece name. */
@@ -35,13 +32,17 @@ export const PieceImage = memo(function PieceImage({
   width,
   height,
   rotated = false,
+  pieceSet,
 }: {
   piece: PieceType;
   side: Side;
   width: number;
   height: number;
   rotated?: boolean;
+  pieceSet?: PieceSetId;
 }) {
+  const selectedSet = useContext(PieceSetContext);
+  const surface = PIECE_SETS[pieceSet ?? selectedSet].surfaces[side];
   const woodWidth = Math.min(width, height * woodAspect);
   const woodHeight = woodWidth / woodAspect;
   const woodLeft = (width - woodWidth) / 2;
@@ -57,7 +58,7 @@ export const PieceImage = memo(function PieceImage({
       style={{ width, height, transform: [{ rotate: rotated ? '180deg' : '0deg' }] }}
     >
       <Image
-        source={wood[side]}
+        source={surface}
         resizeMode="contain"
         fadeDuration={0}
         accessible={false}

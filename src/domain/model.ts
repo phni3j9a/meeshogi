@@ -1,4 +1,6 @@
 export type Side = 'black' | 'white';
+export const PIECE_SET_IDS = ['tsuge', 'shiraki', 'sakura', 'seiji'] as const;
+export type PieceSetId = (typeof PIECE_SET_IDS)[number];
 export type Service = 'shogiwars' | 'kiou' | 'unknown';
 export type GameResult = 'black-win' | 'white-win' | 'draw' | 'interrupted' | 'unknown';
 export type Opening = 'static' | 'fourth-file' | 'central' | 'third-file' | 'opposing' | 'unknown';
@@ -79,6 +81,7 @@ export interface Settings {
   analysisNodes: number;
   multiPV: number;
   theme: 'system' | 'light' | 'dark';
+  pieceSet: PieceSetId;
   boardFlip: boolean;
   showArrows: boolean;
   showMateBadges: boolean;
@@ -90,6 +93,7 @@ export const DEFAULT_SETTINGS: Settings = {
   analysisNodes: 10000,
   multiPV: 2,
   theme: 'system',
+  pieceSet: 'tsuge',
   boardFlip: false,
   showArrows: true,
   showMateBadges: true,

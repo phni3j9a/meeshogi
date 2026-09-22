@@ -1,0 +1,475 @@
+{
+  "scope": "Actual RootLayout provider, SettingsScreen, PieceSetsScreen, GameScreen, MateScreen and PieceImage in RN Web. Native navigation/header/safe areas are adapted. Native accessibilityState and SVG accessibilityElementsHidden are mapped to corresponding aria attributes at the Web adapter boundary. Saving and failure use a localStorage shim; native SQLite persistence is covered separately by repository tests. FontScale1.3 is a Web Text-metric approximation. Synthetic analysis; known legal one-move mate fixture.",
+  "sourceHashes": {
+    "app/_layout.tsx": "602a0f288b13dbe20e81759b9300c54db6d7077107400ce94a214ef88d0b40d9",
+    "app/(tabs)/settings.tsx": "ae4fec0df0a1c51deb9f583e434cb8291526877c739699fe7d5dd3439fe10797",
+    "app/piece-sets.tsx": "b7917ca5d3936ce52f5376c10219849926ab2ad0e3df200d07fbeb83e1f2b60a",
+    "src/ui/piece-image.tsx": "78a3a27cdc39add67ceec9b3327dbe1db7741935e3b68ca8e3d8b3c1db2bca3a",
+    "src/ui/piece-sets.ts": "3d1d898458130882a57b8d25b23f8e90274d47d9a406d90af93247e500ce37ea"
+  },
+  "visuals": [
+    {
+      "name": "light",
+      "settingsLink": "駒セット\n桜木",
+      "previews": [
+        {
+          "set": "tsuge",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "shiraki",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "sakura",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "seiji",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "name": "dark",
+      "settingsLink": "駒セット\n桜木",
+      "previews": [
+        {
+          "set": "tsuge",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "shiraki",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "sakura",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "seiji",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "name": "320",
+      "settingsLink": "駒セット\n桜木",
+      "previews": [
+        {
+          "set": "tsuge",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "shiraki",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "sakura",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "seiji",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "name": "large-text",
+      "settingsLink": "駒セット\n桜木",
+      "previews": [
+        {
+          "set": "tsuge",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "shiraki",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "sakura",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        },
+        {
+          "set": "seiji",
+          "images": 12,
+          "explicitPreviewCorrect": true
+        }
+      ],
+      "overflow": false
+    }
+  ],
+  "boards": [
+    {
+      "set": "shiraki",
+      "pieces": 40,
+      "held": 5,
+      "promoted": 1,
+      "woodSources": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/shiraki/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/shiraki/sente.png"
+      ],
+      "glyphs": [
+        "bishop.png",
+        "silver.png",
+        "pawn.png",
+        "lance.png",
+        "gold.png",
+        "jewel.png",
+        "knight.png",
+        "rook.png",
+        "horse.png",
+        "king.png"
+      ],
+      "flipPreservesAssets": true
+    },
+    {
+      "set": "sakura",
+      "pieces": 40,
+      "held": 5,
+      "promoted": 1,
+      "woodSources": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/sakura/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/sakura/sente.png"
+      ],
+      "glyphs": [
+        "bishop.png",
+        "silver.png",
+        "pawn.png",
+        "lance.png",
+        "gold.png",
+        "jewel.png",
+        "knight.png",
+        "rook.png",
+        "horse.png",
+        "king.png"
+      ],
+      "flipPreservesAssets": true
+    },
+    {
+      "set": "seiji",
+      "pieces": 40,
+      "held": 5,
+      "promoted": 1,
+      "woodSources": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/seiji/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/seiji/sente.png"
+      ],
+      "glyphs": [
+        "bishop.png",
+        "silver.png",
+        "pawn.png",
+        "lance.png",
+        "gold.png",
+        "jewel.png",
+        "knight.png",
+        "rook.png",
+        "horse.png",
+        "king.png"
+      ],
+      "flipPreservesAssets": true
+    }
+  ],
+  "mate": [
+    {
+      "set": "shiraki",
+      "before": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/shiraki/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/shiraki/sente.png"
+      ],
+      "after": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/shiraki/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/shiraki/sente.png"
+      ],
+      "legalGoldDrop": true
+    },
+    {
+      "set": "sakura",
+      "before": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/sakura/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/sakura/sente.png"
+      ],
+      "after": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/sakura/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/sakura/sente.png"
+      ],
+      "legalGoldDrop": true
+    },
+    {
+      "set": "seiji",
+      "before": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/seiji/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/seiji/sente.png"
+      ],
+      "after": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/seiji/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/seiji/sente.png"
+      ],
+      "legalGoldDrop": true
+    }
+  ],
+  "interactions": {
+    "promotedAndHands": {
+      "promoted": 6,
+      "held": 7,
+      "woodSources": [
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/seiji/gote.png",
+        "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/sets/seiji/sente.png"
+      ]
+    },
+    "pendingAndDuplicateTap": {
+      "selected": "tsuge",
+      "checked": "true",
+      "disabled": [
+        "true",
+        "true",
+        "true",
+        "true"
+      ]
+    },
+    "failure": {
+      "selected": "shiraki",
+      "message": "駒セットを保存できませんでした。検証用の保存エラー\n再試行"
+    },
+    "retry": {
+      "selected": "seiji",
+      "stored": "seiji",
+      "events": [
+        {
+          "action": "updateSettings",
+          "patch": {
+            "pieceSet": "shiraki"
+          }
+        },
+        {
+          "action": "settingsSaved",
+          "patch": {
+            "pieceSet": "shiraki"
+          }
+        },
+        {
+          "action": "updateSettings",
+          "patch": {
+            "pieceSet": "seiji"
+          }
+        },
+        {
+          "action": "settingsFailed",
+          "patch": {
+            "pieceSet": "seiji"
+          }
+        },
+        {
+          "action": "updateSettings",
+          "patch": {
+            "pieceSet": "seiji"
+          }
+        },
+        {
+          "action": "settingsSaved",
+          "patch": {
+            "pieceSet": "seiji"
+          }
+        }
+      ],
+      "analysisStatus": "running"
+    },
+    "reload": {
+      "selected": "seiji",
+      "settingsLabel": "駒セット\n青磁",
+      "mechanism": "harness localStorage, not SQLite"
+    }
+  },
+  "pageErrors": [],
+  "consoleErrors": [],
+  "previousVisualSourceHashes": {
+    "app/_layout.tsx": "602a0f288b13dbe20e81759b9300c54db6d7077107400ce94a214ef88d0b40d9",
+    "app/(tabs)/settings.tsx": "41f0014c8161995f49496750986274b341381e84fd15c6da5c3aaf10212a1922",
+    "app/piece-sets.tsx": "b7917ca5d3936ce52f5376c10219849926ab2ad0e3df200d07fbeb83e1f2b60a",
+    "src/ui/piece-image.tsx": "78a3a27cdc39add67ceec9b3327dbe1db7741935e3b68ca8e3d8b3c1db2bca3a",
+    "src/ui/piece-sets.ts": "3d1d898458130882a57b8d25b23f8e90274d47d9a406d90af93247e500ce37ea"
+  },
+  "visualRevisionNote": "Initial settings/picker/board/mate captures preceded the settings-only empty-string-to-null conditional correction. All other recorded production source hashes are unchanged. Final save/failure/retry/reload and post-save board captures use sourceHashes, including the corrected settings screen. Initial native-only SVG and accessibilityState Web compatibility warnings were addressed by the documented thin adapters, not by changing product rendering.",
+  "sourceHashesAfter": {
+    "app/_layout.tsx": "602a0f288b13dbe20e81759b9300c54db6d7077107400ce94a214ef88d0b40d9",
+    "app/(tabs)/settings.tsx": "ae4fec0df0a1c51deb9f583e434cb8291526877c739699fe7d5dd3439fe10797",
+    "app/piece-sets.tsx": "b7917ca5d3936ce52f5376c10219849926ab2ad0e3df200d07fbeb83e1f2b60a",
+    "src/ui/piece-image.tsx": "78a3a27cdc39add67ceec9b3327dbe1db7741935e3b68ca8e3d8b3c1db2bca3a",
+    "src/ui/piece-sets.ts": "3d1d898458130882a57b8d25b23f8e90274d47d9a406d90af93247e500ce37ea"
+  },
+  "assets": [
+    {
+      "file": "assets/pieces/shared/wood-sente.png",
+      "sha256": "cbff8938dda1db3a2b522de8f75cef009e4b0ff8aee44ac8dff0385007280483",
+      "md5": "71958d0136d6f6ee931b16f00df8172c",
+      "bytes": 38700
+    },
+    {
+      "file": "assets/pieces/shared/wood-gote.png",
+      "sha256": "ef77005c514da1d0c551590de385ba4268600d677dd172fd93653de853590b83",
+      "md5": "1082fd229f103995eb3736dd3a3120f2",
+      "bytes": 39515
+    },
+    {
+      "file": "assets/pieces/glyphs/pawn.png",
+      "sha256": "3e6fd073bdcdc9889f503fac23339f38ae61febed4a5cf59b9df8723008563af",
+      "md5": "5ba8f93402c97c6dc1401bf62c0b7348",
+      "bytes": 18783
+    },
+    {
+      "file": "assets/pieces/glyphs/lance.png",
+      "sha256": "17eab48d7bbd15d43dfb1ea7e959f443acd4301a3067589ebb792a52be9f5c4b",
+      "md5": "dcf03bbb0060486e035fb15221ff75d9",
+      "bytes": 17887
+    },
+    {
+      "file": "assets/pieces/glyphs/knight.png",
+      "sha256": "62af8ae572acfbf56486c9d25b5d58a36223be39ed4567a7b987a19c166aa843",
+      "md5": "937ef17575636a8fcf3c184604d38fd1",
+      "bytes": 20498
+    },
+    {
+      "file": "assets/pieces/glyphs/silver.png",
+      "sha256": "5459d2524f70c7e3bd4c2ca447c9d301e85d6ecaf6f604a0212505efe0bc7278",
+      "md5": "491917ab3e2b657129c1c116925b439c",
+      "bytes": 21147
+    },
+    {
+      "file": "assets/pieces/glyphs/gold.png",
+      "sha256": "8c4c4f1d16c2f6d9764bbb33de62344813f4276eb4ff754ec1e91ae29886fb34",
+      "md5": "253bab57200655b3df3c5b87f7016a84",
+      "bytes": 17849
+    },
+    {
+      "file": "assets/pieces/glyphs/bishop.png",
+      "sha256": "c4b60fbbbdce57f5a6370f2e2474fa2dd4de3e3ed669954f88b96f147b8c2a7f",
+      "md5": "0da56e9c7ff463378d2525c9ffcb160d",
+      "bytes": 16289
+    },
+    {
+      "file": "assets/pieces/glyphs/rook.png",
+      "sha256": "eb586018a1f94bac50f57ac51ab047ce37963edc12566dcb04bcbddc95bf44fe",
+      "md5": "40205934bec4395f60779d68bffa1f7d",
+      "bytes": 22722
+    },
+    {
+      "file": "assets/pieces/glyphs/king.png",
+      "sha256": "9d3ee973921fd9f4542be65a8ac90d96c8078d2b53b627d5ab4da7af8718db97",
+      "md5": "bbe7f58ff6f28ba03e91b44d89c0b33a",
+      "bytes": 16771
+    },
+    {
+      "file": "assets/pieces/glyphs/jewel.png",
+      "sha256": "1403f4a0cd824d550e47cc8e470431511e0fd1743869014125962b74f94c3d48",
+      "md5": "2b3db8c82f0f6eb4230011e70f440b3b",
+      "bytes": 18026
+    },
+    {
+      "file": "assets/pieces/glyphs/promoted-pawn.png",
+      "sha256": "43bfde15cbf09084e3f9ce8b2623025d401bb30859f5d2caa08cc3cfcbc87af9",
+      "md5": "1798ae37ef3a3f96bd0fd072232739f7",
+      "bytes": 12341
+    },
+    {
+      "file": "assets/pieces/glyphs/promoted-lance.png",
+      "sha256": "b9b313da82150aa660edc816a1a77b4d073364b54af2ee4d6c34bda391ed5f23",
+      "md5": "d17d82192e8e2f120cface8fdc8dd631",
+      "bytes": 18874
+    },
+    {
+      "file": "assets/pieces/glyphs/promoted-knight.png",
+      "sha256": "ecf87204fcef3088a6ac0b4770afb7da5229936c9e30b2e32fc715ad92939ad4",
+      "md5": "8a6893d2ad62260424396f70e182d98d",
+      "bytes": 17828
+    },
+    {
+      "file": "assets/pieces/glyphs/promoted-silver.png",
+      "sha256": "87d02fd33a48cc2f0ae261472ac249a5904998d42404ce4e26a4da0dce54732b",
+      "md5": "50e40074b94142dd75ddc7f6c31b1c84",
+      "bytes": 16264
+    },
+    {
+      "file": "assets/pieces/glyphs/horse.png",
+      "sha256": "c186066d32fe64b7625ce1a611987fe8dff77f453383cfdea97183f7e245d0c2",
+      "md5": "73ef9f424f15340c94c43f347dbd3131",
+      "bytes": 19991
+    },
+    {
+      "file": "assets/pieces/glyphs/dragon.png",
+      "sha256": "261d6ae2c66dff7dc507fea2f6623c7556eb39b9bdb0e449eba98ca7d05f7579",
+      "md5": "05122c5ad9084bb64289988cda931281",
+      "bytes": 26327
+    },
+    {
+      "file": "assets/pieces/sets/shiraki/sente.png",
+      "sha256": "fe5142020313c1431b25153448f5a115dbd5b79125bb336f801e7c1255c9b7fd",
+      "md5": "3818951b25e8d5f781e9b1bc6ef60038",
+      "bytes": 37739
+    },
+    {
+      "file": "assets/pieces/sets/shiraki/gote.png",
+      "sha256": "2d6985416cab5e273a2d37f563a864233586347a2e8c610178cc057e95f8aced",
+      "md5": "cf19ab16b50d66257270a9d901b6df48",
+      "bytes": 37978
+    },
+    {
+      "file": "assets/pieces/sets/sakura/sente.png",
+      "sha256": "a58cdde17b47500a74787c3bea4fc3ec4d7a65538c24b5aad57fc4f1ab6d5a35",
+      "md5": "60ce0ca2bf50d7f8742cd80418089813",
+      "bytes": 37808
+    },
+    {
+      "file": "assets/pieces/sets/sakura/gote.png",
+      "sha256": "93455de1604de0bb484968c2c7e3686427a4d7065714158303f787ec28d0f0cd",
+      "md5": "c88aec0e4a07dc09f645dcc0e22e3030",
+      "bytes": 39467
+    },
+    {
+      "file": "assets/pieces/sets/seiji/sente.png",
+      "sha256": "8d29e2c990fd0fc0d65032178e4c002f93b88ae1ccb98ef55eff778811dc7e45",
+      "md5": "7ddddd74bd03fbf306bd599da9bbccfb",
+      "bytes": 31162
+    },
+    {
+      "file": "assets/pieces/sets/seiji/gote.png",
+      "sha256": "30a8abda46119327cd11e783d069445e6f0801f20e7d89142997b6e4b23b8fbc",
+      "md5": "e4e7aa3c1967fc1b1a953ed06c521adb",
+      "bytes": 28653
+    }
+  ],
+  "validation": {
+    "typecheck": "passed",
+    "vitest": {
+      "files": 7,
+      "tests": 66,
+      "status": "passed"
+    },
+    "sqlitePersistence": "Host SQLite database reopen test, preserving nondefault pieceSet and games; not mobile runtime.",
+    "expoHermesExport": {
+      "ios": "passed",
+      "android": "passed",
+      "pieceAssetsPerPlatform": 23,
+      "assetMd5Matched": true,
+      "archivedAssetsExcluded": 29
+    },
+    "nativeRuntime": "Not executed: no Android SDK/iOS Simulator or Devin session access in this environment."
+  }
+}

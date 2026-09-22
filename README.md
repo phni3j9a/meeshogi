@@ -8,7 +8,7 @@
 
 無料版の機能実装は[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)で統合済みです。KIFの取り込み・合法手検証、SQLite保存、戦績集計、Sekireiの端末内解析と分岐検討を利用できます。ログイン・通信・課金は利用条件に含めません。
 
-2026年9月22日、[棋譜解析画面の改善](docs/design/analysis-refresh.md)と、ChatGPT Imageで個別生成した15種類の駒を追加しました。この変更のiOS・Androidネイティブ画面での受入検証は未実施です。以下の過去の受入結果とは区別します。
+2026年9月22日、[棋譜解析画面の改善](docs/design/analysis-refresh.md)と、ChatGPT Imageで生成した[4種類の駒セット](docs/design/piece-sets.md)を追加しました。設定から黄楊・白木・桜木・青磁を選べます。この変更のiOS・Androidネイティブ画面での受入検証は未実施です。以下の過去の受入結果とは区別します。
 
 Androidは実機での主要操作とCIの全14フローを確認しました。iOSはRelease Simulatorで各ページを撮影して目視し、詳細操作・全テーマ・文字拡大・実機性能の未検証分は継続検証として区別しています。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
 
