@@ -60,6 +60,24 @@ describe('端末保存', () => {
       rmSync(dir, { recursive: true });
     }
   });
+  it('旧identityの解析レコードを棋譜とともに読み戻し、破壊的移行をしない', async () => {
+    const { db, repository } = database(':memory:');
+    await repository.initialize();
+    const game = sample();
+    const oldAnalysis = {
+      sfen: game.positions[0],
+      engineId: 'sekirei-v0.3.36@old',
+      modelId: 'old-model',
+      conditions: { nodes: 10000, multiPV: 2 },
+      candidates: [{ usi: '7g7f', pv: ['7g7f'], scoreCp: 10, mate: null, depth: 1 }],
+      mateProof: null,
+      completedAt: '2026-09-12',
+    };
+    const stored = { ...game, analysis: { 0: oldAnalysis } };
+    await repository.insert(stored);
+    expect((await repository.load()).games[0]).toEqual(stored);
+    db.close();
+  });
   it('設定と既存対局の帰属更新を同じtransactionでrollbackする', async () => {
     const { db, repository } = database(':memory:');
     await repository.initialize();

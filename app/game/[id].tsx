@@ -28,6 +28,7 @@ import { errorMessage, useChoice } from '@/ui/use-choice';
 import {
   formatEvaluation,
   isDisplayableMateProof,
+  resolveCurrentEvaluation,
   toEvaluationChartValue,
   toEvaluationValue,
 } from '@/ui/evaluation';
@@ -82,7 +83,13 @@ export default function GameScreen() {
         : null;
   const candidates =
     currentAnalysis?.candidates.filter((candidate) => validMoves.includes(candidate.usi)) ?? [];
-  const currentEvaluation = toEvaluationValue(candidates[0]);
+  // Keep the same legality filter for the readout as for the candidate rows.
+  // Native results are validated at the boundary, while this also protects the
+  // UI if a persisted record predates that validation.
+  const displayAnalysis = currentAnalysis
+    ? { ...currentAnalysis, candidates }
+    : currentAnalysis;
+  const currentEvaluation = resolveCurrentEvaluation(displayAnalysis);
   const bottomSide: Side = flipped
     ? game?.mySide === 'white'
       ? 'black'
@@ -396,7 +403,7 @@ export default function GameScreen() {
         {!branch && (
           <LineChart
             values={mainlineAnalysis.map((result) =>
-              toEvaluationChartValue(toEvaluationValue(result?.candidates[0])),
+              toEvaluationChartValue(resolveCurrentEvaluation(result)),
             )}
             selected={ply}
             onSelect={(next) => go(next)}

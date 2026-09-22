@@ -21,6 +21,7 @@ describe('saved analysis compatibility', () => {
       { ...analysis, modelId: 'previous-weight' },
       { ...analysis, conditions: { ...analysis.conditions, nodes: 50000 } },
       { ...analysis, conditions: { ...analysis.conditions, multiPV: 3 } },
+      { ...analysis, status: 'incomplete' } as unknown as PositionAnalysis,
     ])
       expect(isCompatibleAnalysis(changed, analysis.sfen, analysis.conditions)).toBe(false);
     expect(isCompatibleAnalysis(null, analysis.sfen, analysis.conditions)).toBe(false);

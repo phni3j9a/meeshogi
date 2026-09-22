@@ -1,5 +1,5 @@
 import { requireOptionalNativeModule } from 'expo-modules-core';
-import { applyUsi, boardView, legalMoves } from '../domain';
+import { applyUsi, boardView, isInCheck, legalMoves } from '../domain';
 import type { AnalysisCandidate, AnalysisConditions, MateProof, PositionAnalysis, Side } from '../domain/model';
 
 import { ENGINE_ID, MODEL_ID } from './identity';
@@ -9,6 +9,7 @@ const NATIVE_MODULE_NAME = 'MeeshogiSekirei';
 const MIN_NODES = 1;
 const MAX_NODES = 10_000_000;
 const MAX_MULTI_PV = 3;
+const MAX_DEPTH = 64;
 
 type NativeSekireiModule = {
   initializeAsync(): Promise<void>;
@@ -25,6 +26,15 @@ type NativePayload = {
   candidates: unknown;
   terminal: unknown;
   mateProof: unknown;
+  meta: unknown;
+};
+
+type NativeMeta = {
+  requestedNodes: number;
+  nodes: number;
+  completedDepth: number;
+  fallback: boolean;
+  budgetReached: boolean;
 };
 
 let initialization: Promise<void> | undefined;
@@ -84,12 +94,42 @@ function parseCandidate(value: unknown, index: number): AnalysisCandidate {
   const scoreCp = nullableInteger(candidate.scoreCp, `candidates[${index}].scoreCp`);
   const mate = nullableInteger(candidate.mate, `candidates[${index}].mate`);
   if (scoreCp !== null && mate !== null) throw new Error(`候補 ${index + 1} に score と mate が同時に設定されています。`);
+  const depth = asFiniteInteger(candidate.depth, `candidates[${index}].depth`);
+  if (depth < 0 || depth > MAX_DEPTH) throw new Error(`ネイティブ解析結果の candidates[${index}].depth が不正です。`);
   return {
     usi: asString(candidate.usi, `candidates[${index}].usi`),
     pv: asPv(candidate.pv, `candidates[${index}].pv`),
     scoreCp,
     mate,
-    depth: asFiniteInteger(candidate.depth, `candidates[${index}].depth`),
+    depth,
+  };
+}
+
+function parseMeta(value: unknown, conditions: AnalysisConditions): NativeMeta {
+  const meta = asRecord(value, 'meta');
+  const requestedNodes = asFiniteInteger(meta.requestedNodes, 'meta.requestedNodes');
+  const nodes = asFiniteInteger(meta.nodes, 'meta.nodes');
+  const completedDepth = asFiniteInteger(meta.completedDepth, 'meta.completedDepth');
+  if (
+    requestedNodes < MIN_NODES ||
+    requestedNodes > MAX_NODES ||
+    requestedNodes !== conditions.nodes ||
+    nodes < 0 ||
+    nodes > requestedNodes ||
+    completedDepth < 0 ||
+    completedDepth > MAX_DEPTH
+  ) {
+    throw new Error('ネイティブ解析結果の meta の整数範囲が不正です。');
+  }
+  if (typeof meta.fallback !== 'boolean' || typeof meta.budgetReached !== 'boolean') {
+    throw new Error('ネイティブ解析結果の meta の真偽値が不正です。');
+  }
+  return {
+    requestedNodes,
+    nodes,
+    completedDepth,
+    fallback: meta.fallback,
+    budgetReached: meta.budgetReached,
   };
 }
 
@@ -166,6 +206,7 @@ function parseNativeResult(raw: string | NativePayload, sfen: string, conditions
   if (typeof result.error === 'string') throw new Error(result.error);
   const status = asString(result.status, 'status');
   if (status !== 'complete') throw new Error(`ネイティブ解析が完了しませんでした: ${status}`);
+  const meta = parseMeta(result.meta, conditions);
   if (asString(result.sfen, 'sfen') !== sfen) throw new Error('ネイティブ解析結果の局面が一致しません。');
   if (asString(result.engineId, 'engineId') !== ENGINE_ID || asString(result.modelId, 'modelId') !== MODEL_ID) {
     throw new Error('ネイティブ解析結果の engine/model identity が一致しません。');
@@ -174,18 +215,46 @@ function parseNativeResult(raw: string | NativePayload, sfen: string, conditions
   if (!Array.isArray(result.candidates)) throw new Error('ネイティブ解析結果の candidates が不正です。');
   const candidates = result.candidates.map((candidate, index) => parseCandidate(candidate, index));
   candidates.forEach((candidate, index) => validateCandidatePv(sfen, candidate, index));
+  const candidateMoves = new Set<string>();
+  for (const candidate of candidates) {
+    if (candidateMoves.has(candidate.usi)) throw new Error('ネイティブ解析結果に候補手の重複があります。');
+    candidateMoves.add(candidate.usi);
+  }
   const terminalValue = result.terminal;
   const terminal = terminalValue === null || terminalValue === undefined ? undefined : asString(terminalValue, 'terminal');
   if (terminal !== undefined && terminal !== 'checkmate' && terminal !== 'no-legal-moves') {
     throw new Error('ネイティブ解析結果の terminal が不正です。');
   }
-  if (candidates.length === 0 && terminal === undefined) throw new Error('ネイティブ解析結果に候補手がありません。');
+  let positionLegalMoves: string[];
+  try {
+    positionLegalMoves = legalMoves(sfen);
+  } catch {
+    throw new Error('解析結果の検証対象となる局面の合法手を取得できません。');
+  }
   if (candidates.length > 0 && terminal !== undefined) throw new Error('候補手のある解析に terminal が設定されています。');
-  if (candidates.length === 0) {
+  if (terminal === undefined) {
+    if (positionLegalMoves.length === 0) {
+      throw new Error('合法手のない解析結果には terminal が必要です。');
+    }
+    if (meta.fallback || meta.completedDepth === 0) {
+      throw new Error('未完了のネイティブ解析を完了結果として保存できません。');
+    }
+    const expectedCandidates = Math.min(conditions.multiPV, positionLegalMoves.length);
+    if (candidates.length !== expectedCandidates) {
+      throw new Error(`ネイティブ解析結果の候補手数が不正です。期待値: ${expectedCandidates}`);
+    }
+  } else {
+    if (candidates.length !== 0) throw new Error('終局解析には候補手を設定できません。');
+    if (positionLegalMoves.length !== 0) throw new Error('候補手のない解析結果ですが、局面に合法手があります。');
+    let inCheck: boolean;
     try {
-      if (legalMoves(sfen).length !== 0) throw new Error('position has legal moves');
+      inCheck = isInCheck(sfen);
     } catch {
-      throw new Error('候補手のない解析結果ですが、局面に合法手があります。');
+      throw new Error('終局解析の王手状態を検証できません。');
+    }
+    const expectedTerminal = inCheck ? 'checkmate' : 'no-legal-moves';
+    if (terminal !== expectedTerminal) {
+      throw new Error('ネイティブ解析結果の terminal が局面の王手状態と一致しません。');
     }
   }
   return {

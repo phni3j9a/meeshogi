@@ -1,5 +1,7 @@
 import { Position } from 'tsshogi';
+import { isInCheck, legalMoves } from '../domain';
 import { DEFAULT_SETTINGS, type GameRecord, type Settings } from '../domain/model';
+import { CURRENT_ANALYSIS_IDENTITY } from '../analysis/identity';
 
 const services = ['shogiwars', 'kiou', 'unknown'];
 const sides = ['black', 'white'];
@@ -33,6 +35,17 @@ function validAnalysis(value: unknown, sfen: string): boolean {
     value.candidates.length > 3
   )
     return false;
+  const isCurrentIdentity =
+    value.engineId === CURRENT_ANALYSIS_IDENTITY.engineId &&
+    value.modelId === CURRENT_ANALYSIS_IDENTITY.modelId;
+  let positionLegalMoves: string[] | undefined;
+  if (isCurrentIdentity) {
+    try {
+      positionLegalMoves = legalMoves(sfen);
+    } catch {
+      return false;
+    }
+  }
   if (
     !value.candidates.every(
       (candidate: unknown) =>
@@ -49,7 +62,23 @@ function validAnalysis(value: unknown, sfen: string): boolean {
     return false;
   if (value.candidates.length === 0) {
     if (!member(value.terminal, ['checkmate', 'no-legal-moves'])) return false;
+    if (isCurrentIdentity) {
+      if (positionLegalMoves?.length !== 0) return false;
+      let inCheck: boolean;
+      try {
+        inCheck = isInCheck(sfen);
+      } catch {
+        return false;
+      }
+      if (value.terminal !== (inCheck ? 'checkmate' : 'no-legal-moves')) return false;
+    }
   } else if (value.terminal !== undefined) return false;
+  if (
+    isCurrentIdentity &&
+    value.terminal === undefined &&
+    value.candidates.length !== Math.min(value.conditions.multiPV, positionLegalMoves?.length ?? 0)
+  )
+    return false;
   if (value.mateProof === null) return true;
   const proof = value.mateProof;
   if (

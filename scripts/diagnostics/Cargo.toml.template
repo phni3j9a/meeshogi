@@ -1,0 +1,15 @@
+[package]
+name = "meeshogi-engine-diagnostic"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+product_bridge = []
+
+[dependencies]
+sekirei-core = { path = "CORE_PATH" }
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

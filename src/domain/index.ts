@@ -799,6 +799,11 @@ export function legalMoves(sfen: string): string[] {
   return [...moves].sort();
 }
 
+/** Return whether the side to move is currently in check. */
+export function isInCheck(sfen: string): boolean {
+  return parsePositionOrFail(sfen).checked;
+}
+
 export function moveLabel(sfen: string, usi: string): string {
   const position = parsePositionOrFail(sfen);
   const move = position.createMoveByUSI(usi);

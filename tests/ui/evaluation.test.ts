@@ -1,12 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import type { MateProof, Side } from '../../src/domain/model';
+import type { PositionAnalysis } from '../../src/domain/model';
+import { CURRENT_ANALYSIS_IDENTITY } from '../../src/analysis/identity';
 import {
   EVALUATION_CHART_EDGE,
   formatEvaluation,
   isDisplayableMateProof,
+  resolveCurrentEvaluation,
   toEvaluationChartValue,
   toEvaluationValue,
 } from '../../src/ui/evaluation';
+
+const checkmateWhiteToMove: PositionAnalysis = {
+  ...CURRENT_ANALYSIS_IDENTITY,
+  sfen: '4k4/3RG4/9/9/9/9/9/9/8K w - 1',
+  conditions: { nodes: 1, multiPV: 1 },
+  candidates: [],
+  terminal: 'checkmate',
+  mateProof: null,
+  completedAt: '2026-09-22T00:00:00.000Z',
+};
+const checkmateBlackToMove: PositionAnalysis = {
+  ...CURRENT_ANALYSIS_IDENTITY,
+  sfen: '8k/9/9/9/9/9/9/3rg4/4K4 b - 1',
+  conditions: { nodes: 1, multiPV: 1 },
+  candidates: [],
+  terminal: 'checkmate',
+  mateProof: null,
+  completedAt: '2026-09-22T00:00:00.000Z',
+};
+const noLegalMoves: PositionAnalysis = {
+  ...CURRENT_ANALYSIS_IDENTITY,
+  sfen: 'k8/9/9/9/9/9/4n4/2r6/4K4 b - 1',
+  conditions: { nodes: 1, multiPV: 1 },
+  candidates: [],
+  terminal: 'no-legal-moves',
+  mateProof: null,
+  completedAt: '2026-09-22T00:00:00.000Z',
+};
 
 describe('評価値の表示変換', () => {
   it.each([
@@ -109,5 +140,39 @@ describe('詰み証明バッジの表示条件', () => {
   it('設定OFFなら証明済みでも最終表示条件はfalseになる', () => {
     expect(badgeVisible(false, provenBlack, 'black')).toBe(false);
     expect(badgeVisible(true, provenBlack, 'black')).toBe(true);
+  });
+});
+
+describe('現在局面の評価 resolver', () => {
+  it('詰み終局を先手視点の符号と勝者表示へ変換する', () => {
+    const blackWin = resolveCurrentEvaluation(checkmateWhiteToMove);
+    const whiteWin = resolveCurrentEvaluation(checkmateBlackToMove);
+    expect(blackWin).toEqual({ kind: 'checkmate', value: 1500, winner: 'black' });
+    expect(whiteWin).toEqual({ kind: 'checkmate', value: -1500, winner: 'white' });
+    expect(formatEvaluation(blackWin)).toBe('先手勝ち・詰み終局');
+    expect(formatEvaluation(whiteWin)).toBe('後手勝ち・詰み終局');
+    expect(toEvaluationChartValue(blackWin)).toBe(1500);
+    expect(toEvaluationChartValue(whiteWin)).toBe(-1500);
+  });
+
+  it('no-legal-moves、旧identity、未解析は全て欠測のままにする', () => {
+    expect(resolveCurrentEvaluation(noLegalMoves)).toEqual({ kind: 'missing' });
+    expect(resolveCurrentEvaluation(undefined)).toEqual({ kind: 'missing' });
+    expect(
+      resolveCurrentEvaluation({ ...checkmateWhiteToMove, engineId: 'old-engine' }),
+    ).toEqual({ kind: 'missing' });
+    expect(
+      resolveCurrentEvaluation({
+        ...checkmateWhiteToMove,
+        status: 'incomplete',
+      } as unknown as PositionAnalysis),
+    ).toEqual({ kind: 'missing' });
+  });
+
+  it('盤面の反転に相当する表示状態を変えても符号を変えない', () => {
+    const valueBeforeFlip = resolveCurrentEvaluation(checkmateWhiteToMove);
+    const valueAfterFlip = resolveCurrentEvaluation(checkmateWhiteToMove);
+    expect(valueAfterFlip).toEqual(valueBeforeFlip);
+    expect(toEvaluationChartValue(valueAfterFlip)).toBe(1500);
   });
 });

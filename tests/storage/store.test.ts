@@ -9,6 +9,7 @@ import {
 import { getStatistics, parseKif } from '../../src/domain';
 import { readFileSync } from 'node:fs';
 import type { LocalRepository } from '../../src/storage/repository';
+import { CURRENT_ANALYSIS_IDENTITY } from '../../src/analysis/identity';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -18,8 +19,8 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const fixture = () => parseKif(readFileSync('fixtures/kif/shogiwars.kif', 'utf8'));
-function setup() {
-  let persisted: GameRecord[] = [];
+function setup(initialGames: GameRecord[] = []) {
+  let persisted: GameRecord[] = [...initialGames];
   const repository = {
     load: async () => ({ games: persisted, settings: { ...DEFAULT_SETTINGS, autoAnalyze: false } }),
     insert: vi.fn(async (game: GameRecord) => {
@@ -39,8 +40,7 @@ function setup() {
       conditions: { nodes: number; multiPV: number },
     ): Promise<PositionAnalysis> => ({
       sfen,
-      engineId: 'engine',
-      modelId: 'model',
+      ...CURRENT_ANALYSIS_IDENTITY,
       conditions,
       candidates: [{ usi: '7g7f', pv: ['7g7f'], depth: 1, scoreCp: 10, mate: null }],
       mateProof: null,
@@ -53,13 +53,59 @@ function setup() {
     openRepository: async () => repository as unknown as LocalRepository,
     analyze,
     cancel,
-    engineId: 'engine',
-    modelId: 'model',
     createId: () => String(++nextId),
   });
   return { store, repository, analyze, cancel, persisted: () => persisted };
 }
 describe('棋譜の更新と解析の隔離', () => {
+  it('再起動後も旧identityの解析を保持するが、完了件数と再解析の再利用対象にはしない', async () => {
+    const parsed = fixture();
+    const old: PositionAnalysis = {
+      sfen: parsed.positions[0],
+      engineId: 'sekirei-v0.3.36@old',
+      modelId: 'old-model',
+      conditions: { nodes: 10000, multiPV: 2 },
+      candidates: [],
+      mateProof: null,
+      completedAt: '2026-09-12',
+    };
+    const oldGame: GameRecord = {
+      ...parsed,
+      id: 'reloaded-old',
+      createdAt: '2026-09-12',
+      favorite: false,
+      lastViewedPly: 0,
+      mySide: null,
+      attribution: 'none',
+      analysis: { 0: old },
+    };
+    const { store, analyze, cancel } = setup([oldGame]);
+    await store.getState().initialize();
+    expect(store.getState().games[0].analysis[0]).toEqual(old);
+
+    const entered = deferred<void>();
+    const pending = deferred<PositionAnalysis>();
+    analyze.mockImplementationOnce(async () => {
+      entered.resolve();
+      return pending.promise;
+    });
+    const run = store.getState().startAnalysis(oldGame.id);
+    await entered.promise;
+    expect(store.getState().analysisJob).toMatchObject({ completed: 0, total: parsed.positions.length });
+    store.getState().stopAnalysis();
+    expect(cancel).toHaveBeenCalled();
+    pending.resolve({
+      sfen: parsed.positions[0],
+      ...CURRENT_ANALYSIS_IDENTITY,
+      conditions: { nodes: 10000, multiPV: 2 },
+      candidates: [],
+      mateProof: null,
+      completedAt: 'now',
+    });
+    await run;
+    expect(store.getState().games[0].analysis[0]).toEqual(old);
+  });
+
   it('解析条件の保存後は古い処理を止め、新しい条件で再開する', async () => {
     const { store, analyze, cancel } = setup();
     await store.getState().initialize();
@@ -77,8 +123,7 @@ describe('棋譜の更新と解析の隔離', () => {
     expect(store.getState().analysisJob).toBeNull();
     pending.resolve({
       sfen: game.positions[0],
-      engineId: 'engine',
-      modelId: 'model',
+      ...CURRENT_ANALYSIS_IDENTITY,
       conditions: { nodes: 10000, multiPV: 2 },
       candidates: [],
       mateProof: null,
@@ -189,8 +234,7 @@ describe('棋譜の更新と解析の隔離', () => {
     store.getState().stopAnalysis();
     pending.resolve({
       sfen: game.positions[0],
-      engineId: 'engine',
-      modelId: 'model',
+      ...CURRENT_ANALYSIS_IDENTITY,
       conditions: { nodes: 10000, multiPV: 2 },
       candidates: [],
       mateProof: null,
@@ -225,8 +269,7 @@ describe('棋譜の更新と解析の隔離', () => {
     const focused = store.getState().analyzePosition(game.positions[1]);
     initial.resolve({
       sfen: game.positions[0],
-      engineId: 'engine',
-      modelId: 'model',
+      ...CURRENT_ANALYSIS_IDENTITY,
       conditions: { nodes: 10000, multiPV: 2 },
       candidates: [],
       mateProof: null,
@@ -287,8 +330,7 @@ describe('棋譜の更新と解析の隔離', () => {
     });
     const result = (sfen: string): PositionAnalysis => ({
       sfen,
-      engineId: 'engine',
-      modelId: 'model',
+      ...CURRENT_ANALYSIS_IDENTITY,
       conditions: { nodes: 50000, multiPV: 2 },
       candidates: [],
       mateProof: null,

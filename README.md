@@ -6,9 +6,9 @@
 
 ## 状態
 
-無料版の機能実装と、今回合意した受入検証を完了しました。[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)で統合前レビュー中です。KIFの取り込み・合法手検証、SQLite保存、戦績集計、Sekireiの端末内解析と分岐検討を利用できます。ログイン・通信・課金は利用条件に含めません。
+無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)はマージ済みです。現在はIssue #7の解析正しさ修正を統合前のcandidate worktreeで検証しています。Sekirei v0.3.37を固定し、ResidualMaterial評価、単一合法手の実探索、`meta`/`incomplete`契約、終局表示、identityによる旧キャッシュ除外を追加しています。ログイン・通信・課金は利用条件に含めません。
 
-Androidは実機での主要操作とCIの全14フローを確認しました。iOSはRelease Simulatorで各ページを撮影して目視し、詳細操作・全テーマ・文字拡大・実機性能の未検証分は継続検証として区別しています。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
+Issue #7のcandidateでは、公開fixtureを使うA/B/C/Dのhost診断を別途実行しています。native変更後のAndroid/iOS新規ビルド、起動、対象操作、両OSのスクリーンショット目視はまだ受入前であり、過去PRの証拠を再利用して完了とは扱いません。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
 
 ## 開発
 
@@ -18,6 +18,7 @@ Node.js 22.23.2、Rust 1.96.0を使用します。JavaScript依存は `package-l
 npm ci
 npm run check
 cargo test --manifest-path native/sekirei/Cargo.toml --locked
+bash scripts/engine/static-eval-cross-check.sh
 ```
 
 ネイティブ解析を含むため、開発用アプリをビルドします。AndroidはJDK 17 / SDK 36 / NDK 27.1.12297006、iOSはmacOS / Xcodeが必要です。`android/` と `ios/` はExpo CNGの生成物として扱います。
@@ -38,7 +39,7 @@ npm run ios
 
 iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインストールします。CIの操作検証と、ビルド済みSimulatorアプリを使う再検証の手順は[開発状況](docs/DEVELOPMENT.md#操作検証の実行)を参照してください。
 
-解析にはsekirei-weightの現行候補 `c-leaf-wrm-seed42` を同梱し、読み込み時にSHA-256を確認します。固定したruntime・モデルの来歴と利用条件は[解析エンジン](docs/ENGINE.md)、戦型の判定条件は[分類ルール](docs/OPENINGS.md)を参照してください。
+解析にはsekirei-weightの現行候補 `c-leaf-wrm-seed42` を同梱し、読み込み時にSHA-256を確認します。固定したruntime・モデルの来歴と利用条件は[解析エンジン](docs/ENGINE.md)、戦型の判定条件は[分類ルール](docs/OPENINGS.md)を参照してください。Issue #7のvariant比較は診断専用の[ハーネス](scripts/diagnostics/README.md)を参照してください。
 
 ## 初期版の体験
 
@@ -52,7 +53,7 @@ iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインス�
 
 ## 開発方針
 
-- iOS・Androidを同時に進め、GitHub Actionsで両OSのビルド・起動・主要操作を検証する。
+- iOS・Androidを同時に進める。GitHub Actionsの`ci.yml`は共通ロジック・型検査・Rustテストを確認し、モバイルのビルド・起動・主要操作はDevin Cloudの各OS受入セッションで別に検証する。
 - `sekirei-weight`は実用的なweightの開発、本リポジトリはモバイル統合とアプリ体験を担当する。
 - モックや固定の解析結果による画面検証と、実エンジンによる解析を区別する。
 - まず無料版の一巡する体験を作る。LLM機能のためのサーバーや課金基盤を先行実装しない。
@@ -63,6 +64,7 @@ iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインス�
 - [採用した9画面とデザイン基準](docs/design/README.md)
 - [構成方針と未決事項](docs/ARCHITECTURE.md)
 - [実装順序と両OSの検証](docs/DEVELOPMENT.md)
+- [Issue #7エンジン診断ハーネス](scripts/diagnostics/README.md)
 - [棋譜サンプルと取り込み期待値](fixtures/kif/README.md)
 - [Codex向け作業指示](AGENTS.md)
 

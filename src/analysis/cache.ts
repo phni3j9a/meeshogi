@@ -5,13 +5,14 @@ export function isCompatibleAnalysis(
   analysis: PositionAnalysis | null | undefined,
   sfen: string,
   conditions: AnalysisConditions,
-  identity = CURRENT_ANALYSIS_IDENTITY,
 ): analysis is PositionAnalysis {
+  const status = (analysis as (PositionAnalysis & { status?: unknown }) | null | undefined)?.status;
   return (
     !!analysis &&
+    (status === undefined || status === 'complete') &&
     analysis.sfen === sfen &&
-    analysis.engineId === identity.engineId &&
-    analysis.modelId === identity.modelId &&
+    analysis.engineId === CURRENT_ANALYSIS_IDENTITY.engineId &&
+    analysis.modelId === CURRENT_ANALYSIS_IDENTITY.modelId &&
     analysis.conditions.nodes === conditions.nodes &&
     analysis.conditions.multiPV === conditions.multiPV
   );
@@ -21,10 +22,9 @@ export function isCompatibleAnalysis(
 export function currentGameAnalysis(
   game: Pick<GameRecord, 'positions' | 'analysis'>,
   conditions: AnalysisConditions,
-  identity = CURRENT_ANALYSIS_IDENTITY,
 ): (PositionAnalysis | null)[] {
   return game.positions.map((sfen, ply) =>
-    isCompatibleAnalysis(game.analysis[ply], sfen, conditions, identity)
+    isCompatibleAnalysis(game.analysis[ply], sfen, conditions)
       ? game.analysis[ply]
       : null,
   );

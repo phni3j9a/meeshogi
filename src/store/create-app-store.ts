@@ -63,8 +63,6 @@ interface Dependencies {
   openRepository(): Promise<LocalRepository>;
   analyze(sfen: string, conditions: AnalysisConditions): Promise<PositionAnalysis>;
   cancel(): void | Promise<void>;
-  engineId: string;
-  modelId: string;
   createId(): string;
 }
 export function makeAppStore(deps: Dependencies) {
@@ -268,7 +266,7 @@ export function makeAppStore(deps: Dependencies) {
         if (!game) return;
         const conditions = { nodes: get().settings.analysisNodes, multiPV: get().settings.multiPV };
         const reusable = (a: PositionAnalysis | undefined, sfen: string) =>
-          isCompatibleAnalysis(a, sfen, conditions, deps);
+          isCompatibleAnalysis(a, sfen, conditions);
         let completed = game.positions.filter((sfen, ply) =>
           reusable(game.analysis[ply], sfen),
         ).length;
@@ -337,7 +335,7 @@ export function makeAppStore(deps: Dependencies) {
             return deps.analyze(sfen, conditions);
           });
           if (focus !== focusGeneration) throw new Error('局面の解析を中止しました。');
-          if (!isCompatibleAnalysis(result, sfen, conditions, deps))
+          if (!isCompatibleAnalysis(result, sfen, conditions))
             throw new Error('解析結果の局面・モデル・条件が一致しません。');
           return result;
         } finally {
