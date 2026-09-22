@@ -1,0 +1,35 @@
+appId: com.meeshogi.app
+---
+# Debug: resume after partial end — catch the transient running state.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 180000
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+    timeout: 60000
+- swipe:
+    start: 50%, 75%
+    end: 50%, 35%
+- takeScreenshot: dbg-0
+- tapOn:
+    id: analysis-start
+- takeScreenshot: dbg-1
+- takeScreenshot: dbg-2
+- takeScreenshot: dbg-3
+- takeScreenshot: dbg-4
+- takeScreenshot: dbg-5
+- takeScreenshot: dbg-6
+- extendedWaitUntil:
+    visible: '解析処理が終了しました|全局解析が完了しました|解析に失敗しました'
+    timeout: 300000
+- takeScreenshot: dbg-end

@@ -1,15 +1,53 @@
 # iOS Simulator acceptance — Issue #7
 
-Two runs were executed on branch `issue-7-engine-correctness`:
+Three runs were executed on branch `issue-7-engine-correctness`:
 
 | Run | Commit | Verdict |
 |---|---|---|
 | **RUN-A** | `e9b5e90` | **FAIL** — defect 1: `meta.nodes` overshoot rejected by strict `parseMeta` |
 | **RUN-B** | `c8db524` (fix for defect 1) | **standard flows PASS**; **defect 2 found**: `status:"incomplete"` aborts bulk analysis on dense midgame positions |
+| **RUN-C** | `1887617` (fix for defect 2: budget-shortfall → per-position skip → `partial` end state) | **PASS — all checks green** |
 
-`c8db524` fixes the RUN-A failure — `meta.nodes` is now treated as an observed
-non-negative integer and may exceed `requestedNodes`. The RUN-B run below is
-the acceptance on the fix.
+`1887617` resolves defect 2 by design: a validated budget-shortfall result is
+skipped per-position, the scan continues to the last move, and the job ends in
+a new `partial` state instead of `error`. The RUN-C run below verifies the
+partial-end behavior end-to-end plus the required regressions.
+
+---
+
+## RUN-C (`1887617`) — result matrix
+
+| Flow / check | Result | Evidence |
+|---|---|---|
+| xcodebuild Release iphonesimulator arm64 | **PASS** | `build.log` — BUILD SUCCEEDED |
+| licenses-review | **PASS** | `runs/20260922T162013Z-7504/maestro/licenses-review/` |
+| import-review | **PASS** | `runs/20260922T162013Z-7504/maestro/import-review/` |
+| ios-visual-review | **PASS** (2m+) | `runs/20260922T162013Z-7504/maestro/ios-visual-review/` |
+
+### Partial-end spec verification — KeroPona real game (81 positions @ 10k nodes)
+
+| # | Spec | Result | Evidence |
+|---|---|---|---|
+| 1 | 全局解析 runs to the LAST position; incomplete positions skipped — not saved, not shown | **PASS** — 65/81 records stored; missing plies are exactly `41,43,45,47,49,50,51,52,54,57,59,61,62,63,64,77` (16 plies; all shortfall positions previously probed). Graph renders them as dotted gaps; skipped ply shows `—` eval + `解析すると候補手を確認できます` | `runs/keropona-partial-live.db`, `runs/partial-check/.../partial-02-skipped-ply-empty.png` |
+| 2 | `解析処理が終了しました` + aggregated notice; no per-position dialogs; `全局解析が完了しました` absent | **PASS** — notice reads `解析処理が終了しました。65 / 81局面を解析済み、16局面は探索量不足です。設定の解析量（ノード数）を増やすか、「この局面を深く解析」をお試しください。` No dialogs. `全局解析が完了しました` and `解析に失敗しました` both asserted NOT visible | `runs/partial-check/.../partial-01-partial-end.png` |
+| 3 | Skipped ply keeps missing eval/graph points; positions AFTER it show valid results | **PASS** — ply 41: `—` 先手評価, empty candidate list, graph gap; ply 42+ show own records (`analysis-ready`) | `runs/partial-check/.../partial-03-after-gap-evaluated.png` |
+| 4 | 「解析を再開」 retries ONLY the missing plies; shortfall-again at 10k is expected; run ends `partial` not `error` | **PASS** — resume run finishes in ~1s (16 plies × ~50ms vs ~17s for a full 81-position scan). Transient `解析中` is unobservable by Maestro polls AND by a 5fps screen recording, so the run was proven via host CPU sampling: app PID burst 21.3%→56.3%→**85.7%**→33.6%→13.8% over ~0.8s after the tap. End state: `partial` (notice re-shown, `解析に失敗しました` absent) | `runs/cpu-watch-resume.txt`, `runs/resume-watch2.mov`, `runs/resume-restart3/.../resume-03-still-partial.png` |
+| 5 | Stop/resume, settings change mid-run, app restart → honest display | **PASS** — stop mid-run → `解析を停止中 N / 81局面` (paused); settings change 10k→50k → `この棋譜は未解析です` + honest `以前のモデル・解析条件の結果が65局面あります` (no fabricated gap-reason; `探索量不足` absent on that screen); app restart → `解析済み 65 / 81局面` | `runs/settings-stop5/.../settings-0*.png`, `runs/resume-restart3/.../resume-04-restart-honest.png` |
+| 6 | Regressions | **PASS** — complete games still end `全局解析が完了しました` (50k rescan of KeroPona after the partial run; sente-mate game); mate display both signs (`先手勝ち・詰み終局` + `後手勝ち・詰み終局`, graphs at ±1500 edge); overshoot persists (record with `meta.nodes > requestedNodes` stored in DB); old-cache exclusion logic `src/analysis/cache.ts` is **byte-identical** to RUN-B where exclusion was functionally verified (see Constraints) | `runs/settings-stop5/.../settings-06-complete.png`, `runs/mate-sente/`, `runs/mate-gote2/`, `/tmp DB check` |
+| 7 | Screenshots of partial-end + post-skip positions | **PASS** | `partial-0*.png`, `settings-0*.png`, `resume-0*.png`, `mate-*-0*.png` |
+
+### RUN-C notes
+
+- The 34-ply gote-mate game also ends `partial` at 10k
+  (`7 / 35局面を解析済み、28局面は探索量不足です` — mate-heavy positions are
+  node-hungry at the default budget). `後手勝ち・詰み終局` still displayed via
+  focused analysis (50k). This is consistent, correct new behavior — second
+  live instance of the aggregated notice.
+- Resume's ~1s transient could not be captured by any polling/screenshot
+  method — the CPU-spike method (`runs/cpu-watch-resume.txt`) is the proof
+  the retry actually ran.
+- Defect 2 is resolved: no `incomplete` abort, no `解析に失敗しました`,
+  deterministic ply-41-style deaths are gone.
 
 ---
 
@@ -97,7 +135,17 @@ mate SFEN: {"status":"complete","terminal":"checkmate","nodes":0,...}
   row, included in both KIFs.
 - Focused analysis results are display-only by design (`useState` in
   `app/game/[id].tsx`), so the gote graph −1500 endpoint requires bulk
-  analysis reaching the terminal ply — blocked by defect 2.
+  analysis reaching the terminal ply — on RUN-B this was blocked by defect 2;
+  on RUN-C bulk analysis runs to the last ply (mate games included).
 - `mate=0 → no M1 badge`: verified structurally — no M badges anywhere except
   the proven `後手・3手詰め ›` at ply 67.
+- RUN-C old-cache exclusion is reported by code-inheritance:
+  `git diff c8db524 1887617 -- src/analysis/cache.ts` is empty, and the
+  exclusion was functionally verified on RUN-B (`manual-migration-fixed`,
+  `migration/*.db`). Re-running the old-app cycle on RUN-C would have tested
+  identical code.
+- Resume-transient proof method: the ~1s `解析中` window on a partial resume
+  (skipped plies only) is below Maestro's poll granularity and a 5fps screen
+  recording; the host `ps` CPU burst on the app PID is the positive evidence
+  that the retry engine run happened.
 - No tracked files modified. All helper flows live under `helpers/`.

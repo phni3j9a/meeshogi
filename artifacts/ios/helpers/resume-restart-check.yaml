@@ -1,0 +1,81 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: '180000'
+---
+# Resume on the existing KeroPona partial game -> still partial, never error.
+# The resume run is ~1s (16 shortfall plies x ~50ms each) so the transient
+# 解析中 status cannot be caught reliably; engine-run verified via host CPU.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+    timeout: 60000
+- swipe:
+    start: 50%, 75%
+    end: 50%, 35%
+- swipe:
+    start: 50%, 75%
+    end: 50%, 35%
+- takeScreenshot: resume-01-button
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible:
+      id: analysis-status
+      text: '解析中 .* / 81局面'
+    timeout: 5000
+    optional: true
+- takeScreenshot: resume-02-running
+- extendedWaitUntil:
+    visible: '解析処理が終了しました|全局解析が完了しました|解析に失敗しました'
+    timeout: 60000
+- assertVisible:
+    id: analysis-status
+    text: '解析処理が終了しました'
+- swipe:
+    start: 50%, 75%
+    end: 50%, 40%
+- assertVisible:
+    text: '.*局面は探索量不足.*'
+- assertNotVisible:
+    text: '.*全局解析が完了しました.*'
+- assertNotVisible:
+    text: '.*解析に失敗しました.*'
+- takeScreenshot: resume-03-still-partial
+# App restart -> honest saved count, no gap-reason claims.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+    timeout: 60000
+- assertVisible:
+    id: analysis-status
+    text: '.*解析済み 65 / 81局面.*'
+- assertNotVisible:
+    text: '.*探索量不足.*'
+- assertNotVisible:
+    text: '.*全局解析が完了しました.*'
+- takeScreenshot: resume-04-restart-honest

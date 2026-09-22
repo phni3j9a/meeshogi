@@ -1,0 +1,113 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: '180000'
+---
+# Settings-change + stop/resume verification on the existing KeroPona game.
+# 1) Change nodes 10k -> 50k (解析の長さ: 標準 -> 長め).
+#    Existing 10k records become 'previous conditions' — honest UI, no
+#    fabricated gap reasons.
+# 2) Resume -> full 81-ply rescan at 50k (a long run) -> stop mid-run ->
+#    paused -> resume -> all plies complete -> 全局解析が完了しました.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- tapOn: '解析の長さ.*'
+- extendedWaitUntil:
+    visible: '長め'
+    timeout: 30000
+- takeScreenshot: settings-01-nodes-picker
+- tapOn: '長め'
+- extendedWaitUntil:
+    visible: '解析の長さ.*'
+    timeout: 30000
+- takeScreenshot: settings-02-nodes-changed
+# Back to the game: old records now 'previous', status must be honest.
+- tapOn: '棋譜, tab.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+    timeout: 60000
+- assertVisible:
+    id: analysis-status
+    text: 'この棋譜は未解析です'
+- assertVisible:
+    text: '.*以前のモデル・解析条件の結果が65局面あります.*'
+- assertNotVisible:
+    text: '探索量不足'
+- takeScreenshot: settings-03-previous-notice
+# Resume -> long 50k rescan -> stop mid-run -> paused.
+- swipe:
+    start: 50%, 75%
+    end: 50%, 35%
+- swipe:
+    start: 50%, 75%
+    end: 50%, 35%
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible:
+      id: analysis-status
+      text: '解析中 .* / 81局面'
+    timeout: 60000
+- takeScreenshot: settings-04-running
+- extendedWaitUntil:
+    visible:
+      id: analysis-status
+      text: '解析中 (3[0-9]|[4-6][0-9]) / 81局面'
+    timeout: 120000
+- tapOn:
+    id: analysis-stop
+- extendedWaitUntil:
+    visible:
+      id: analysis-status
+      text: '解析を停止中 .* / 81局面'
+    timeout: 120000
+- takeScreenshot: settings-05-paused
+# Resume again -> runs to completion at 50k -> 全局解析が完了しました.
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible:
+      id: analysis-status
+      text: '解析中 .* / 81局面|全局解析が完了しました'
+    timeout: 120000
+- extendedWaitUntil:
+    visible: '全局解析が完了しました|解析処理が終了しました|解析に失敗しました'
+    timeout: 600000
+- assertVisible:
+    id: analysis-status
+    text: '全局解析が完了しました'
+- assertNotVisible:
+    text: '探索量不足'
+- assertNotVisible:
+    text: '解析に失敗しました'
+- takeScreenshot: settings-06-complete
+# Restore nodes to 標準 for subsequent flows.
+- tapOn:
+    id: game-back
+    optional: true
+- tapOn: '戻る.*'
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- tapOn: '解析の長さ.*'
+- tapOn: '標準'
+- extendedWaitUntil:
+    visible: '解析の長さ.*'
+    timeout: 30000
+- takeScreenshot: settings-07-restored

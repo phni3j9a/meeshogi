@@ -1,0 +1,964 @@
+2026-09-22 09:46:17.604 xcodebuild[11294:97481] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+2026-09-22 09:46:17.607 xcodebuild[11294:97481] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+2026-09-22 09:46:17.789 xcodebuild[11294:97481] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+286860883355
+
+2026-09-22 09:46:20.235080-0700 maestro-driver-iosUITests-Runner[11298:97751] [Default] Running tests...
+2026-09-22 09:46:20.480403-0700 maestro-driver-iosUITests-Runner[11298:97751] snapshotKeyHonorModalViews configured to value: (null)
+    t =      nans Interface orientation changed to Portrait
+Test Suite 'Selected tests' started at 2026-09-22 09:46:22.795.
+Test Suite 'maestro-driver-iosUITests.xctest' started at 2026-09-22 09:46:22.795.
+Test Suite 'SwipeRouteHandlerV2ClassificationTests' started at 2026-09-22 09:46:22.795.
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testClassifiedTimeoutPreservesTheRealMessage]' started.
+    t =     0.00s Start Test at 2026-09-22 09:46:22.799
+    t =     0.00s Set Up
+    t =     0.01s Tear Down
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testClassifiedTimeoutPreservesTheRealMessage]' passed (0.006 seconds).
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testMainThreadBusyIsClassifiedAsTimeout]' started.
+    t =     0.00s Start Test at 2026-09-22 09:46:22.806
+    t =     0.00s Set Up
+    t =     0.00s Tear Down
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testMainThreadBusyIsClassifiedAsTimeout]' passed (0.002 seconds).
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testTimeoutMessageWithWrongDomainStaysInternal]' started.
+    t =     0.00s Start Test at 2026-09-22 09:46:22.808
+    t =     0.00s Set Up
+    t =     0.00s Tear Down
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testTimeoutMessageWithWrongDomainStaysInternal]' passed (0.002 seconds).
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testUIQueryTimeoutIsClassifiedAsTimeout]' started.
+    t =     0.00s Start Test at 2026-09-22 09:46:22.810
+    t =     0.00s Set Up
+    t =     0.00s Tear Down
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testUIQueryTimeoutIsClassifiedAsTimeout]' passed (0.005 seconds).
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testUnrelatedXCTFutureErrorStaysInternal]' started.
+    t =     0.00s Start Test at 2026-09-22 09:46:22.814
+    t =     0.00s Set Up
+    t =     0.00s Tear Down
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testUnrelatedXCTFutureErrorStaysInternal]' passed (0.002 seconds).
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testXCTFutureCode1000WithUnrelatedMessageStaysInternal]' started.
+    t =     0.00s Start Test at 2026-09-22 09:46:22.817
+    t =     0.00s Set Up
+    t =     0.00s Tear Down
+Test Case '-[maestro_driver_iosUITests.SwipeRouteHandlerV2ClassificationTests testXCTFutureCode1000WithUnrelatedMessageStaysInternal]' passed (0.002 seconds).
+Test Suite 'SwipeRouteHandlerV2ClassificationTests' passed at 2026-09-22 09:46:22.819.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.019 (0.024) seconds
+Test Suite 'maestro_driver_iosUITests' started at 2026-09-22 09:46:22.820.
+    t =      nans Suite Set Up
+Test Case '-[maestro_driver_iosUITests.maestro_driver_iosUITests testHttpServer]' started.
+    t =     0.00s Start Test at 2026-09-22 09:46:22.821
+    t =     0.00s Set Up
+2026-09-22 09:46:22.822062-0700 maestro-driver-iosUITests-Runner[11298:97821] [maestro_driver_iosUITests] Will start HTTP server
+2026-09-22 09:46:22.914271-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] starting server 127.0.0.1:55177
+2026-09-22 09:46:23.072081-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> open connection
+2026-09-22 09:46:23.075211-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: GET /status
+2026-09-22 09:46:23.100937-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> open connection
+2026-09-22 09:46:23.101696-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     0.29s Getting device orientation
+2026-09-22 09:46:23.113890-0700 maestro-driver-iosUITests-Runner[11298:97751] Using singleton test manager
+2026-09-22 09:46:23.119556-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+    t =     0.30s Getting device orientation
+    t =     0.30s Find the Application 'com.apple.springboard'
+objc[11298]: Class UIAccessibilityLoaderWebShared is implemented in both /Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/AccessibilityBundles/WebKit.axbundle/WebKit (0x1060e4398) and /Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/AccessibilityBundles/WebCore.axbundle/WebCore (0x107ae4310). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+    t =     0.34s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     0.34s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:23.213576-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:23.700970-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /setPermissions
+2026-09-22 09:46:23.709337-0700 maestro-driver-iosUITests-Runner[11298:97816] [FlyingFox] <127.0.0.1> request: POST /terminateApp
+2026-09-22 09:46:23.710936-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] Terminating app com.meeshogi.app
+    t =     0.89s Terminate com.meeshogi.app:0
+2026-09-22 09:46:23.715447-0700 maestro-driver-iosUITests-Runner[11298:97751] [End] Terminating app com.meeshogi.app
+2026-09-22 09:46:23.960810-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     1.14s Getting device orientation
+2026-09-22 09:46:24.007398-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+    t =     1.19s Getting device orientation
+2026-09-22 09:46:24.010066-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:24.010232-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:24.097748-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:24.105358-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+2026-09-22 09:46:24.106491-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.apple.springboard'
+2026-09-22 09:46:24.106662-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     1.29s Find the Application 'com.apple.springboard'
+    t =     1.31s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.31s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.174856-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:24.175334-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:24.175519-0700 maestro-driver-iosUITests-Runner[11298:97751] No action required for permission value
+2026-09-22 09:46:24.175635-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:24.175722-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     1.36s Checking existence of `StatusBar (First Match)`
+    t =     1.38s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     1.41s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.42s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.42s Find the StatusBar (Element at index 0)
+    t =     1.46s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.46s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.47s Find the StatusBar (Element at index 1)
+    t =     1.50s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.50s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.332166-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.15638506412506104
+2026-09-22 09:46:24.332260-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:24.335380-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0029768943786621094
+    t =     1.52s Find the Application 'com.apple.springboard'
+    t =     1.54s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.54s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.363744-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.apple.springboard' 
+2026-09-22 09:46:24.391322-0700 maestro-driver-iosUITests-Runner[11298:97816] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     1.57s Getting device orientation
+2026-09-22 09:46:24.400041-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+    t =     1.58s Getting device orientation
+2026-09-22 09:46:24.401695-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:24.401902-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:24.404799-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:24.411780-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+2026-09-22 09:46:24.412664-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.apple.springboard'
+2026-09-22 09:46:24.412819-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     1.59s Find the Application 'com.apple.springboard'
+    t =     1.63s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.63s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.484718-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:24.484970-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:24.485152-0700 maestro-driver-iosUITests-Runner[11298:97751] No action required for permission value
+2026-09-22 09:46:24.485296-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:24.485383-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     1.67s Checking existence of `StatusBar (First Match)`
+    t =     1.68s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     1.70s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.70s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.70s Find the StatusBar (Element at index 0)
+    t =     1.73s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.73s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.73s Find the StatusBar (Element at index 1)
+    t =     1.76s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.76s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.588351-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.10292303562164307
+2026-09-22 09:46:24.588439-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:24.588918-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.00045502185821533203
+    t =     1.77s Find the Application 'com.apple.springboard'
+    t =     1.79s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.79s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.610492-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.apple.springboard' 
+2026-09-22 09:46:24.617985-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     1.80s Getting device orientation
+2026-09-22 09:46:24.624664-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+    t =     1.80s Getting device orientation
+2026-09-22 09:46:24.626318-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:24.626402-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:24.628331-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:24.633598-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+2026-09-22 09:46:24.634398-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.apple.springboard'
+2026-09-22 09:46:24.634564-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     1.81s Find the Application 'com.apple.springboard'
+    t =     1.84s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.84s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.687578-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:24.687753-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:24.687879-0700 maestro-driver-iosUITests-Runner[11298:97751] No action required for permission value
+2026-09-22 09:46:24.687958-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:24.688025-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     1.87s Checking existence of `StatusBar (First Match)`
+    t =     1.88s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     1.91s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.91s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.91s Find the StatusBar (Element at index 0)
+    t =     1.94s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.94s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.94s Find the StatusBar (Element at index 1)
+    t =     1.97s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     1.97s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.794578-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.10651004314422607
+2026-09-22 09:46:24.794651-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:24.795299-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0006340742111206055
+    t =     1.98s Find the Application 'com.apple.springboard'
+    t =     2.00s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.01s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.828345-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.apple.springboard' 
+2026-09-22 09:46:24.838193-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     2.02s Getting device orientation
+2026-09-22 09:46:24.843906-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+    t =     2.02s Getting device orientation
+2026-09-22 09:46:24.845667-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:24.845909-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:24.848357-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:24.854797-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+2026-09-22 09:46:24.855309-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.apple.springboard'
+2026-09-22 09:46:24.855495-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     2.04s Find the Application 'com.apple.springboard'
+    t =     2.06s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.06s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.904159-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:24.904322-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:24.904437-0700 maestro-driver-iosUITests-Runner[11298:97751] No action required for permission value
+2026-09-22 09:46:24.904530-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:24.904619-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     2.08s Checking existence of `StatusBar (First Match)`
+    t =     2.10s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     2.12s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.12s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.12s Find the StatusBar (Element at index 0)
+    t =     2.14s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.14s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.15s Find the StatusBar (Element at index 1)
+    t =     2.16s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.17s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:24.993317-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.08865201473236084
+2026-09-22 09:46:24.993392-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:24.993965-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0005339384078979492
+    t =     2.17s Find the Application 'com.apple.springboard'
+    t =     2.19s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.19s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.016880-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.apple.springboard' 
+2026-09-22 09:46:25.023429-0700 maestro-driver-iosUITests-Runner[11298:97816] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     2.20s Getting device orientation
+2026-09-22 09:46:25.028332-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+    t =     2.21s Getting device orientation
+2026-09-22 09:46:25.029728-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:25.029816-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:25.031237-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:25.035067-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+2026-09-22 09:46:25.035653-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.apple.springboard'
+2026-09-22 09:46:25.035757-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     2.22s Find the Application 'com.apple.springboard'
+    t =     2.23s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.23s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.081851-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:25.082007-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:25.082232-0700 maestro-driver-iosUITests-Runner[11298:97751] No action required for permission value
+2026-09-22 09:46:25.082338-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:25.082395-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     2.26s Checking existence of `StatusBar (First Match)`
+    t =     2.27s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     2.29s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.30s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.30s Find the StatusBar (Element at index 0)
+    t =     2.32s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.32s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.32s Find the StatusBar (Element at index 1)
+    t =     2.34s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.34s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.168445-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.08599603176116943
+2026-09-22 09:46:25.168521-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:25.169083-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0005390644073486328
+    t =     2.35s Find the Application 'com.apple.springboard'
+    t =     2.37s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.37s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.193033-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.apple.springboard' 
+2026-09-22 09:46:25.198762-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     2.38s Getting device orientation
+2026-09-22 09:46:25.203777-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+    t =     2.38s Getting device orientation
+2026-09-22 09:46:25.205228-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:25.205347-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:25.206618-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:25.210242-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+2026-09-22 09:46:25.210750-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.apple.springboard'
+2026-09-22 09:46:25.210843-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     2.39s Find the Application 'com.apple.springboard'
+    t =     2.41s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.41s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.256670-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:25.256845-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:25.256999-0700 maestro-driver-iosUITests-Runner[11298:97751] No action required for permission value
+2026-09-22 09:46:25.257068-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:25.257118-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     2.44s Checking existence of `StatusBar (First Match)`
+    t =     2.45s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     2.47s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.47s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.47s Find the StatusBar (Element at index 0)
+    t =     2.49s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.49s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.50s Find the StatusBar (Element at index 1)
+    t =     2.52s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.52s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.346475-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.08930599689483643
+2026-09-22 09:46:25.346557-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:25.347169-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0005750656127929688
+    t =     2.53s Find the Application 'com.apple.springboard'
+    t =     2.55s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.55s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.371376-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.apple.springboard' 
+2026-09-22 09:46:25.376529-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     2.56s Getting device orientation
+2026-09-22 09:46:25.381343-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+    t =     2.56s Getting device orientation
+2026-09-22 09:46:25.382815-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:25.382932-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:25.384316-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:25.388100-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+2026-09-22 09:46:25.388598-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.apple.springboard'
+2026-09-22 09:46:25.388720-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     2.57s Find the Application 'com.apple.springboard'
+    t =     2.59s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.59s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.434977-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:25.435119-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:25.435282-0700 maestro-driver-iosUITests-Runner[11298:97751] No action required for permission value
+2026-09-22 09:46:25.435365-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:25.435434-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     2.62s Checking existence of `StatusBar (First Match)`
+    t =     2.63s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     2.65s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.65s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.65s Find the StatusBar (Element at index 0)
+    t =     2.67s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.67s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.68s Find the StatusBar (Element at index 1)
+    t =     2.70s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.70s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.528065-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.09257900714874268
+2026-09-22 09:46:25.528140-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:25.528677-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0005201101303100586
+    t =     2.71s Find the Application 'com.apple.springboard'
+    t =     2.73s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.73s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.557039-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.apple.springboard' 
+2026-09-22 09:46:25.561798-0700 maestro-driver-iosUITests-Runner[11298:97816] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     2.74s Getting device orientation
+2026-09-22 09:46:25.566987-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+    t =     2.75s Getting device orientation
+2026-09-22 09:46:25.568898-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:25.569061-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:25.570911-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:25.575233-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.apple.springboard"]
+2026-09-22 09:46:25.575856-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.apple.springboard'
+2026-09-22 09:46:25.575958-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     2.76s Find the Application 'com.apple.springboard'
+    t =     2.77s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.78s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.626760-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:25.627068-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:25.627249-0700 maestro-driver-iosUITests-Runner[11298:97751] No action required for permission value
+2026-09-22 09:46:25.627348-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] Foreground app is springboard attempting to tap on permissions dialog
+2026-09-22 09:46:25.627459-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     2.81s Checking existence of `StatusBar (First Match)`
+    t =     2.82s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     2.84s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.84s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.84s Find the StatusBar (Element at index 0)
+    t =     2.87s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.87s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.88s Find the StatusBar (Element at index 1)
+    t =     2.90s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.91s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.734600-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.10707294940948486
+2026-09-22 09:46:25.734701-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:25.735591-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0008569955825805664
+    t =     2.92s Find the Application 'com.apple.springboard'
+    t =     2.93s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     2.94s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:25.757932-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.apple.springboard' 
+2026-09-22 09:46:25.761760-0700 maestro-driver-iosUITests-Runner[11298:97816] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     2.94s Getting device orientation
+2026-09-22 09:46:25.766823-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     2.95s Getting device orientation
+    t =     2.95s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:26.917259-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:26.919926-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:26.924676-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:26.925360-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:26.925481-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     4.11s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:26.932427-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:26.932586-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:26.932672-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     4.11s Checking existence of `StatusBar (First Match)`
+    t =     4.12s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     4.15s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.15s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.15s Find the StatusBar (Element at index 0)
+    t =     4.18s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.18s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.18s Find the StatusBar (Element at index 1)
+    t =     4.20s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.21s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.036534-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.1038060188293457
+2026-09-22 09:46:27.036615-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:27.037046-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0004169940948486328
+    t =     4.22s Find the Application 'com.apple.springboard'
+    t =     4.24s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.24s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.060710-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:27.063657-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     4.24s Getting device orientation
+2026-09-22 09:46:27.068971-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     4.25s Getting device orientation
+2026-09-22 09:46:27.070483-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:27.070614-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:27.072065-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:27.076094-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:27.076819-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:27.076941-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     4.26s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:27.084667-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:27.084831-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:27.084929-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     4.26s Checking existence of `StatusBar (First Match)`
+    t =     4.28s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     4.30s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.30s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.30s Find the StatusBar (Element at index 0)
+    t =     4.32s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.32s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.33s Find the StatusBar (Element at index 1)
+    t =     4.35s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.35s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.181330-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.09635090827941895
+2026-09-22 09:46:27.181403-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:27.182152-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0007050037384033203
+    t =     4.36s Find the Application 'com.apple.springboard'
+    t =     4.38s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.38s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.204740-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:27.207907-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     4.39s Getting device orientation
+2026-09-22 09:46:27.216319-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     4.40s Getting device orientation
+2026-09-22 09:46:27.219203-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:27.219447-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:27.221436-0700 maestro-driver-iosUITests-Runner[11298:97816] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:27.226266-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:27.226896-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:27.226990-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     4.41s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:27.243389-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:27.243545-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:27.243645-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     4.42s Checking existence of `StatusBar (First Match)`
+    t =     4.43s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     4.46s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.46s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.46s Find the StatusBar (Element at index 0)
+    t =     4.48s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.48s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.48s Find the StatusBar (Element at index 1)
+    t =     4.50s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.51s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.337470-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.09375202655792236
+2026-09-22 09:46:27.337596-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:27.338686-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0010559558868408203
+    t =     4.52s Find the Application 'com.apple.springboard'
+    t =     4.54s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.54s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.361982-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:27.364676-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     4.54s Getting device orientation
+2026-09-22 09:46:27.369388-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     4.55s Getting device orientation
+2026-09-22 09:46:27.370887-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:27.370994-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:27.372319-0700 maestro-driver-iosUITests-Runner[11298:97816] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:27.375876-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:27.376542-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:27.376614-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     4.56s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:27.659692-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:27.659952-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:27.660035-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     4.84s Checking existence of `StatusBar (First Match)`
+    t =     4.86s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     4.89s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.89s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.89s Find the StatusBar (Element at index 0)
+    t =     4.92s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.92s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.93s Find the StatusBar (Element at index 1)
+    t =     4.96s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.96s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.791583-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.13149797916412354
+2026-09-22 09:46:27.791663-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:27.792311-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0006029605865478516
+    t =     4.97s Find the Application 'com.apple.springboard'
+    t =     4.99s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     4.99s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.815865-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:27.819835-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     5.00s Getting device orientation
+2026-09-22 09:46:27.825555-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     5.01s Getting device orientation
+2026-09-22 09:46:27.827421-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:27.827561-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:27.829190-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:27.833367-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:27.834091-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:27.834157-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     5.01s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:27.870453-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:27.870594-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:27.870645-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     5.05s Checking existence of `StatusBar (First Match)`
+    t =     5.06s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     5.08s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.08s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.08s Find the StatusBar (Element at index 0)
+    t =     5.10s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.11s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.11s Find the StatusBar (Element at index 1)
+    t =     5.13s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.13s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.961855-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.09115910530090332
+2026-09-22 09:46:27.961924-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:27.962439-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.000496983528137207
+    t =     5.14s Find the Application 'com.apple.springboard'
+    t =     5.16s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.16s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:27.985100-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:27.995692-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     5.18s Getting device orientation
+2026-09-22 09:46:28.003789-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     5.18s Getting device orientation
+2026-09-22 09:46:28.005392-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:28.005644-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:28.007243-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:28.013838-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:28.014340-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:28.014516-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     5.19s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:28.042677-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:28.042820-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:28.042901-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     5.22s Checking existence of `StatusBar (First Match)`
+    t =     5.24s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     5.25s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.26s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.26s Find the StatusBar (Element at index 0)
+    t =     5.28s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.28s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.29s Find the StatusBar (Element at index 1)
+    t =     5.31s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.31s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:28.136235-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.09328699111938477
+2026-09-22 09:46:28.136304-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:28.136823-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0005030632019042969
+    t =     5.32s Find the Application 'com.apple.springboard'
+    t =     5.33s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     5.33s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:28.156970-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:28.166863-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:28.306235-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:28.470851-0700 maestro-driver-iosUITests-Runner[11298:97820] [FlyingFox] <127.0.0.1> request: POST /touch
+2026-09-22 09:46:28.478430-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     5.66s Getting device orientation
+2026-09-22 09:46:28.480384-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+    t =     5.66s Getting device orientation
+2026-09-22 09:46:28.481534-0700 maestro-driver-iosUITests-Runner[11298:97751] Tapping 50.0, 141.0
+    t =     5.66s Getting device orientation
+2026-09-22 09:46:28.817845-0700 maestro-driver-iosUITests-Runner[11298:97751] Tapping took 0.33334600925445557
+2026-09-22 09:46:28.820047-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:29.147768-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     6.33s Getting device orientation
+2026-09-22 09:46:29.153180-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     6.33s Getting device orientation
+2026-09-22 09:46:29.154557-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:29.154660-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:29.156143-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:29.159913-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:29.160501-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:29.160696-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     6.34s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:29.186575-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:29.186746-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:29.186881-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     6.37s Checking existence of `StatusBar (First Match)`
+    t =     6.38s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     6.41s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     6.41s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     6.41s Find the StatusBar (Element at index 0)
+    t =     6.43s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     6.43s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     6.43s Find the StatusBar (Element at index 1)
+    t =     6.46s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     6.46s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:29.288473-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.10154104232788086
+2026-09-22 09:46:29.288566-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:29.289227-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0006450414657592773
+    t =     6.47s Find the Application 'com.apple.springboard'
+    t =     6.48s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     6.49s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:29.308335-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:29.315521-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:29.447632-0700 maestro-driver-iosUITests-Runner[11298:97820] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:29.539325-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /touch
+2026-09-22 09:46:29.543901-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     6.72s Getting device orientation
+2026-09-22 09:46:29.545380-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+    t =     6.73s Getting device orientation
+2026-09-22 09:46:29.546676-0700 maestro-driver-iosUITests-Runner[11298:97751] Tapping 201.0, 293.0
+    t =     6.73s Getting device orientation
+2026-09-22 09:46:29.885171-0700 maestro-driver-iosUITests-Runner[11298:97751] Tapping took 0.33743202686309814
+2026-09-22 09:46:29.886850-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:30.019234-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     7.20s Getting device orientation
+2026-09-22 09:46:30.025210-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     7.21s Getting device orientation
+2026-09-22 09:46:30.026898-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:30.027005-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:30.028655-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:30.032952-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:30.033516-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:30.033610-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     7.21s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:30.271775-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:30.272050-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:30.272170-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     7.45s Checking existence of `StatusBar (First Match)`
+    t =     7.46s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     7.50s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.50s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.50s Find the StatusBar (Element at index 0)
+    t =     7.53s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.53s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.54s Find the StatusBar (Element at index 1)
+    t =     7.56s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.56s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:30.394474-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.12225604057312012
+2026-09-22 09:46:30.394579-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:30.395170-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0005589723587036133
+    t =     7.57s Find the Application 'com.apple.springboard'
+    t =     7.60s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.60s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:30.422765-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:30.437163-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     7.62s Getting device orientation
+2026-09-22 09:46:30.443618-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     7.62s Getting device orientation
+2026-09-22 09:46:30.445306-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:30.445435-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:30.447375-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     7.63s Getting device orientation
+2026-09-22 09:46:30.456295-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     7.64s Getting device orientation
+2026-09-22 09:46:30.458020-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:30.458209-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:30.459924-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:30.468875-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:30.469805-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:30.469912-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     7.65s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:30.631054-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:30.631380-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:30.631502-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     7.81s Checking existence of `StatusBar (First Match)`
+    t =     7.82s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     7.85s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.85s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.85s Find the StatusBar (Element at index 0)
+    t =     7.87s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.87s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.87s Find the StatusBar (Element at index 1)
+    t =     7.90s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.90s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:30.727095-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.09554803371429443
+2026-09-22 09:46:30.727162-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:30.727620-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0004400014877319336
+    t =     7.91s Find the Application 'com.apple.springboard'
+    t =     7.92s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     7.92s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:30.747087-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:30.754441-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     7.93s Getting device orientation
+2026-09-22 09:46:30.759242-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     7.94s Getting device orientation
+2026-09-22 09:46:30.760622-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:30.760730-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:30.761981-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:30.768360-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:30.768854-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:30.768945-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     7.95s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:30.880751-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:30.880933-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:30.881022-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     8.06s Checking existence of `StatusBar (First Match)`
+    t =     8.07s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     8.09s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.09s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.09s Find the StatusBar (Element at index 0)
+    t =     8.12s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.12s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.12s Find the StatusBar (Element at index 1)
+    t =     8.14s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.14s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:30.968439-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.08738195896148682
+2026-09-22 09:46:30.968520-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:30.968951-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.00041103363037109375
+    t =     8.15s Find the Application 'com.apple.springboard'
+    t =     8.16s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.17s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:30.988316-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:30.995933-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     8.18s Getting device orientation
+2026-09-22 09:46:31.009510-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     8.19s Getting device orientation
+2026-09-22 09:46:31.012485-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:31.012688-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:31.014523-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:31.018801-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:31.019605-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:31.019706-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =     8.20s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:31.137130-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:31.137319-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:31.137405-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =     8.32s Checking existence of `StatusBar (First Match)`
+    t =     8.34s Get all elements bound by index for: Descendants matching type StatusBar
+    t =     8.36s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.36s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.37s Find the StatusBar (Element at index 0)
+    t =     8.38s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.39s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.39s Find the StatusBar (Element at index 1)
+    t =     8.42s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.42s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:31.247588-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.11013495922088623
+2026-09-22 09:46:31.247652-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:31.248212-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0005280971527099609
+    t =     8.43s Find the Application 'com.apple.springboard'
+    t =     8.44s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =     8.45s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:31.267342-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:31.274172-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     8.45s Getting device orientation
+2026-09-22 09:46:31.279126-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     8.46s Getting device orientation
+2026-09-22 09:46:31.280598-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:31.280718-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:31.283565-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     8.46s Getting device orientation
+2026-09-22 09:46:31.288676-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     8.47s Getting device orientation
+2026-09-22 09:46:31.290331-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:31.290428-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:31.292627-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =     8.47s Getting device orientation
+2026-09-22 09:46:31.297799-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     8.48s Getting device orientation
+2026-09-22 09:46:31.299685-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:31.299807-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:31.301859-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:31.447581-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: POST /swipeV2
+2026-09-22 09:46:31.453301-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     8.63s Getting device orientation
+2026-09-22 09:46:31.455197-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+    t =     8.63s Getting device orientation
+    t =     8.64s Getting device orientation
+2026-09-22 09:46:31.459642-0700 maestro-driver-iosUITests-Runner[11298:97751] [SwipeRouteHandlerV2] Swipe (v2) from (201.0, 437.0) to (201.0, 87.0) with 0.601 duration
+2026-09-22 09:46:31.466625-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =     8.65s Swipe (v2) from (201.0, 437.0) to (201.0, 87.0) with 0.601 duration
+2026-09-22 09:46:31.467592-0700 maestro-driver-iosUITests-Runner[11298:97751] Quiescence checks are disabled for com.meeshogi.app application. Making it to believe it is idling
+    t =     8.65s     Find the Any (First Match)
+    t =     8.65s Application is configured to skip UI interruption handling
+    t =     8.65s     Synthesize event
+    t =     8.65s         Getting device orientation
+2026-09-22 09:46:32.398716-0700 maestro-driver-iosUITests-Runner[11298:97751] Quiescence checks are disabled for com.meeshogi.app application. Making it to believe it is idling
+2026-09-22 09:46:32.400955-0700 maestro-driver-iosUITests-Runner[11298:97818] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:32.550165-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:32.694109-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:32.830012-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:32.964577-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =    10.14s Getting device orientation
+2026-09-22 09:46:32.969792-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    10.15s Getting device orientation
+2026-09-22 09:46:32.971297-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:32.971400-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:32.972613-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:32.976309-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:32.977145-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:32.977240-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =    10.16s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:33.087132-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:33.087383-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:33.087454-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =    10.27s Checking existence of `StatusBar (First Match)`
+    t =    10.28s Get all elements bound by index for: Descendants matching type StatusBar
+    t =    10.30s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    10.30s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    10.30s Find the StatusBar (Element at index 0)
+    t =    10.32s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    10.32s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    10.33s Find the StatusBar (Element at index 1)
+    t =    10.36s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    10.36s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:33.189287-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.1017540693283081
+2026-09-22 09:46:33.189423-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:33.189956-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.000491023063659668
+    t =    10.37s Find the Application 'com.apple.springboard'
+    t =    10.39s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    10.39s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:33.211776-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:33.221165-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =    10.40s Getting device orientation
+2026-09-22 09:46:33.229331-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    10.41s Getting device orientation
+2026-09-22 09:46:33.231977-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:33.232155-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:33.234994-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =    10.41s Getting device orientation
+2026-09-22 09:46:33.242268-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    10.42s Getting device orientation
+2026-09-22 09:46:33.243902-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:33.244004-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:33.245717-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:33.384107-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /swipeV2
+2026-09-22 09:46:33.390926-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    10.57s Getting device orientation
+2026-09-22 09:46:33.392509-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+    t =    10.57s Getting device orientation
+    t =    10.57s Getting device orientation
+2026-09-22 09:46:33.395214-0700 maestro-driver-iosUITests-Runner[11298:97751] [SwipeRouteHandlerV2] Swipe (v2) from (201.0, 655.0) to (201.0, 305.0) with 0.4 duration
+2026-09-22 09:46:33.401397-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    10.58s Swipe (v2) from (201.0, 655.0) to (201.0, 305.0) with 0.4 duration
+2026-09-22 09:46:33.402286-0700 maestro-driver-iosUITests-Runner[11298:97751] Quiescence checks are disabled for com.meeshogi.app application. Making it to believe it is idling
+    t =    10.58s     Find the Any (First Match)
+    t =    10.58s Application is configured to skip UI interruption handling
+    t =    10.59s     Synthesize event
+    t =    10.59s         Getting device orientation
+2026-09-22 09:46:34.132914-0700 maestro-driver-iosUITests-Runner[11298:97751] Quiescence checks are disabled for com.meeshogi.app application. Making it to believe it is idling
+2026-09-22 09:46:34.135384-0700 maestro-driver-iosUITests-Runner[11298:97820] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:34.279389-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:34.422057-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:34.559692-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:34.693874-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:34.834243-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:34.904727-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =    12.08s Getting device orientation
+2026-09-22 09:46:34.909779-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    12.09s Getting device orientation
+2026-09-22 09:46:34.911234-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:34.911330-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:34.912513-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:34.916055-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:34.916652-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:34.916742-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =    12.10s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:35.029000-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:35.029184-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:35.029281-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =    12.21s Checking existence of `StatusBar (First Match)`
+    t =    12.23s Get all elements bound by index for: Descendants matching type StatusBar
+    t =    12.28s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.29s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.29s Find the StatusBar (Element at index 0)
+    t =    12.32s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.32s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.33s Find the StatusBar (Element at index 1)
+    t =    12.35s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.35s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:35.174483-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.14517199993133545
+2026-09-22 09:46:35.174559-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:35.175192-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.000599980354309082
+    t =    12.35s Find the Application 'com.apple.springboard'
+    t =    12.38s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.38s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:35.205988-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:35.211754-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:35.351022-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =    12.53s Getting device orientation
+2026-09-22 09:46:35.359440-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    12.54s Getting device orientation
+2026-09-22 09:46:35.361061-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:35.361217-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:35.362877-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:35.371067-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:35.371623-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:35.371694-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =    12.55s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:35.491671-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:35.492267-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:35.492360-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =    12.67s Checking existence of `StatusBar (First Match)`
+    t =    12.68s Get all elements bound by index for: Descendants matching type StatusBar
+    t =    12.71s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.71s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.71s Find the StatusBar (Element at index 0)
+    t =    12.73s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.73s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.73s Find the StatusBar (Element at index 1)
+    t =    12.75s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.76s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:35.582667-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.09026205539703369
+2026-09-22 09:46:35.582738-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:35.583200-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.00043702125549316406
+    t =    12.76s Find the Application 'com.apple.springboard'
+    t =    12.79s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    12.79s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:35.609174-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:35.725329-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =    12.91s Getting device orientation
+2026-09-22 09:46:35.734059-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    12.91s Getting device orientation
+2026-09-22 09:46:35.735982-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:35.736089-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:35.737698-0700 maestro-driver-iosUITests-Runner[11298:97821] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:35.746063-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:35.746729-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:35.746810-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =    12.93s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:35.866739-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:35.866935-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:35.867040-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =    13.05s Checking existence of `StatusBar (First Match)`
+    t =    13.06s Get all elements bound by index for: Descendants matching type StatusBar
+    t =    13.08s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    13.08s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    13.08s Find the StatusBar (Element at index 0)
+    t =    13.11s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    13.11s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    13.11s Find the StatusBar (Element at index 1)
+    t =    13.13s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    13.13s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:35.958878-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.09179496765136719
+2026-09-22 09:46:35.958946-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:35.959512-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0005499124526977539
+    t =    13.14s Find the Application 'com.apple.springboard'
+    t =    13.16s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    13.16s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:35.985915-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:35.991547-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:36.090125-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: POST /touch
+2026-09-22 09:46:36.094486-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    13.27s Getting device orientation
+2026-09-22 09:46:36.096305-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+    t =    13.28s Getting device orientation
+2026-09-22 09:46:36.097575-0700 maestro-driver-iosUITests-Runner[11298:97751] Tapping 75.0, 722.0
+    t =    13.28s Getting device orientation
+2026-09-22 09:46:36.430788-0700 maestro-driver-iosUITests-Runner[11298:97751] Tapping took 0.33221304416656494
+2026-09-22 09:46:36.432581-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:36.574512-0700 maestro-driver-iosUITests-Runner[11298:97820] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:36.713260-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /isScreenStatic
+2026-09-22 09:46:36.851501-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:36.926857-0700 maestro-driver-iosUITests-Runner[11298:97820] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:36.996092-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:37.066624-0700 maestro-driver-iosUITests-Runner[11298:97820] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:37.135610-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:37.205634-0700 maestro-driver-iosUITests-Runner[11298:97820] [FlyingFox] <127.0.0.1> request: GET /screenshot
+2026-09-22 09:46:37.272317-0700 maestro-driver-iosUITests-Runner[11298:97906] [FlyingFox] <127.0.0.1> request: POST /deviceInfo
+    t =    14.45s Getting device orientation
+2026-09-22 09:46:37.285018-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+    t =    14.47s Getting device orientation
+2026-09-22 09:46:37.286855-0700 maestro-driver-iosUITests-Runner[11298:97751] Returning cached screen size
+2026-09-22 09:46:37.287012-0700 maestro-driver-iosUITests-Runner[11298:97751] Device orientation is 1
+2026-09-22 09:46:37.288568-0700 maestro-driver-iosUITests-Runner[11298:97905] [FlyingFox] <127.0.0.1> request: POST /viewHierarchy
+2026-09-22 09:46:37.292607-0700 maestro-driver-iosUITests-Runner[11298:97751] Detected running apps: ["com.meeshogi.app"]
+2026-09-22 09:46:37.293151-0700 maestro-driver-iosUITests-Runner[11298:97751] [Start] View hierarchy snapshot for Application 'com.meeshogi.app'
+2026-09-22 09:46:37.293224-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Starting getHierarchyWithFallback for element.
+    t =    14.47s Find the Application 'com.meeshogi.app'
+2026-09-22 09:46:37.405913-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Successfully retrieved element hierarchy.
+2026-09-22 09:46:37.406172-0700 maestro-driver-iosUITests-Runner[11298:97751] Foreground app is not springboard skipping auto tapping on permissions
+2026-09-22 09:46:37.406242-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch status bar hierarchy - start
+    t =    14.59s Checking existence of `StatusBar (First Match)`
+    t =    14.60s Get all elements bound by index for: Descendants matching type StatusBar
+    t =    14.63s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    14.63s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    14.63s Find the StatusBar (Element at index 0)
+    t =    14.65s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    14.65s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    14.65s Find the StatusBar (Element at index 1)
+    t =    14.67s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    14.68s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:37.504723-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch status bar hierarchy - duration 0.09842491149902344
+2026-09-22 09:46:37.504843-0700 maestro-driver-iosUITests-Runner[11298:97751] [ViewHierarchyHandler] Fetch Safari WebView hierarchy - start
+2026-09-22 09:46:37.505399-0700 maestro-driver-iosUITests-Runner[11298:97751] Fetch Safari WebView hierarchy - duration 0.0005409717559814453
+    t =    14.69s Find the Application 'com.apple.springboard'
+    t =    14.70s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+    t =    14.70s Ignoring failure to get hierarchy for remote element in process 9117 (Error getting main window kAXErrorServerNotFound)
+2026-09-22 09:46:37.526663-0700 maestro-driver-iosUITests-Runner[11298:97751] [Done] View hierarchy snapshot for Application 'com.meeshogi.app' 
+2026-09-22 09:46:37.536067-0700 maestro-driver-iosUITests-Runner[11298:97817] [FlyingFox] <127.0.0.1> request: GET /screenshot
