@@ -27,16 +27,17 @@ export default function TabLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{ title: '棋譜', tabBarIcon: ({ color }) => <Icon name="games" color={color} /> }}
+        options={{ title: '棋譜', tabBarButtonTestID: 'tab-games', tabBarIcon: ({ color }) => <Icon name="games" color={color} /> }}
       />
       <Tabs.Screen
         name="statistics"
-        options={{ title: '戦績', tabBarIcon: ({ color }) => <Icon name="stats" color={color} /> }}
+        options={{ title: '戦績', tabBarButtonTestID: 'tab-stats', tabBarIcon: ({ color }) => <Icon name="stats" color={color} /> }}
       />
       <Tabs.Screen
         name="settings"
         options={{
           title: '設定',
+          tabBarButtonTestID: 'tab-settings',
           tabBarIcon: ({ color }) => <Icon name="settings" color={color} />,
         }}
       />
