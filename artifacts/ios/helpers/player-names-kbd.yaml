@@ -17,6 +17,11 @@ appId: com.meeshogi.app
 - assertVisible: '.*asitaka_y.*'
 - takeScreenshot: 08-player-names
 - tapOn: '完了.*'
+- runFlow:
+    when:
+      visible: '保存して反映'
+    commands:
+      - tapOn: '保存して反映'
 - extendedWaitUntil:
     visible:
       id: settings-screen

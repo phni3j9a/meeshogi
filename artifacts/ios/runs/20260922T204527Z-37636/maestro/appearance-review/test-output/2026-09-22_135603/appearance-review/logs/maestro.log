@@ -1,0 +1,43 @@
+13:56:11.680 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+13:56:11.682 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+13:56:11.682 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+13:56:12.111 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+13:56:12.113 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Apply configuration RUNNING
+13:56:12.113 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Apply configuration COMPLETED
+13:56:12.114 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Launch app "com.meeshogi.app" RUNNING
+13:56:12.586 [ INFO] maestro.Maestro.launchApp$lambda$5: Launching app com.meeshogi.app
+13:56:12.586 [ INFO] maestro.Maestro.launchApp$lambda$5: Stopping com.meeshogi.app app during launch
+13:56:13.911 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Launch app "com.meeshogi.app" COMPLETED
+13:56:13.912 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: library-screen is visible RUNNING
+13:56:18.788 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: library-screen is visible COMPLETED
+13:56:18.789 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that ".*KeroPona.*" is visible RUNNING
+13:56:18.991 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that ".*KeroPona.*" is visible COMPLETED
+13:56:18.991 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on "設定.*" RUNNING
+13:56:19.172 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=設定, tab, 3 of 3, title=, value=, text=, hintText=, resource-id=tab-settings, bounds=[268,790][402,840], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=268, y=790, width=134, height=50))
+13:56:19.321 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+13:56:19.323 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (335, 815) using hierarchy based logic for wait
+13:56:19.324 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+13:56:19.324 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:56:20.016 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+13:56:20.016 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on "設定.*" COMPLETED
+13:56:20.016 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Scrolling DOWN until "表示テーマ" is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled RUNNING
+13:56:20.764 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 表示テーマ
+13:56:20.774 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:56:23.294 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 表示テーマ
+13:56:23.303 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:56:26.130 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 表示テーマ
+13:56:26.140 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:56:28.944 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 表示テーマ
+13:56:28.954 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:56:31.802 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 表示テーマ
+13:56:31.816 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:56:34.613 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 表示テーマ
+13:56:34.621 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:56:37.478 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 表示テーマ
+13:56:37.490 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:56:40.327 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 表示テーマ
+13:56:40.337 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:56:42.563 [ERROR] maestro.orchestra.Orchestra.executeCommands: [Command execution] CommandFailed: No visible element found: "表示テーマ"
+13:56:42.777 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+13:56:42.777 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:56:42.853 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Scrolling DOWN until "表示テーマ" is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled FAILED

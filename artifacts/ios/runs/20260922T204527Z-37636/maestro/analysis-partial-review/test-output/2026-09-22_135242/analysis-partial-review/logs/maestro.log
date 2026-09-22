@@ -1,0 +1,41 @@
+13:52:52.482 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+13:52:52.484 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+13:52:52.485 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Apply configuration RUNNING
+13:52:52.485 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Apply configuration COMPLETED
+13:52:52.485 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Launch app "com.meeshogi.app" RUNNING
+13:52:53.072 [ INFO] maestro.Maestro.launchApp$lambda$5: Launching app com.meeshogi.app
+13:52:53.073 [ INFO] maestro.Maestro.launchApp$lambda$5: Stopping com.meeshogi.app app during launch
+13:52:54.410 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Launch app "com.meeshogi.app" COMPLETED
+13:52:54.411 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: library-screen is visible RUNNING
+13:53:00.351 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: library-screen is visible COMPLETED
+13:53:00.354 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on "設定.*" RUNNING
+13:53:00.925 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=設定, tab, 3 of 3, title=, value=, text=, hintText=, resource-id=tab-settings, bounds=[268,790][402,840], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=268, y=790, width=134, height=50))
+13:53:01.583 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+13:53:01.665 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (335, 815) using hierarchy based logic for wait
+13:53:01.787 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+13:53:01.787 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:53:02.682 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+13:53:02.682 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on "設定.*" COMPLETED
+13:53:02.682 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: settings-screen is visible RUNNING
+13:53:02.926 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: settings-screen is visible COMPLETED
+13:53:02.927 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Scrolling DOWN until "解析の長さ" is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled RUNNING
+13:53:03.925 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 解析の長さ
+13:53:04.105 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:53:06.763 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 解析の長さ
+13:53:06.773 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:53:09.686 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 解析の長さ
+13:53:09.696 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:53:12.672 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 解析の長さ
+13:53:12.686 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:53:15.371 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 解析の長さ
+13:53:15.382 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:53:18.155 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 解析の長さ
+13:53:18.164 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:53:20.930 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 解析の長さ
+13:53:20.940 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:53:23.376 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: 解析の長さ
+13:53:23.385 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:53:25.300 [ERROR] maestro.orchestra.Orchestra.executeCommands: [Command execution] CommandFailed: No visible element found: "解析の長さ"
+13:53:25.516 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+13:53:25.517 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:53:25.590 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Scrolling DOWN until "解析の長さ" is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled FAILED

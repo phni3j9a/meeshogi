@@ -221,3 +221,89 @@ checks stand; this run validates the suite definition end-to-end on iOS.
   bottom rows of the 対局情報 sheet are outside the a11y tree entirely.
 - Share sheet / document picker are RemoteUI with no a11y tree (point taps).
 - No product defects found on f376ee7.
+
+---
+
+## RUN @ 6a54ff5 (2026-09-22, suite final candidate — tab-games + delay:800)
+
+HEAD `6a54ff5a04359f075a16f8165cc06f0b7ea2a57c` on `issue-7-engine-correctness`.
+Run dir: `artifacts/ios/runs/20260922T204527Z-37636` (all flows green).
+Simulator: iPhone 18 Pro / iOS 27.0 (`1308A109-3EE0-4711-9287-85246639DBC7`).
+
+### Build
+
+`xcodebuild -configuration Release -sdk iphonesimulator ARCHS=arm64` — **BUILD SUCCEEDED**
+(`artifacts/ios/build-6a54ff5.log`).
+
+Note on the first attempt: `npm ci` deletes the pod-install-vendored
+`node_modules/expo-sqlite/ios/sqlite3.h`; the first build compiled a
+sqlite3-less ExpoSQLite Clang module (71KB pcm) and cached it in
+DerivedData `ModuleCache.noindex`. After `pod install` restored the
+header, the cached module was still replayed → `SQLiteModule.swift:
+cannot find 'exsqlite3_*' in scope`. Fix: `rm -rf <derivedData>/ModuleCache.noindex`
+and rebuild — the second pcm (380KB) includes the vendored header.
+Blueprint/CI note: after `npm ci` on a dirty DerivedData, pod install
+must precede xcodebuild AND the module cache must be cleared.
+
+### Fix verification (the point of this commit)
+
+- `id: tab-games` — **works on iOS**: `tabBarButtonTestID` surfaces as
+  resource-id `tab-games` on the merged-label element `棋譜, tab, 1 of 3`.
+  All three post-settings tab taps matched (analysis-review ×3 sites).
+- `delay: 800` on move-prev/move-next repeats — **works**: analysis-review
+  navigated 80 plies, hit both ±1 drift nets and still landed exact plies;
+  appearance-review/dark (inherited) also passed. No drift beyond the nets.
+- The `一手進む` mate-detail block (still `delay: 350` in stock, id-less)
+  drifted on iOS — covered by conditional nets in the run helper.
+
+### Per-flow results (suite order)
+
+| Flow | Result | Variant |
+|---|---|---|
+| licenses-review | PASS (21s) | stock runner |
+| import-review | PASS (41s) | stock runner |
+| player-names | PASS (43s) | kbd helper (+`保存して反映` conditional dialog) |
+| player-names-kiou | PASS (31s) | kbd helper |
+| analysis-review | PASS (2m40s) | 6a54ff5 variant (`解析の長さ.*` merged-label + drift nets; `id: tab-games`/`delay: 800` as stock) — 長め 50k full completion, mate badges ply 67 (3手詰め) & 51 (1手詰め), SQLite reload `1手目から再開` |
+| analysis-partial-review | PASS (1m42s) | 6a54ff5 variant — 標準 partial end `解析処理が終了しました` + aggregated notice, `全局解析が完了しました` absent, ply-41 skipped `—`/no candidates, 解析を再開 → partial again |
+| candidate-review | PASS (44s) | ios helper (candidate panel visibility) — candidate-0 at 標準 ply 0, 分岐検討, 0手目から分岐, 本譜に戻る |
+| file-import | PASS (1m24s) | ios helper (`サービス.*`) — kiou.kif via Files picker, 77手読み取り, 登録名判定, `0 / 77手`, analysis-ready |
+| management-review | PASS (2m8s) | ios helper (favorites/menu/戦型 nets) — `2局`, 戦型 manual edit, 対局情報, `2局1勝0敗` filtered stats |
+| appearance-review | PASS (56s) | 6a54ff5 variant (`表示テーマ.*`; delay:800 stock) — theme switch ライト, ply-67 3手詰め badge |
+| appearance-dark | PASS (57s) | ios helper → appearance variant (ダーク) |
+| export-review-ios | PASS (23s) | ios helper — share sheet → Save to Files → Meeshogi Fixtures |
+| exported .kifu | **byte-identical** to `fixtures/kif/shogiwars.kif` (app-cache copy `exported-shogiwars.kifu`) |
+| background-review | PASS (50s) | 6a54ff5 variant — 長め `解析済み 76/81` + old-conditions notice, Home→`解析を停止中` pause, resume → `全局解析が完了しました` |
+| large-text | PASS (37s) | ios helper at content_size=extra-extra-extra-large |
+| search-delete | PASS (36s) | ios helper — search `2099` empty state, SiGototti delete via swipe+point tap, `2局→1局`, stats `1局1勝0敗`, gone after restart |
+
+**Result: 16/16 flows PASS on iOS. No product defects on 6a54ff5.**
+
+### Suite-level iOS differences exercised (unchanged platform gaps, not product bugs)
+
+- `hideKeyboard` unsupported on the custom 完了-key keyboard → kbd helpers
+  (完了 commits + pops to settings). NEW this run: when the pasted name
+  actually changes a registered name with existing games, iOS shows
+  `既存の棋譜にも反映しますか？` (`保存して反映`) before popping — handled
+  via conditional `when visible` tap.
+- Exact-match `text:` selectors fail on iOS merged a11y labels
+  (`解析の長さ, 標準, Forward`; `表示テーマ, システム, Forward`; `サービス, …`;
+  戦型 rows). 6a54ff5 variants widen to `.*` while keeping the new
+  `id: tab-games` selector — i.e. the selector fix itself is exercised
+  verbatim.
+- Candidate-panel `candidate-0` needs a swipe before tap; delete row
+  `この棋譜を削除` is outside the a11y tree → swipe + `tapOn {point: '26%,90%'}`.
+- Document picker / share sheet are RemoteUI → helper flows use coordinate
+  + labeled paths; exported file lands in app `Library/Caches` (verified
+  byte-identical) — the helper-Documents polling spot showed only fixture
+  files this run (same as RUN-D).
+- background-review post-resume end-state wait kept at 300s for iOS.
+
+### Cascade note
+
+The first continuation attempt aborted at `player-names` (dialog), which
+left stats off for two downstream asserts (`file-import` `2局2勝`,
+`management`/`search-delete` count lines). After fixing the dialog step
+and re-running the dependent chain in suite order, every flow passed.
+Earlier aborts' artifacts are kept alongside the passing ones in the run
+dir (the junit per flow reflects the final attempt).

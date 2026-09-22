@@ -16,6 +16,11 @@ appId: com.meeshogi.app
     optional: true
 - assertVisible: '.*シシ神.*'
 - tapOn: '完了.*'
+- runFlow:
+    when:
+      visible: '保存して反映'
+    commands:
+      - tapOn: '保存して反映'
 - takeScreenshot: 08-player-names-both-services
 - extendedWaitUntil:
     visible:

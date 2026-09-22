@@ -1,0 +1,93 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '設定.*'
+- tapOn: '解析の長さ.*'
+- tapOn: 長め
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- scrollUntilVisible:
+    element:
+      text: '以前のモデル・解析条件の結果が.*'
+    direction: DOWN
+- assertVisible: '以前のモデル・解析条件の結果が.*'
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- assertVisible: '解析済み .* / 81局面'
+- takeScreenshot: 34-changed-analysis-conditions
+- tapOn:
+    id: analysis-start
+    waitToSettleTimeoutMs: 500
+- extendedWaitUntil:
+    visible:
+      id: analysis-stop
+    timeout: 30000
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible: '解析を停止中.*'
+    timeout: 30000
+- takeScreenshot: 35-background-paused
+- tapOn:
+    id: analysis-start
+    waitToSettleTimeoutMs: 500
+- extendedWaitUntil:
+    visible:
+      id: analysis-stop
+    timeout: 30000
+# The analysis can finish while the automation is finding the stop button.
+# The earlier Home/return assertion independently requires a real paused state.
+- tapOn:
+    id: analysis-stop
+    waitToSettleTimeoutMs: 500
+    optional: true
+- extendedWaitUntil:
+    visible: '解析を停止中.*|全局解析が完了しました'
+    timeout: 300000
+- takeScreenshot: 36-after-resume
+# Restoring the original budget exposes only the matching cached positions.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '設定.*'
+- tapOn: '解析の長さ.*'
+- tapOn: 標準
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- takeScreenshot: 37-restored-analysis-conditions

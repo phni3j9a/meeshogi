@@ -1,0 +1,66 @@
+13:45:55.268 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+13:45:55.270 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+13:45:55.270 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+13:45:56.520 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+13:45:56.521 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Apply configuration RUNNING
+13:45:56.521 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Apply configuration COMPLETED
+13:45:56.522 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Launch app "com.meeshogi.app" RUNNING
+13:45:57.027 [ INFO] maestro.Maestro.launchApp$lambda$5: Launching app com.meeshogi.app
+13:45:57.027 [ INFO] maestro.Maestro.launchApp$lambda$5: Stopping com.meeshogi.app app during launch
+13:45:57.288 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Launch app "com.meeshogi.app" COMPLETED
+13:45:57.289 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: library-screen is visible RUNNING
+13:46:04.015 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: library-screen is visible COMPLETED
+13:46:04.016 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on "設定.*" RUNNING
+13:46:04.225 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=設定, tab, 3 of 3, title=, value=, text=, hintText=, resource-id=tab-settings, bounds=[268,790][402,840], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=268, y=790, width=134, height=50))
+13:46:04.385 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+13:46:04.389 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (335, 815) using hierarchy based logic for wait
+13:46:04.392 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+13:46:04.392 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:46:05.168 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+13:46:05.168 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on "設定.*" COMPLETED
+13:46:05.168 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: settings-screen is visible RUNNING
+13:46:05.367 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: settings-screen is visible COMPLETED
+13:46:05.368 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Scrolling DOWN until ".*ライセンス.*" is visible with speed 40, visibility percentage 100%, timeout 30000 ms, with centering disabled RUNNING
+13:46:06.174 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: .*ライセンス.*
+13:46:06.183 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:46:08.135 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Scrolling try count: 0, DeviceWidth: 402, DeviceWidth: 874
+13:46:08.135 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Element bounds: Bounds(x=20, y=649, width=361, height=54)
+13:46:08.136 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Visibility Percent: 1.0
+13:46:08.141 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Command centerElement: ScrollUntilVisibleCommand(selector=ElementSelector(textRegex=.*ライセンス.*, idRegex=null, size=null, below=null, above=null, leftOf=null, rightOf=null, containsChild=null, containsDescendants=null, traits=null, index=null, enabled=null, optional=false, selected=null, checked=null, focused=null, childOf=null, css=null), direction=DOWN, scrollDuration=601, visibilityPercentage=100, timeout=30000, waitToSettleTimeoutMs=null, centerElement=false, originalSpeedValue=40, label=null, optional=false).centerElement
+13:46:08.141 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: visibilityPercentageNormalized: 1.0
+13:46:08.141 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Scrolling DOWN until ".*ライセンス.*" is visible with speed 40, visibility percentage 100%, timeout 30000 ms, with centering disabled COMPLETED
+13:46:08.141 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on ".*ライセンス.*" RUNNING
+13:46:08.395 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=ライセンス, Forward, title=, value=, text=, hintText=, resource-id=, bounds=[20,649][381,703], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=20, y=649, width=361, height=54))
+13:46:08.548 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via stabilised hierarchy (null settle after a scroll)
+13:46:08.750 [ INFO] maestro.Maestro.refreshElementUntilStable-Hkttul8: Element is still moving (null -> Bounds(x=20, y=649, width=361, height=54)). Waiting for its position to settle.
+13:46:09.052 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (200, 676) using hierarchy based logic for wait
+13:46:09.052 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+13:46:09.052 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:46:10.550 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+13:46:10.550 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on ".*ライセンス.*" COMPLETED
+13:46:10.551 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: licenses-screen is visible RUNNING
+13:46:10.724 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: licenses-screen is visible COMPLETED
+13:46:10.724 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that ".*@babel/code-frame@.*" is visible RUNNING
+13:46:10.892 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that ".*@babel/code-frame@.*" is visible COMPLETED
+13:46:10.892 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that ".*MIT License.*" is visible RUNNING
+13:46:11.050 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that ".*MIT License.*" is visible COMPLETED
+13:46:11.051 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot licenses-notice RUNNING
+13:46:11.103 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+13:46:11.104 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:46:11.171 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot licenses-notice COMPLETED
+13:46:11.171 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Scrolling DOWN until id: license-packages-0 is visible with speed 40, visibility percentage 100%, timeout 30000 ms, with centering enabled RUNNING
+13:46:11.884 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Id matching regex: license-packages-0
+13:46:11.893 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+13:46:14.907 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Scrolling try count: 0, DeviceWidth: 402, DeviceWidth: 874
+13:46:14.907 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Element bounds: Bounds(x=20, y=562, width=362, height=20)
+13:46:14.907 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Visibility Percent: 1.0
+13:46:14.908 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Command centerElement: ScrollUntilVisibleCommand(selector=ElementSelector(textRegex=null, idRegex=license-packages-0, size=null, below=null, above=null, leftOf=null, rightOf=null, containsChild=null, containsDescendants=null, traits=null, index=null, enabled=null, optional=false, selected=null, checked=null, focused=null, childOf=null, css=null), direction=DOWN, scrollDuration=601, visibilityPercentage=100, timeout=30000, waitToSettleTimeoutMs=null, centerElement=true, originalSpeedValue=40, label=null, optional=false).centerElement
+13:46:14.908 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: visibilityPercentageNormalized: 1.0
+13:46:14.908 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Scrolling DOWN until id: license-packages-0 is visible with speed 40, visibility percentage 100%, timeout 30000 ms, with centering enabled COMPLETED
+13:46:14.908 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot licenses-packages RUNNING
+13:46:14.908 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+13:46:14.909 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:46:14.977 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot licenses-packages COMPLETED
+13:46:14.977 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Stop com.meeshogi.app RUNNING
+13:46:14.978 [ INFO] maestro.Maestro.stopApp$lambda$6: Stopping app com.meeshogi.app
+13:46:16.050 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Stop com.meeshogi.app COMPLETED
