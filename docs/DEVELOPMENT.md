@@ -10,19 +10,19 @@ Issue #7の実装状態は、Sekirei v0.3.37（`7fd1d9b42a85fbc5aeb222f8aa453d3e
 
 診断で、単一合法手の製品baselineは実nodes 0のまま完了扱いになる一方、修正版・v0.3.37では同じ局面が実探索（代表値164 nodes）へ入ること、連続王手でbaselineのmate→CP→mate往復を再現できることを確認した。これはホスト上のcore/bridge初期化診断であり、アプリのビルド・起動・操作・画面受入や棋力向上の証拠ではない。診断用Bは製品へ切り替えない。
 
-このcandidateでIssue #7の受入完了としていないものは、native変更を含む同一commitからのAndroid/iOS新規ビルド、インストール・起動、公開fixtureの再解析、予算不足を挟む後続局面までの停止・再開・旧cache更新、部分終了/終局表示、分岐復帰、両OSのスクリーンショット目視である。過去PRのモバイル証拠はnative変更後の受入を代替しないため、Mainが両OS別に実行・記録する。
+このcandidateでIssue #7の受入検証として完了したものは、製品コード`6a54ff5`からのAndroid/iOS新規ビルド、インストール・起動、公開fixtureの再解析、予算不足を挟む後続局面までの停止・再開・旧cache更新、部分終了/終局表示、分岐復帰、両OSのスクリーンショット目視である。Devin CloudのAndroid emulatorでMaestro 15フロー成功・失敗0（`evidence/android-20260922` run `20260922T203618Z-74028`）、iOS Simulatorでも15フロー成功・失敗0（`evidence/ios-20260922` run `20260922T204527Z-37636`）を確認した。iOSでは一部フローにhelperと条件分岐を使い、最後の書き出しKIF比較はapp-cache内のコピー `exported-shogiwars.kifu` でfixtureとのバイト一致を確認した。実機での検証とユーザー報告の150手棋譜は残る。
 
 全局解析の予算不足制御
 
 `incomplete` payloadは、SFEN・identity・条件・`meta`・合法fallback・詰み証明をnative境界で検証し、初回反復の予算不足として成立した場合だけ専用エラーにする。storeはその局面を保存せず一度だけスキップし、後続局面を直列に解析する。走査完了時に不足があれば今回のjobを`partial`にして、解析済み件数と探索量不足件数を表示する。jobの不足履歴やfallbackはSQLiteへ保存しないため、再起動後は保存済みの現行結果件数と欠測だけを表示する。設定変更、停止、棋譜削除、別棋譜開始、通常エラー、保存失敗は既存のgeneration/cancellation/write guardで処理を停止し、不足スキップへ変換しない。
 
-このworkerでは`npm run check`（typecheckとVitest 106 tests）と`git diff --check`を実行して通過した。`npm ci`、製品nativeの`cargo test`、`scripts/engine/test.sh`は実行していない。native検査とCI通過・host目視・emulator／Simulator・物理端末は分けて報告する。
+このcandidateでは`npm run check`（typecheckとVitest 106 tests）、`npm ci`、`git diff --check`、製品nativeの`cargo test`、`scripts/engine/test.sh`（モデルSHA-256検証とRust 24 tests）を実行して通過した。GitHub Actionsの`ci.yml`も候補SHAで成功している。native検査とCI通過・host目視・emulator／Simulator・物理端末は分けて報告する。
 
 ## 継続する検証と対象外
 
 Issue #7では、iOS Simulator／Android emulatorまたは実機で各ページを撮影し、実際に目視することを受入条件にする。次の未検証分は残す。
 
-- Issue #7のnative変更を反映したiOS/Androidの新規build・起動・対象操作・スクリーンショット、iOSの詳細操作フロー、文字拡大・全テーマ、実iPhoneでの動作・応答時間、署名配布・TestFlight。
+- 実iPhone・実Android端末での動作・応答時間、署名配布・TestFlight。Issue #7のモバイル受入はエミュレーター／Simulatorまでで、実機は未検証として残す。
 - 両OSの一定フレームレート、長時間使用時の発熱・消費電力、大量の実棋譜を持つ物理端末での性能。合成1,000局の過去確認は機能検証と参考測定に限る。
 - 研究側のSekirei v0.3.4系runtimeとアプリv0.3.37、研究TT 64 MiBとapp bridge 16 MiB、nativeへ過去の対局履歴を渡さない条件差。静的評価の整数一致は探索全体の再現や棋力向上を主張する根拠にしない。
 - ユーザーから報告された150手の対局データは未取得であり、その棋譜の原因確定とは区別する。

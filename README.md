@@ -6,9 +6,9 @@
 
 ## 状態
 
-無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)はマージ済みです。現在はIssue #7の解析正しさ修正を統合前のcandidate worktreeで検証しています。Sekirei v0.3.37を固定し、ResidualMaterial評価、単一合法手の実探索、`meta`/`incomplete`契約、終局表示、identityによる旧キャッシュ除外を追加しています。ログイン・通信・課金は利用条件に含めません。
+無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)はマージ済みです。Issue #7の解析正しさ修正は[PR #13](https://github.com/phni3j9a/meeshogi/pull/13)として統合前のcandidateです。Sekirei v0.3.37を固定し、ResidualMaterial評価、単一合法手の実探索、`meta`/`incomplete`契約、終局表示、identityによる旧キャッシュ除外を追加しています。ログイン・通信・課金は利用条件に含めません。
 
-Issue #7のcandidateでは、公開fixtureを使うA/B/C/Dのhost診断を別途実行しています。native変更後のAndroid/iOS新規ビルド、起動、対象操作、両OSのスクリーンショット目視はまだ受入前であり、過去PRの証拠を再利用して完了とは扱いません。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
+Issue #7のcandidateでは、公開fixtureを使うA/B/C/Dのhost診断に加え、製品コード`6a54ff5`でAndroid emulator・iOS Simulatorの新規ビルド・起動・受入フロー・両OSスクリーンショット目視まで検証済みです（両OSともMaestro 15フロー成功・失敗0。iOSは別検査として書き出しKIFとfixtureのバイト一致も確認）。証拠は `evidence/android-20260922`（run `20260922T203618Z-74028`）と `evidence/ios-20260922`（run `20260922T204527Z-37636`）に保存しています。実機での動作・性能は未検証です。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
 
 全局解析では、native境界で検証済みの初回反復の予算不足だけをその局面の欠測として扱い、後続局面の解析を続けます。処理が最後まで走っても不足が残る場合は解析済み件数と探索量不足の件数を分けて表示し、全局面の有効結果が揃った場合だけ全局解析完了と表示します。不完全な候補は保存せず、再起動後は保存済み結果と欠測だけを表示します。
 
