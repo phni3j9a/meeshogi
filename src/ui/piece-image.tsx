@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Image, ImageSourcePropType } from 'react-native';
+import { Image, ImageSourcePropType, StyleSheet, View } from 'react-native';
 import { PieceType } from 'tsshogi';
 import { Side } from '@/domain/model';
 
@@ -36,15 +36,38 @@ export const PieceImage = memo(function PieceImage({
   height: number;
   rotated?: boolean;
 }) {
+  const source = piece === PieceType.KING && side === 'white' ? jewel : images[piece];
   return (
-    <Image
-      source={piece === PieceType.KING && side === 'white' ? jewel : images[piece]}
-      resizeMode="contain"
-      fadeDuration={0}
+    <View
+      pointerEvents="none"
       accessible={false}
       accessibilityElementsHidden
-      importantForAccessibility="no"
+      importantForAccessibility="no-hide-descendants"
       style={{ width, height, transform: [{ rotate: rotated ? '180deg' : '0deg' }] }}
-    />
+    >
+      <Image
+        source={source}
+        resizeMode="contain"
+        fadeDuration={0}
+        accessible={false}
+        style={[StyleSheet.absoluteFill, { width, height }]}
+      />
+      {side === 'white' && (
+        <Image
+          source={source}
+          resizeMode="contain"
+          fadeDuration={0}
+          accessible={false}
+          tintColor="#526879"
+          // The generated sprite supplies the alpha mask. A light wash keeps
+          // its grain and lettering visible, and follows ownership on capture.
+          style={[StyleSheet.absoluteFill, { width, height }, styles.goteTone]}
+        />
+      )}
+    </View>
   );
+});
+
+const styles = StyleSheet.create({
+  goteTone: { opacity: 0.14 },
 });

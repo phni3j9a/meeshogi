@@ -38,6 +38,18 @@ ChatGPT Imageの組み込み画像生成機能で、歩・香・桂・銀・金�
 
 プロンプトと画像仕様は [駒画像](../../assets/pieces/README.md) に記録する。生成画像は表示素材だけに使用し、将棋ルール・合法手・評価値の正本にはしない。
 
+### 先手・後手の色味
+
+先手は暖かい蜂蜜色を保ち、後手は黄色みを少し抑えた落ち着いた木色とした。後手の生成画像に、同じ透過画像を`#526879`・不透明度`0.14`で薄く重ねる。木目・通常駒の墨色・成駒の朱色を残し、生成PNG自体は変更しない。盤上・持駒・詰み手順は共通の`PieceImage`で描く。
+
+色は現在の持ち主に従い、反転時は回転だけを変える。捕獲した駒や打った駒も持ち主の色になる。色だけに頼らず、駒の向き・先後の記号・読み上げを維持する。重ねた画像はタップや読み上げの対象にしない。
+
+![先手と後手の色味の比較](screens/analysis-refresh/piece-tones.webp)
+
+![先後の色味を調整した盤面](screens/analysis-refresh/piece-tones-board.webp)
+
+上は実コンポーネントのWebプレビュー。[色味の検証ログ](screens/analysis-refresh/piece-tones-verification.json)に、ライト／ダーク・小画面・反転・持駒・成駒・捕獲と駒打ちの結果を記録する。以下の既存の画面比較は色味調整前の配置検証を含む。
+
 ## 参考
 
 - [棋桜 Google Play公式掲載](https://play.google.com/store/apps/details?hl=ja&id=com.neconome.shogi)：盤面・対局者・手送り・解析グラフの配置。
