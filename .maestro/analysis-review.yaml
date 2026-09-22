@@ -1,6 +1,21 @@
 appId: com.meeshogi.app
 ---
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 解析の長さ
+    direction: DOWN
+- tapOn: 解析の長さ
+- tapOn: 長め
 - tapOn: '棋譜.*'
 - tapOn: '.*KeroPona.*'
 - scrollUntilVisible:
@@ -15,7 +30,7 @@ appId: com.meeshogi.app
           id: analysis-start
 - extendedWaitUntil:
     visible: 全局解析が完了しました
-    timeout: 240000
+    timeout: 600000
 - takeScreenshot: 10-full-analysis
 # A fresh process must load all computed positions from SQLite.
 - stopApp
@@ -95,3 +110,16 @@ appId: com.meeshogi.app
 - stopApp
 - launchApp
 - assertVisible: '.*1手目から再開.*'
+# Leave the shared app state at the default budget for subsequent flows.
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 解析の長さ
+    direction: DOWN
+- tapOn: 解析の長さ
+- tapOn: 標準
+- tapOn: '棋譜.*'
