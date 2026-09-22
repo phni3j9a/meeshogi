@@ -1,0 +1,506 @@
+{
+  "scope": "Actual GameScreen, ShogiBoard, and PieceImage in RN Web. Synthetic analysis; constructed capture/drop and promotion SFEN fixtures. Shared wood and transparent glyph composition verify the RN Web path; native device rendering remains unverified.",
+  "source": "src/ui/piece-image.tsx",
+  "sourceHash": "9c2ff3bc814e6848fdadb9b217ec46bec7ef425f967edc5b81765156ad17b5f0",
+  "cases": [
+    {
+      "key": "light",
+      "pieces": 40,
+      "goteWood": 23,
+      "overlays": 0,
+      "overflow": false
+    },
+    {
+      "key": "dark",
+      "pieces": 40,
+      "goteWood": 23,
+      "overlays": 0,
+      "overflow": false
+    },
+    {
+      "key": "flipped",
+      "pieces": 40,
+      "goteWood": 23,
+      "overlays": 0,
+      "overflow": false
+    },
+    {
+      "key": "320",
+      "pieces": 40,
+      "goteWood": 23,
+      "overlays": 0,
+      "overflow": false
+    },
+    {
+      "key": "comparison-light",
+      "actualComponent": true
+    },
+    {
+      "key": "comparison-dark",
+      "actualComponent": true
+    },
+    {
+      "key": "promoted-white",
+      "promoted": [
+        {
+          "source": "promoted-pawn.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/promoted-pawn.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-lance.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/promoted-lance.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-knight.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/promoted-knight.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-silver.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/promoted-silver.png",
+          "overlays": 0
+        },
+        {
+          "source": "horse.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/horse.png",
+          "overlays": 0
+        },
+        {
+          "source": "dragon.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/dragon.png",
+          "overlays": 0
+        }
+      ],
+      "heldTypes": 7
+    },
+    {
+      "key": "promoted-black",
+      "promoted": [
+        {
+          "source": "promoted-pawn.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/promoted-pawn.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-lance.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/promoted-lance.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-knight.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/promoted-knight.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-silver.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/promoted-silver.png",
+          "overlays": 0
+        },
+        {
+          "source": "horse.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/horse.png",
+          "overlays": 0
+        },
+        {
+          "source": "dragon.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/dragon.png",
+          "overlays": 0
+        }
+      ],
+      "heldTypes": 7
+    }
+  ],
+  "ownership": [
+    {
+      "side": "white",
+      "before": {
+        "label": "5五、先手の歩",
+        "images": 2,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-sente.png",
+        "glyphSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "imageOpacities": [
+          "1",
+          "1"
+        ],
+        "wrapperOpacity": "1",
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "held": {
+        "label": "後手の持駒、歩1枚",
+        "images": 2,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-gote.png",
+        "glyphSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "imageOpacities": [
+          "1",
+          "1"
+        ],
+        "wrapperOpacity": "1",
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 31,
+          "height": 37
+        }
+      },
+      "dropped": {
+        "label": "4五、後手の歩",
+        "images": 2,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-gote.png",
+        "glyphSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "imageOpacities": [
+          "1",
+          "1"
+        ],
+        "wrapperOpacity": "1",
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "flipped": {
+        "label": "4五、後手の歩",
+        "images": 2,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-gote.png",
+        "glyphSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "imageOpacities": [
+          "1",
+          "1"
+        ],
+        "wrapperOpacity": "1",
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "legalSequence": [
+        "5c5e",
+        "9i8i",
+        "P*4e"
+      ],
+      "counter": "3手目・分岐3手"
+    },
+    {
+      "side": "black",
+      "before": {
+        "label": "5五、後手の歩",
+        "images": 2,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-gote.png",
+        "glyphSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "imageOpacities": [
+          "1",
+          "1"
+        ],
+        "wrapperOpacity": "1",
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "held": {
+        "label": "先手の持駒、歩1枚",
+        "images": 2,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-sente.png",
+        "glyphSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "imageOpacities": [
+          "1",
+          "1"
+        ],
+        "wrapperOpacity": "1",
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 31,
+          "height": 37
+        }
+      },
+      "dropped": {
+        "label": "4五、先手の歩",
+        "images": 2,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-sente.png",
+        "glyphSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "imageOpacities": [
+          "1",
+          "1"
+        ],
+        "wrapperOpacity": "1",
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "flipped": {
+        "label": "4五、先手の歩",
+        "images": 2,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-sente.png",
+        "glyphSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/glyphs/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "imageOpacities": [
+          "1",
+          "1"
+        ],
+        "wrapperOpacity": "1",
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "legalSequence": [
+        "5g5e",
+        "1a2a",
+        "P*4e"
+      ],
+      "counter": "3手目・分岐3手"
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "assets": {
+    "shared/wood-gote.png": "ef77005c514da1d0c551590de385ba4268600d677dd172fd93653de853590b83",
+    "shared/wood-sente.png": "cbff8938dda1db3a2b522de8f75cef009e4b0ff8aee44ac8dff0385007280483",
+    "glyphs/bishop.png": "c4b60fbbbdce57f5a6370f2e2474fa2dd4de3e3ed669954f88b96f147b8c2a7f",
+    "glyphs/dragon.png": "261d6ae2c66dff7dc507fea2f6623c7556eb39b9bdb0e449eba98ca7d05f7579",
+    "glyphs/gold.png": "8c4c4f1d16c2f6d9764bbb33de62344813f4276eb4ff754ec1e91ae29886fb34",
+    "glyphs/horse.png": "c186066d32fe64b7625ce1a611987fe8dff77f453383cfdea97183f7e245d0c2",
+    "glyphs/jewel.png": "1403f4a0cd824d550e47cc8e470431511e0fd1743869014125962b74f94c3d48",
+    "glyphs/king.png": "9d3ee973921fd9f4542be65a8ac90d96c8078d2b53b627d5ab4da7af8718db97",
+    "glyphs/knight.png": "62af8ae572acfbf56486c9d25b5d58a36223be39ed4567a7b987a19c166aa843",
+    "glyphs/lance.png": "17eab48d7bbd15d43dfb1ea7e959f443acd4301a3067589ebb792a52be9f5c4b",
+    "glyphs/pawn.png": "3e6fd073bdcdc9889f503fac23339f38ae61febed4a5cf59b9df8723008563af",
+    "glyphs/promoted-knight.png": "ecf87204fcef3088a6ac0b4770afb7da5229936c9e30b2e32fc715ad92939ad4",
+    "glyphs/promoted-lance.png": "b9b313da82150aa660edc816a1a77b4d073364b54af2ee4d6c34bda391ed5f23",
+    "glyphs/promoted-pawn.png": "43bfde15cbf09084e3f9ce8b2623025d401bb30859f5d2caa08cc3cfcbc87af9",
+    "glyphs/promoted-silver.png": "87d02fd33a48cc2f0ae261472ac249a5904998d42404ce4e26a4da0dce54732b",
+    "glyphs/rook.png": "eb586018a1f94bac50f57ac51ab047ce37963edc12566dcb04bcbddc95bf44fe",
+    "glyphs/silver.png": "5459d2524f70c7e3bd4c2ca447c9d301e85d6ecaf6f604a0212505efe0bc7278"
+  },
+  "flipOwnership": true,
+  "uniformWood": [
+    {
+      "side": "black",
+      "types": 14,
+      "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-sente.png",
+      "woodSha256": "cbff8938dda1db3a2b522de8f75cef009e4b0ff8aee44ac8dff0385007280483",
+      "allGlyphs": [
+        "pawn.png",
+        "lance.png",
+        "knight.png",
+        "silver.png",
+        "gold.png",
+        "bishop.png",
+        "rook.png",
+        "king.png",
+        "promoted-pawn.png",
+        "promoted-lance.png",
+        "promoted-knight.png",
+        "promoted-silver.png",
+        "horse.png",
+        "dragon.png"
+      ],
+      "sameWoodSource": true,
+      "samples": [
+        {
+          "point": [
+            0.5,
+            0.1
+          ],
+          "color": [
+            240,
+            197,
+            123,
+            255
+          ],
+          "maxChannelDelta": 0
+        },
+        {
+          "point": [
+            0.5,
+            0.15
+          ],
+          "color": [
+            240,
+            197,
+            125,
+            255
+          ],
+          "maxChannelDelta": 0
+        },
+        {
+          "point": [
+            0.1,
+            0.8
+          ],
+          "color": [
+            239,
+            193,
+            115,
+            255
+          ],
+          "maxChannelDelta": 0
+        },
+        {
+          "point": [
+            0.9,
+            0.8
+          ],
+          "color": [
+            232,
+            187,
+            108,
+            255
+          ],
+          "maxChannelDelta": 0
+        }
+      ]
+    },
+    {
+      "side": "white",
+      "types": 14,
+      "woodSource": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/shared/wood-gote.png",
+      "woodSha256": "ef77005c514da1d0c551590de385ba4268600d677dd172fd93653de853590b83",
+      "allGlyphs": [
+        "pawn.png",
+        "lance.png",
+        "knight.png",
+        "silver.png",
+        "gold.png",
+        "bishop.png",
+        "rook.png",
+        "jewel.png",
+        "promoted-pawn.png",
+        "promoted-lance.png",
+        "promoted-knight.png",
+        "promoted-silver.png",
+        "horse.png",
+        "dragon.png"
+      ],
+      "sameWoodSource": true,
+      "samples": [
+        {
+          "point": [
+            0.5,
+            0.1
+          ],
+          "color": [
+            236,
+            183,
+            91,
+            255
+          ],
+          "maxChannelDelta": 0
+        },
+        {
+          "point": [
+            0.5,
+            0.15
+          ],
+          "color": [
+            237,
+            185,
+            95,
+            255
+          ],
+          "maxChannelDelta": 0
+        },
+        {
+          "point": [
+            0.1,
+            0.8
+          ],
+          "color": [
+            239,
+            186,
+            93,
+            255
+          ],
+          "maxChannelDelta": 0
+        },
+        {
+          "point": [
+            0.9,
+            0.8
+          ],
+          "color": [
+            235,
+            183,
+            93,
+            255
+          ],
+          "maxChannelDelta": 0
+        }
+      ]
+    }
+  ],
+  "assetsStable": true,
+  "sourceHashAfter": "9c2ff3bc814e6848fdadb9b217ec46bec7ef425f967edc5b81765156ad17b5f0",
+  "validation": {
+    "typecheck": "passed",
+    "vitest": {
+      "files": 7,
+      "tests": 63,
+      "status": "passed"
+    },
+    "expoHermesExport": {
+      "ios": "passed",
+      "android": "passed",
+      "pieceAssetsPerPlatform": 17,
+      "assetMd5Matched": true
+    },
+    "nativeRuntime": "Not executed: no Android SDK/iOS Simulator or Devin session access in this environment."
+  }
+}

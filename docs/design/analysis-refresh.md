@@ -34,21 +34,27 @@
 
 ## 駒
 
-ChatGPT Imageの組み込み画像生成機能で、歩・香・桂・銀・金・角・飛・王・玉・と・杏・圭・全・馬・龍の15種類を個別に生成した。文字を含む駒全体が生成画像であり、OSフォントの重ね描きや他アプリの画像切り抜きは使用しない。成駒の文字は朱色、通常駒は墨色。後手・反転表示は同じ画像を180度回転して描く。
+現行の駒は、ChatGPT Imageで生成した共通木地2枚と独立した字形15枚を使用する。字形は歩・香・桂・銀・金・角・飛・王・玉・と・杏・圭・全・馬・龍。`PieceImage`が木地と字形の2画像を合成し、通常駒の墨色と成駒の朱色を保つ。OSフォントや他アプリの画像は使用しない。
 
 プロンプトと画像仕様は [駒画像](../../assets/pieces/README.md) に記録する。生成画像は表示素材だけに使用し、将棋ルール・合法手・評価値の正本にはしない。
 
 ### 先手・後手の色味
 
-全体への色重ねは、文字と木地の明るい部分も変えてしまい、くすんで見えるという指摘を受けて撤去した。後手用の14種類をChatGPT Imageで個別に編集生成し、木地の中間色に濃さと彩度を持たせ、明るい艶と墨色／朱色の文字を保つ方針へ変更した。元の字形・輪郭と、最初に生成した後手の歩を素材の参照に使う。先手は元の暖かい蜂蜜色を使い、後手は専用の透過画像を直接描く。生成後の色補正は行わない。[後手用の全プロンプトと画像ハッシュ](../../assets/pieces/gote/prompts.json)を記録する。
+駒ごとの個別生成では木地の色にばらつきが出たため、同じ側の全種類で木地を完全に共通化した。先手は暖かい蜂蜜色、後手は深く鮮やかな飴色。木地の色は持ち主を示し、駒種による意味は持たせない。色重ね・tintは行わず、木地と文字それぞれの生成画像をそのまま描く。[共通木地の生成記録](../../assets/pieces/shared/prompts.json)と[字形の生成記録](../../assets/pieces/glyphs/prompts.json)にプロンプト・画像ハッシュを残す。
+
+現行17枚の透過PNGは合計359,812 bytes（約0.34MiB）。最初の一体型15画像と旧後手14画像は生成履歴として保持し、現行アプリには同梱しない。
 
 色は現在の持ち主に従い、反転時は回転だけを変える。捕獲した駒や打った駒も持ち主の画像になる。色だけに頼らず、駒の向き・先後の記号・読み上げを維持する。画像は従来どおり装飾として扱い、盤上・持駒・詰み手順で共通の`PieceImage`を使う。
 
-![先手と後手の色味の比較](screens/analysis-refresh/piece-generated-gote.webp)
+![共通木地による歩・金・馬の先後比較](screens/analysis-refresh/piece-shared-wood.webp)
 
-![先後の色味を調整した盤面](screens/analysis-refresh/piece-generated-gote-board.webp)
+![共通木地で色を統一した盤面](screens/analysis-refresh/piece-shared-wood-board.webp)
 
-上は実コンポーネントのWebプレビュー。[専用画像の検証ログ](screens/analysis-refresh/piece-generated-gote-verification.json)に、ライト／ダーク・小画面・反転・持駒・成駒・捕獲と駒打ちの結果を記録する。以下の既存の画面比較は色味調整前の配置検証を含む。
+| 先手の全14種類 | 後手の全14種類 |
+| --- | --- |
+| <img src="screens/analysis-refresh/piece-shared-wood-sente.webp" width="300" alt="共通の蜂蜜色の木地を使った先手14種類"> | <img src="screens/analysis-refresh/piece-shared-wood-gote.webp" width="300" alt="共通の飴色の木地を使った後手14種類"> |
+
+共通木地版の先手／後手各14種とライト／ダークの盤面をWebプレビューで目視し、残像や白い縁取りがないことを確認した。同じ側の全種類が同じ木地参照先・SHA-256を使い、文字外4点のサンプルで駒種間の画素差は0だった。ライト／ダーク・320px幅・盤反転・成駒6種・持駒7種・両側の捕獲→持駒→駒打ちの検証が通過し、エラーは0。[専用の検証ログ](screens/analysis-refresh/piece-shared-wood-verification.json)と[開発状況](../DEVELOPMENT.md)に結果を記録する。以下の既存ギャラリーは共通木地への変更前の表示・配置を残した履歴である。
 
 ## 参考
 
@@ -62,7 +68,7 @@ ChatGPT Imageの組み込み画像生成機能で、歩・香・桂・銀・金�
 
 変更後の検証結果は [開発状況](../DEVELOPMENT.md) とPRに記録する。ブラウザー上のReact Native Webプレビューと、iOS Simulator／Androidのネイティブ検証を区別する。
 
-以下は実際の画面コンポーネントをReact Native Webで表示したプレビュー。ナビゲーション・アイコンなどのネイティブAPIは検証用アダプターを使い、評価値は合成した表示サンプル。iOS相当のステータス領域47px・ナビゲーション44px・下余白34pxを含めている。iOS／Android実機のスクリーンショットではない。
+以下は共通木地への変更前のWebプレビューと検証履歴。実際の画面コンポーネントをReact Native Webで表示し、ナビゲーション・アイコンなどのネイティブAPIは検証用アダプターを使う。評価値は合成した表示サンプル。iOS相当のステータス領域47px・ナビゲーション44px・下余白34pxを含めている。現行の駒画像やiOS／Android実機の確認結果ではない。
 
 | 盤面と評価 | 候補手（スクロール後） | ダーク |
 | --- | --- | --- |
@@ -74,4 +80,4 @@ ChatGPT Imageの組み込み画像生成機能で、歩・香・桂・銀・金�
 | --- | --- |
 | <img src="screens/analysis-refresh/large-text.webp" width="260" alt="文字を拡大した候補手一覧"> | <img src="screens/analysis-refresh/branch.webp" width="260" alt="盤面へ戻った分岐検討"> |
 
-![生成した15種類の駒](screens/analysis-refresh/pieces.webp)
+![生成履歴：初回の一体型15種類の駒](screens/analysis-refresh/pieces.webp)
