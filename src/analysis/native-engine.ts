@@ -144,7 +144,6 @@ function parseMeta(value: unknown, conditions: AnalysisConditions): NativeMeta {
     requestedNodes > MAX_NODES ||
     requestedNodes !== conditions.nodes ||
     nodes < 0 ||
-    nodes > requestedNodes ||
     completedDepth < 0 ||
     completedDepth > MAX_DEPTH
   ) {

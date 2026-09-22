@@ -133,6 +133,36 @@ describe('端末保存', () => {
       rmSync(dir, { recursive: true });
     }
   });
+  it('current identityの要求値を超えた観測ノード数をSQLiteへ保存し、読み戻せる', async () => {
+    const { db, repository } = database(':memory:');
+    await repository.initialize();
+    const game = sample();
+    const observed = {
+      ...game,
+      id: 'observed-node-budget',
+      analysis: {
+        0: {
+          sfen: game.positions[0],
+          ...CURRENT_ANALYSIS_IDENTITY,
+          status: 'complete' as const,
+          meta: {
+            requestedNodes: 10000,
+            nodes: 10001,
+            completedDepth: 1,
+            fallback: false,
+            budgetReached: true,
+          },
+          conditions: { nodes: 10000, multiPV: 1 },
+          candidates: [{ usi: '7g7f', pv: ['7g7f'], scoreCp: 0, mate: null, depth: 1 }],
+          mateProof: null,
+          completedAt: '2026-09-22T00:00:00.000Z',
+        },
+      },
+    } as GameRecord;
+    await repository.insert(observed);
+    expect((await repository.load()).games).toEqual([observed]);
+    db.close();
+  });
   it('current identityのstatus/meta欠落は復元せず、旧identityの欠落は許容する', async () => {
     const { db, repository } = database(':memory:');
     await repository.initialize();

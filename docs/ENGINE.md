@@ -83,12 +83,12 @@ SFEN は TypeScript と Rust の両境界で検証する。盤面は9段×9筋�
   "modelId": "c-leaf-wrm-seed42@807c18da03521414a8c75dfe51dd4de2caf8e9ec4909320826eac12b66852eab",
   "meta": {
     "requestedNodes": 10000,
-    "nodes": 10000,
+    "nodes": 10001,
     "completedDepth": 1,
     "fallback": false,
     "budgetReached": true
   },
-  "nodes": 10000,
+  "nodes": 10001,
   "depth": 1,
   "candidates": [
     {
@@ -109,7 +109,7 @@ SFEN は TypeScript と Rust の両境界で検証する。盤面は9段×9筋�
 | field | 意味 |
 | --- | --- |
 | `requestedNodes` | bridge が `SearchConfig::node_limit` に渡した要求値 |
-| `nodes` | Sekirei の `SpecSearchInfo.nodes` から得た実訪問ノード数。トップレベル `nodes` と同じ値 |
+| `nodes` | Sekirei の `SpecSearchInfo.nodes` から得た実訪問ノード数。トップレベル `nodes` と同じ値。停止チェックの粒度により `requestedNodes` を超えることがあり、超過幅に上限を設けない |
 | `completedDepth` | Sekirei が最後に完了した反復深化深度。トップレベル `depth` と同じ値 |
 | `fallback` | 非終局で完成深度が0のとき、合法手を診断用に返したこと。terminal の depth 0 では `false` |
 | `budgetReached` | 検索の実ノード数が要求値以上（`nodes >= requestedNodes`）になったこと。単なる浅い深度やmate scoreから停止理由を推測しない |

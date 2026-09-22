@@ -21,6 +21,14 @@ const analysis: PositionAnalysis = {
 };
 
 describe('saved analysis compatibility', () => {
+  it('accepts observed nodes above the requested budget', () => {
+    const observed = {
+      ...analysis,
+      meta: { ...analysis.meta, nodes: 10001, budgetReached: true },
+    };
+    expect(isCompatibleAnalysis(observed, observed.sfen, observed.conditions)).toBe(true);
+  });
+
   it('requires the exact position, engine, model, node budget and candidate count', () => {
     expect(isCompatibleAnalysis(analysis, analysis.sfen, analysis.conditions)).toBe(true);
     for (const changed of [

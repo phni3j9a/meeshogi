@@ -182,6 +182,31 @@ describe('native result contract', () => {
     await expect(analyzeNative(initialSfen, { nodes: 1, multiPV: 1 })).rejects.toThrow('meta');
   });
 
+  it('accepts observed nodes above the requested budget', async () => {
+    const nativeModule = nativeModuleFor(
+      completePayload(initialSfen, {
+        nodes: 10001,
+        meta: {
+          requestedNodes: 10000,
+          nodes: 10001,
+          completedDepth: 1,
+          fallback: false,
+          budgetReached: true,
+        },
+      }),
+    );
+    vi.mocked(requireOptionalNativeModule).mockReturnValue(nativeModule);
+
+    await expect(analyzeNative(initialSfen, { nodes: 10000, multiPV: 1 })).resolves.toMatchObject({
+      status: 'complete',
+      meta: {
+        requestedNodes: 10000,
+        nodes: 10001,
+        budgetReached: true,
+      },
+    });
+  });
+
   it('requires exactly the requested number of legal candidates for a complete position', async () => {
     const oneCandidate = completePayload(initialSfen);
     const nativeModule = nativeModuleFor(oneCandidate);
