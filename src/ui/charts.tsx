@@ -6,6 +6,7 @@ import Svg, {
   Defs,
   Line,
   LinearGradient,
+  Path,
   Polygon,
   Polyline,
   Rect,
@@ -42,8 +43,9 @@ export function LineChart({
   const originX = useRef(0);
   const ignoreClickUntil = useRef(0);
   const width = measuredWidth ?? Math.min(windowWidth - 64, 480);
-  const chartWidth = Math.max(1, width - 42);
-  const left = 5;
+  // A dedicated left gutter aligns evaluation labels with their grid lines.
+  const left = percent ? 5 : 52;
+  const chartWidth = Math.max(1, width - (percent ? 42 : left + 6));
   const min = percent ? 0 : -EVALUATION_CHART_EDGE;
   const max = percent ? 100 : EVALUATION_CHART_EDGE;
   const x = (i: number) =>
@@ -234,6 +236,25 @@ export function LineChart({
                 fill={theme.loss}
                 opacity={0.025}
               />
+              <Line
+                x1={left}
+                x2={left}
+                y1={y(max)}
+                y2={y(min)}
+                stroke={theme.border}
+                strokeWidth={0.8}
+              />
+              {[min, 0, max].map((value) => (
+                <Line
+                  key={`y-tick-${value}`}
+                  x1={left - 4}
+                  x2={left}
+                  y1={y(value)}
+                  y2={y(value)}
+                  stroke={value === 0 ? theme.secondary : theme.border}
+                  strokeWidth={1}
+                />
+              ))}
               {ticks.map((tick) => (
                 <Line
                   key={`x-${tick}`}
@@ -257,10 +278,10 @@ export function LineChart({
                 x2={left + chartWidth}
                 y1={y(n)}
                 y2={y(n)}
-                stroke={theme.border}
+                stroke={!percent && n === 0 ? theme.secondary : theme.border}
                 strokeWidth={n === 0 ? 1 : 0.7}
                 strokeDasharray={n === 0 ? undefined : '2 4'}
-                opacity={n === 0 ? 1 : 0.6}
+                opacity={!percent && n === 0 ? 0.4 : n === 0 ? 1 : 0.6}
               />
             ),
           )}
@@ -328,6 +349,24 @@ export function LineChart({
               opacity={0.13}
             />
           )}
+          {!percent &&
+            activeValid &&
+            selectedValue != null &&
+            Math.abs(selectedValue) > EVALUATION_CHART_EDGE && (
+              <Path
+                testID="chart-offscale-marker"
+                d={
+                  selectedValue > 0
+                    ? `M ${x(active) - 3} 5 L ${x(active)} 1 L ${x(active) + 3} 5`
+                    : `M ${x(active) - 3} ${height - 6} L ${x(active)} ${height - 2} L ${x(active) + 3} ${height - 6}`
+                }
+                fill="none"
+                stroke={selectedColor}
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
           {activeValid && selectedValue != null && (
             <Circle
               cx={x(active)}
@@ -339,12 +378,15 @@ export function LineChart({
             />
           )}
         </Svg>
-        {!hasData && (
+        {!hasData && preview === null && (
           <View
             pointerEvents="none"
             style={{
               position: 'absolute',
-              inset: 0,
+              top: 0,
+              bottom: 0,
+              left: percent ? 0 : left,
+              right: percent ? 0 : 6,
               justifyContent: 'center',
               alignItems: 'center',
             }}
@@ -363,37 +405,53 @@ export function LineChart({
             </View>
           </View>
         )}
-        <View
-          pointerEvents="none"
-          style={{ position: 'absolute', right: 0, top: percent ? 0 : y(0) - 8 }}
-        >
-          <AppText
-            variant="small"
-            tone="secondary"
-            allowFontScaling={false}
-            style={{ fontSize: 10, fontVariant: ['tabular-nums'] }}
-          >
-            {percent ? '100%' : '0'}
-          </AppText>
-        </View>
-        {!percent &&
-          [-EVALUATION_CHART_EDGE, EVALUATION_CHART_EDGE].map((value) => (
+        {percent ? (
+          <View pointerEvents="none" style={{ position: 'absolute', right: 0, top: 0 }}>
+            <AppText
+              variant="small"
+              tone="secondary"
+              allowFontScaling={false}
+              style={{ fontSize: 10, fontVariant: ['tabular-nums'] }}
+            >
+              100%
+            </AppText>
+          </View>
+        ) : (
+          [EVALUATION_CHART_EDGE, 0, -EVALUATION_CHART_EDGE].map((value) => (
             <View
               key={value}
               pointerEvents="none"
-              style={{ position: 'absolute', right: 0, top: Math.max(0, y(value) - 8) }}
+              style={{
+                position: 'absolute',
+                left: 0,
+                width: left - 9,
+                top: y(value) - 7,
+                alignItems: 'flex-end',
+              }}
             >
               <AppText
-                variant="small"
-                tone="secondary"
+                testID={`chart-y-label-${value}`}
+                accessibilityLabel={
+                  value === 0
+                    ? '評価値ゼロ、形勢の基準'
+                    : value > 0
+                      ? '先手側の表示上限、プラス1500'
+                      : '後手側の表示上限、マイナス1500'
+                }
                 allowFontScaling={false}
-                style={{ fontSize: 10, fontVariant: ['tabular-nums'] }}
+                style={{
+                  fontSize: 11,
+                  lineHeight: 14,
+                  fontWeight: value === 0 ? '700' : '500',
+                  color: value === 0 ? theme.text : value > 0 ? theme.win : theme.loss,
+                  fontVariant: ['tabular-nums'],
+                }}
               >
-                {value > 0 ? '+' : '−'}
-                {Math.abs(value)}
+                {value === 0 ? '0' : `${value > 0 ? '+' : '−'}1,500`}
               </AppText>
             </View>
-          ))}
+          ))
+        )}
       </Pressable>
       {percent ? (
         <View
@@ -477,11 +535,11 @@ export function LineChart({
           testID="chart-readout"
           style={{
             position: 'absolute',
-            left: Math.max(0, Math.min(width - 160, x(preview) - 80)),
-            top: -29,
+            left: Math.max(left + 4, Math.min(width - 160, x(preview) - 80)),
+            top: selectedValue != null && selectedValue >= 0 ? height - 27 : 3,
             minWidth: 142,
             maxWidth: 160,
-            height: 28,
+            height: 24,
             paddingHorizontal: 10,
             flexDirection: 'row',
             alignItems: 'center',

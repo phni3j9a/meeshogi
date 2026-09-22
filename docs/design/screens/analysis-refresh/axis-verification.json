@@ -1,0 +1,475 @@
+{
+  "scope": "Actual RN-web components, synthetic graph fixtures. Simulated iOS safe areas47/44/34. CDP browser touch exercises Web gesture path; native iOS/Android remain unverified.",
+  "cases": [
+    {
+      "key": "mixed-light",
+      "value": "+47",
+      "tooltipAbsent": true,
+      "polylines": 2,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "mixed-dark",
+      "value": "+47",
+      "tooltipAbsent": true,
+      "polylines": 2,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "mixed-320",
+      "value": "+47",
+      "tooltipAbsent": true,
+      "polylines": 2,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "mixed-fontscale-1.3",
+      "value": "+47",
+      "tooltipAbsent": true,
+      "polylines": 2,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "null-gap",
+      "value": "—",
+      "tooltipAbsent": true,
+      "polylines": 6,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "all-missing",
+      "value": "—",
+      "tooltipAbsent": true,
+      "polylines": 0,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "clipped-positive",
+      "value": "+2100",
+      "tooltipAbsent": true,
+      "polylines": 2,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "clipped-negative",
+      "value": "-2200",
+      "tooltipAbsent": true,
+      "polylines": 2,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "mate-positive",
+      "value": "+M5",
+      "tooltipAbsent": true,
+      "polylines": 2,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "mate-negative",
+      "value": "-M7",
+      "tooltipAbsent": true,
+      "polylines": 2,
+      "mateBadgeCount": 0,
+      "horizontalOverflow": false
+    }
+  ],
+  "interactions": {
+    "taps": [
+      {
+        "width": 390,
+        "target": 0,
+        "actual": 0,
+        "plotLeft": 52,
+        "plotRight": 360
+      },
+      {
+        "width": 390,
+        "target": 20,
+        "actual": 20,
+        "plotLeft": 52,
+        "plotRight": 360
+      },
+      {
+        "width": 390,
+        "target": 44,
+        "actual": 44,
+        "plotLeft": 52,
+        "plotRight": 360
+      },
+      {
+        "width": 390,
+        "target": 52,
+        "actual": 52,
+        "plotLeft": 52,
+        "plotRight": 360
+      },
+      {
+        "width": 390,
+        "target": 79,
+        "actual": 79,
+        "plotLeft": 52,
+        "plotRight": 360
+      },
+      {
+        "width": 390,
+        "target": 80,
+        "actual": 80,
+        "plotLeft": 52,
+        "plotRight": 360
+      },
+      {
+        "width": 320,
+        "target": 0,
+        "actual": 0,
+        "plotLeft": 52,
+        "plotRight": 290
+      },
+      {
+        "width": 320,
+        "target": 20,
+        "actual": 20,
+        "plotLeft": 52,
+        "plotRight": 290
+      },
+      {
+        "width": 320,
+        "target": 44,
+        "actual": 44,
+        "plotLeft": 52,
+        "plotRight": 290
+      },
+      {
+        "width": 320,
+        "target": 52,
+        "actual": 52,
+        "plotLeft": 52,
+        "plotRight": 290
+      },
+      {
+        "width": 320,
+        "target": 79,
+        "actual": 79,
+        "plotLeft": 52,
+        "plotRight": 290
+      },
+      {
+        "width": 320,
+        "target": 80,
+        "actual": 80,
+        "plotLeft": 52,
+        "plotRight": 290
+      }
+    ],
+    "dragPreview": {
+      "readout": "本譜 52手目\n-620",
+      "committed": 44,
+      "persistCalls": [],
+      "playLabelActive": "再生を停止",
+      "playLabelDuring": "手順を再生"
+    },
+    "dragRelease": {
+      "committed": 52,
+      "persistCalls": [
+        {
+          "action": "setLastViewed",
+          "ply": 52
+        }
+      ],
+      "tooltipAbsent": true
+    },
+    "narrow-end-0": {
+      "readout": "本譜 0手目\n0",
+      "box": {
+        "x": 68,
+        "y": 547,
+        "width": 142,
+        "height": 24
+      },
+      "withinViewport": true,
+      "previewPly": 44,
+      "committed": 0,
+      "persistCalls": [
+        {
+          "action": "setLastViewed",
+          "ply": 0
+        }
+      ]
+    },
+    "narrow-end-80": {
+      "readout": "本譜 80手目\n未解析",
+      "box": {
+        "x": 148,
+        "y": 503,
+        "width": 142,
+        "height": 24
+      },
+      "withinViewport": true,
+      "previewPly": 44,
+      "committed": 80,
+      "persistCalls": [
+        {
+          "action": "setLastViewed",
+          "ply": 80
+        }
+      ]
+    },
+    "gap-preview": {
+      "readout": "本譜 44手目\n未解析",
+      "committed": 35
+    },
+    "mate-preview": {
+      "readout": "本譜 44手目\n+M5",
+      "committed": 35
+    },
+    "negative-mate-preview": {
+      "readout": "本譜 52手目\n-M7",
+      "committed": 44
+    },
+    "clipped-preview": {
+      "readout": "本譜 44手目\n+2100",
+      "committed": 35
+    },
+    "negative-clipped-preview": {
+      "readout": "本譜 52手目\n-2200",
+      "committed": 44
+    }
+  },
+  "pageErrors": [],
+  "consoleErrors": [],
+  "axisSemantics": {
+    "scope": "Actual RN-web components, synthetic graph fixtures. Simulated iOS safe areas47/44/34. CDP browser touch exercises Web gesture path; native iOS/Android remain unverified.",
+    "cases": [
+      {
+        "key": "mixed",
+        "labels": [
+          {
+            "value": 1500,
+            "text": "+1,500",
+            "accessibility": "先手側の表示上限、プラス1500",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": 0,
+            "text": "0",
+            "accessibility": "評価値ゼロ、形勢の基準",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": -1500,
+            "text": "−1,500",
+            "accessibility": "後手側の表示上限、マイナス1500",
+            "centerOffset": 0,
+            "right": 43
+          }
+        ],
+        "markerCount": 0,
+        "displayed": "+47"
+      },
+      {
+        "key": "positive",
+        "labels": [
+          {
+            "value": 1500,
+            "text": "+1,500",
+            "accessibility": "先手側の表示上限、プラス1500",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": 0,
+            "text": "0",
+            "accessibility": "評価値ゼロ、形勢の基準",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": -1500,
+            "text": "−1,500",
+            "accessibility": "後手側の表示上限、マイナス1500",
+            "centerOffset": 0,
+            "right": 43
+          }
+        ],
+        "markerCount": 1,
+        "displayed": "+2100"
+      },
+      {
+        "key": "negative",
+        "labels": [
+          {
+            "value": 1500,
+            "text": "+1,500",
+            "accessibility": "先手側の表示上限、プラス1500",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": 0,
+            "text": "0",
+            "accessibility": "評価値ゼロ、形勢の基準",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": -1500,
+            "text": "−1,500",
+            "accessibility": "後手側の表示上限、マイナス1500",
+            "centerOffset": 0,
+            "right": 43
+          }
+        ],
+        "markerCount": 1,
+        "displayed": "-2200"
+      },
+      {
+        "key": "mate-positive",
+        "labels": [
+          {
+            "value": 1500,
+            "text": "+1,500",
+            "accessibility": "先手側の表示上限、プラス1500",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": 0,
+            "text": "0",
+            "accessibility": "評価値ゼロ、形勢の基準",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": -1500,
+            "text": "−1,500",
+            "accessibility": "後手側の表示上限、マイナス1500",
+            "centerOffset": 0,
+            "right": 43
+          }
+        ],
+        "markerCount": 0,
+        "displayed": "+M5"
+      },
+      {
+        "key": "mate-negative",
+        "labels": [
+          {
+            "value": 1500,
+            "text": "+1,500",
+            "accessibility": "先手側の表示上限、プラス1500",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": 0,
+            "text": "0",
+            "accessibility": "評価値ゼロ、形勢の基準",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": -1500,
+            "text": "−1,500",
+            "accessibility": "後手側の表示上限、マイナス1500",
+            "centerOffset": 0,
+            "right": 43
+          }
+        ],
+        "markerCount": 0,
+        "displayed": "-M7"
+      },
+      {
+        "key": "missing",
+        "labels": [
+          {
+            "value": 1500,
+            "text": "+1,500",
+            "accessibility": "先手側の表示上限、プラス1500",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": 0,
+            "text": "0",
+            "accessibility": "評価値ゼロ、形勢の基準",
+            "centerOffset": 0,
+            "right": 43
+          },
+          {
+            "value": -1500,
+            "text": "−1,500",
+            "accessibility": "後手側の表示上限、マイナス1500",
+            "centerOffset": 0,
+            "right": 43
+          }
+        ],
+        "markerCount": 0,
+        "displayed": "—"
+      }
+    ],
+    "interactions": {
+      "tooltipPlacement": [
+        {
+          "key": "all-missing-preview",
+          "readout": "本譜 44手目\n未解析",
+          "withinPlot": true,
+          "box": {
+            "x": 153.390625,
+            "y": 535,
+            "width": 142,
+            "height": 24
+          },
+          "emptyBefore": 1,
+          "emptyDuring": 0,
+          "emptyAfter": 1
+        },
+        {
+          "key": "positive-preview",
+          "readout": "本譜 44手目\n+47",
+          "withinPlot": true,
+          "box": {
+            "x": 153.390625,
+            "y": 579,
+            "width": 142,
+            "height": 24
+          },
+          "emptyBefore": 0,
+          "emptyDuring": 0,
+          "emptyAfter": 0
+        },
+        {
+          "key": "fontscale-preview",
+          "readout": "本譜 44手目\n+47",
+          "withinPlot": true,
+          "box": {
+            "x": 153.390625,
+            "y": 588.59375,
+            "width": 142,
+            "height": 24
+          },
+          "emptyBefore": 0,
+          "emptyDuring": 0,
+          "emptyAfter": 0
+        }
+      ]
+    },
+    "pageErrors": [],
+    "consoleErrors": []
+  },
+  "sourceSha256": {
+    "src/ui/charts.tsx": "f80db84d5bc4cb918eea4cd0e66ec624650c779fee438b487031fbf2589e39f6",
+    "src/ui/chart-geometry.ts": "249dabbe6931f45bdc457dfbd0dd92d7b9c239ab5dd15ede11e3ee423c5f2592",
+    "app/game/[id].tsx": "56e93c7a99d316289acd1f0c28401b3fd09d45e44c5f7974049258a3c4e1aace"
+  },
+  "nativeExecution": false
+}
