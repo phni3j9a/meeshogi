@@ -1,0 +1,32 @@
+appId: com.meeshogi.app
+---
+# Issue #7: branch creation and return to mainline (分岐検討 / 本譜に戻る) on
+# KeroPona — verifies branch browsing still works with the new engine.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- tapOn:
+    id: move-first
+- assertVisible: '0 / 80手'
+# Play ２六歩 (2g→2f) at ply 0 — differs from the mainline ７六歩, so it branches.
+- tapOn:
+    id: square-2g
+- tapOn:
+    id: square-2f
+- extendedWaitUntil:
+    visible: '0手目から分岐'
+    timeout: 30000
+- takeScreenshot: branch-01-created
+- tapOn: 本譜に戻る
+- extendedWaitUntil:
+    visible: '0 / 80手'
+    timeout: 30000
+- assertNotVisible: '.*手目から分岐'
+- takeScreenshot: branch-02-back-to-mainline

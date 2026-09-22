@@ -1,0 +1,45 @@
+appId: com.meeshogi.app
+---
+# Issue #7 stop/resume: import kiou-stop.kif (players シシ神2/SiGototti2) fresh,
+# autoAnalyze fires the full-game job on save. This flow only lands on the game
+# screen with the analysis controls scrolled into view; the actual stop → pause
+# → resume taps are driven by an adb poll loop (the job dies in <1min on the
+# engine meta bug, too fast for Maestro step pacing).
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn:
+    id: import-button
+- extendedWaitUntil:
+    visible:
+      id: import-paste
+    timeout: 60000
+- tapOn:
+    id: import-paste
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- extendedWaitUntil:
+    visible: '.*手の棋譜を読み取りました.*'
+    timeout: 60000
+- swipe:
+    start: 95%, 85%
+    end: 95%, 30%
+- scrollUntilVisible:
+    element:
+      id: import-save
+    direction: DOWN
+- tapOn:
+    id: import-save
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+    timeout: 60000
+- takeScreenshot: stop-00-controls-visible

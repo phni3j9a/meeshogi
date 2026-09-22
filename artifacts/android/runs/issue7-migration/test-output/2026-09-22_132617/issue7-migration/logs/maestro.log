@@ -1,0 +1,27 @@
+13:26:21.978 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+13:26:21.980 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+13:26:21.981 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Apply configuration RUNNING
+13:26:21.981 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Apply configuration COMPLETED
+13:26:21.981 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Launch app "com.meeshogi.app" RUNNING
+13:26:22.535 [ INFO] maestro.Maestro.launchApp$lambda$5: Launching app com.meeshogi.app
+13:26:22.535 [ INFO] maestro.Maestro.launchApp$lambda$5: Stopping com.meeshogi.app app during launch
+13:26:22.608 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Launch app "com.meeshogi.app" COMPLETED
+13:26:22.609 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: library-screen is visible RUNNING
+13:26:24.264 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: library-screen is visible COMPLETED
+13:26:24.264 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot mig-01-library-with-old-game RUNNING
+13:26:24.266 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+13:26:24.268 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:26:24.514 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot mig-01-library-with-old-game COMPLETED
+13:26:24.515 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on ".*KeroPona.*" RUNNING
+13:26:24.748 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={text=KeroPona 対 asitaka_y, accessibilityText=, hintText=, ignoreBoundsFiltering=false, resource-id=, clickable=false, bounds=[96,712][708,778], enabled=true, focused=false, checked=false, scrollable=false, selected=false, class=android.widget.TextView, important-for-accessibility=true, error=}, children=[], clickable=false, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=96, y=712, width=612, height=66))
+13:26:25.970 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via settled hierarchy
+13:26:25.974 [ INFO] maestro.Maestro.hierarchyBasedTap-ogj28Uc: Tapping at (402, 745) using hierarchy based logic for wait
+13:26:27.754 [ INFO] maestro.Maestro.hierarchyBasedTap-ogj28Uc: Something has changed in the UI judging by view hierarchy. Proceed.
+13:26:27.755 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on ".*KeroPona.*" COMPLETED
+13:26:27.755 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: game-screen is visible RUNNING
+13:26:28.276 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: game-screen is visible COMPLETED
+13:26:28.277 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that "以前のモデル・解析条件の結果が81局面あります.*" is visible RUNNING
+13:26:45.082 [ERROR] maestro.orchestra.Orchestra.executeCommands: [Command execution] CommandFailed: Assertion is false: "以前のモデル・解析条件の結果が81局面あります.*" is visible
+13:26:45.340 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+13:26:45.341 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+13:26:45.495 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that "以前のモデル・解析条件の結果が81局面あります.*" is visible FAILED

@@ -1,0 +1,55 @@
+appId: com.meeshogi.app
+---
+# Import shogiwars.kif (clipboard) into the OLD app and run full analysis,
+# producing analysis rows stamped with the OLD ENGINE_ID.
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn:
+    id: import-button
+- extendedWaitUntil:
+    visible:
+      id: import-paste
+    timeout: 60000
+- tapOn:
+    id: import-paste
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- extendedWaitUntil:
+    visible: '.*80手の棋譜を読み取りました.*'
+    timeout: 60000
+- swipe:
+    start: 95%, 85%
+    end: 95%, 30%
+- scrollUntilVisible:
+    element:
+      id: import-save
+    direction: DOWN
+- tapOn:
+    id: import-save
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-start
+    direction: DOWN
+    timeout: 60000
+- runFlow:
+    when:
+      notVisible: 全局解析が完了しました
+    commands:
+      - tapOn:
+          id: analysis-start
+- extendedWaitUntil:
+    visible: 全局解析が完了しました
+    timeout: 300000
+- takeScreenshot: old-app-analysis-complete
+- tapOn:
+    id: move-last
+- takeScreenshot: old-app-last-position

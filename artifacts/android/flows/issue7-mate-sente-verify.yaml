@@ -1,0 +1,45 @@
+appId: com.meeshogi.app
+---
+# Issue #7 verify: sente mate game already imported; the auto-analyze job died
+# at ply 2 on the engine meta-contract error (2 rows persisted). Verify the
+# partial persistence state, then the checkmate eval via focused analysis.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '.*検証先手 対 検証後手.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- assertVisible: '2局面を解析済み'
+- assertVisible: 解析を再開
+- takeScreenshot: sente-01-partial-2-plies
+- tapOn:
+    id: move-last
+- assertVisible: '27 / 27手'
+- scrollUntilVisible:
+    element:
+      id: analysis-focus
+    direction: DOWN
+- tapOn:
+    id: analysis-focus
+- extendedWaitUntil:
+    visible: この局面の追加解析結果を表示中
+    timeout: 120000
+- assertVisible: 先手勝ち・詰み終局
+- assertNotVisible: '.*手詰め ›'
+- takeScreenshot: sente-02-checkmate-eval
+- tapOn:
+    id: move-first
+- assertVisible: '0 / 27手'
+- scrollUntilVisible:
+    element:
+      text: 先手評価
+    direction: UP
+- takeScreenshot: sente-03-graph-top

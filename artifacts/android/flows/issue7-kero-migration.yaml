@@ -1,0 +1,41 @@
+appId: com.meeshogi.app
+---
+# Issue #7: KeroPona (migrated old-app data) — explicit stop/resume mechanics,
+# then the engine contract error on resume, and the stale-row exclusion notice
+# (79 局面 = 81 old minus the 2 plies the new engine persisted).
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-start
+    direction: DOWN
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible:
+      id: analysis-stop
+    timeout: 30000
+- takeScreenshot: kero-01-analysis-running
+- tapOn:
+    id: analysis-stop
+- extendedWaitUntil:
+    visible: '解析を停止中 .*'
+    timeout: 30000
+- takeScreenshot: kero-02-analysis-stopped
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible: 解析を再開できます
+    timeout: 360000
+- assertVisible: '.*meta の整数範囲が不正.*'
+- takeScreenshot: kero-03-meta-contract-error
+- assertVisible: '以前のモデル・解析条件の結果が79局面あります。.*'
+- takeScreenshot: kero-04-stale-notice-79

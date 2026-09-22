@@ -1,0 +1,76 @@
+appId: com.meeshogi.app
+---
+# Issue #7 migration check: NEW app launched over OLD app's data (install -r,
+# no clearState). Old-ENGINE_ID rows must be excluded from display/graph/badge
+# and the completion count; re-analysis must fill fresh points; the exclusion
+# must survive an app restart (rows are replaced, never resurface).
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- takeScreenshot: mig-01-library-with-old-game
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 60000
+# Restored at the last-viewed ply (80): the old checkmate row must NOT display.
+- assertVisible: '80 / 80手'
+- assertNotVisible: '.*詰み終局.*'
+- assertNotVisible: '.*手詰め ›'
+- assertVisible: '解析した局面から表示します'
+- takeScreenshot: mig-02-old-checkmate-excluded-ply80
+# The stale-results notice is further down the scroll view.
+- scrollUntilVisible:
+    element:
+      text: '以前のモデル・解析条件の結果が81局面あります.*'
+    direction: DOWN
+    timeout: 30000
+- assertVisible: '以前のモデル・解析条件の結果が81局面あります.*'
+- assertNotVisible: 全局解析が完了しました
+- takeScreenshot: mig-03-stale-notice
+# Re-analyze under the new engine identity.
+- scrollUntilVisible:
+    element:
+      id: analysis-start
+    direction: DOWN
+    timeout: 60000
+- runFlow:
+    when:
+      notVisible: 全局解析が完了しました
+    commands:
+      - tapOn:
+          id: analysis-start
+- extendedWaitUntil:
+    visible: 全局解析が完了しました
+    timeout: 300000
+- takeScreenshot: mig-04-reanalysis-complete
+- tapOn:
+    id: move-last
+- assertVisible: '80 / 80手'
+- assertVisible: '後手勝ち・詰み終局'
+- takeScreenshot: mig-05-new-checkmate-ply80
+# Restart: fresh process must keep only new results; the stale notice is gone.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      text: 全局解析が完了しました
+    direction: DOWN
+- assertVisible: 全局解析が完了しました
+- assertNotVisible: '以前のモデル・解析条件の結果が.*'
+- tapOn:
+    id: move-last
+- assertVisible: '80 / 80手'
+- assertVisible: '後手勝ち・詰み終局'
+- takeScreenshot: mig-06-after-restart-ply80

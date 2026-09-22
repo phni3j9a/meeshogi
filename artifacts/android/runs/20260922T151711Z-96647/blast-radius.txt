@@ -1,0 +1,116 @@
+Performing Streamed Install
+Success
+Starting: Intent { cmp=com.meeshogi.testclipboard/.ClipboardActivity (has extras) }
+Status: ok
+LaunchState: COLD
+Activity: com.meeshogi.testclipboard/.ClipboardActivity
+TotalTime: 275
+WaitTime: 279
+Complete
+== player-names ==
+
+Waiting for flows to complete...
+[Passed] player-names (44s)
+
+1/1 Flow Passed in 44s
+
+-- result: 0 --
+Performing Streamed Install
+Success
+Starting: Intent { cmp=com.meeshogi.testclipboard/.ClipboardActivity (has extras) }
+Status: ok
+LaunchState: COLD
+Activity: com.meeshogi.testclipboard/.ClipboardActivity
+TotalTime: 250
+WaitTime: 254
+Complete
+== player-names-kiou ==
+
+Waiting for flows to complete...
+[Passed] player-names-kiou (36s)
+
+1/1 Flow Passed in 36s
+
+-- result: 0 --
+== analysis-review ==
+
+Waiting for flows to complete...
+[Failed] analysis-review (4m 17s) (Assertion is false: "全局解析が完了しました" is visible)
+
+1/1 Flow Failed
+
+-- result: 1 --
+== candidate-review ==
+
+Waiting for flows to complete...
+[Failed] candidate-review (32s) (No visible element found: id: candidate-0)
+
+1/1 Flow Failed
+
+-- result: 1 --
+== file-import ==
+
+Waiting for flows to complete...
+[Failed] file-import (3m 38s) (No visible element found: id: analysis-ready)
+
+1/1 Flow Failed
+
+-- result: 1 --
+== management-review ==
+
+Waiting for flows to complete...
+[Passed] management-review (1m 31s)
+
+1/1 Flow Passed in 1m 31s
+
+-- result: 0 --
+== appearance-review ==
+
+Waiting for flows to complete...
+[Failed] appearance-review (1m 9s) (No visible element found: "後手・3手詰め ›")
+
+1/1 Flow Failed
+
+-- result: 1 --
+== appearance-dark ==
+
+Waiting for flows to complete...
+[Failed] appearance-dark (1m 12s) (No visible element found: "後手・3手詰め ›")
+
+1/1 Flow Failed
+
+-- result: 1 --
+== export-review ==
+
+Waiting for flows to complete...
+[Passed] export-review (27s)
+
+1/1 Flow Passed in 27s
+
+-- result: 0 --
+/sdcard/Download/meeshogi-export.txt: 1 file pulled, 0 skipped. 1.9 MB/s (3174 bytes in 0.002s)
+export cmp OK
+== background-review ==
+
+Waiting for flows to complete...
+[Failed] background-review (39s) (No visible element found: "以前のモデル・解析条件の結果が.*")
+
+1/1 Flow Failed
+
+-- result: 1 --
+== large-text-review ==
+
+Waiting for flows to complete...
+[Passed] large-text-review (33s)
+
+1/1 Flow Passed in 33s
+
+-- result: 0 --
+== search-delete-review ==
+
+Waiting for flows to complete...
+[Passed] search-delete-review (38s)
+
+1/1 Flow Passed in 38s
+
+-- result: 0 --

@@ -1,0 +1,63 @@
+appId: com.meeshogi.app
+---
+# Issue #7: explicit stop → paused → resume mechanics on a FRESH import of
+# fixtures/kif/kiou.kif (76 plies; host-probe: first contract-failing ply is #4
+# at 長め, so plies 0-3 give a real search window to tap stop in).
+# autoAnalyze starts the job on import-save. The resumed run is expected to die
+# on the engine meta contract error — that error is the known regression.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn:
+    id: import-button
+- extendedWaitUntil:
+    visible:
+      id: import-paste
+    timeout: 60000
+- tapOn:
+    id: import-paste
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- extendedWaitUntil:
+    visible: '.*手の棋譜を読み取りました.*'
+    timeout: 60000
+- swipe:
+    start: 95%, 85%
+    end: 95%, 30%
+- scrollUntilVisible:
+    element:
+      id: import-save
+    direction: DOWN
+- tapOn:
+    id: import-save
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-stop
+    direction: DOWN
+    timeout: 90000
+- takeScreenshot: stop-01-running
+- tapOn:
+    id: analysis-stop
+- extendedWaitUntil:
+    visible: '解析を停止中 .*'
+    timeout: 30000
+- takeScreenshot: stop-02-paused
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible:
+      id: analysis-stop
+    timeout: 30000
+- takeScreenshot: stop-03-resumed-running
+- extendedWaitUntil:
+    visible: 解析を再開できます
+    timeout: 300000
+- assertVisible: '.*meta の整数範囲が不正です.*'
+- takeScreenshot: stop-04-resumed-meta-error

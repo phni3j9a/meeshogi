@@ -1,0 +1,24 @@
+appId: com.meeshogi.app
+---
+# Issue #7: switch analysis length to 長め (50000 nodes) so the analysis job
+# progresses past ply 0 (startpos deterministically returns nodes=requested+1
+# under the new engine at the 標準/10000 budget and the job aborts).
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '設定.*'
+- scrollUntilVisible:
+    element:
+      text: 解析の長さ
+    direction: DOWN
+- tapOn: 解析の長さ
+- extendedWaitUntil:
+    visible: 長め
+    timeout: 30000
+- tapOn: 長め
+- extendedWaitUntil:
+    visible: 長め
+    timeout: 30000
+- takeScreenshot: issue7-01-settings-long

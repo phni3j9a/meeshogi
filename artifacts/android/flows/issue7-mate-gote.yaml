@@ -1,0 +1,53 @@
+appId: com.meeshogi.app
+---
+# Issue #7: mate-gote-win.kif (28 plies, legal board checkmate, gote wins).
+# Clipboard must already contain the KIF (android-clipboard.sh). autoAnalyze
+# starts on save; the job dies on the engine contract error (covered elsewhere)
+# — this flow verifies the checkmate eval via focused analysis.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn:
+    id: import-button
+- extendedWaitUntil:
+    visible:
+      id: import-paste
+    timeout: 60000
+- tapOn:
+    id: import-paste
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- extendedWaitUntil:
+    visible: '.*28手の棋譜を読み取りました.*'
+    timeout: 60000
+- swipe:
+    start: 95%, 85%
+    end: 95%, 30%
+- scrollUntilVisible:
+    element:
+      id: import-save
+    direction: DOWN
+- tapOn:
+    id: import-save
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- tapOn:
+    id: move-last
+- assertVisible: '28 / 28手'
+- scrollUntilVisible:
+    element:
+      id: analysis-focus
+    direction: DOWN
+- tapOn:
+    id: analysis-focus
+- extendedWaitUntil:
+    visible: この局面の追加解析結果を表示中
+    timeout: 120000
+- assertVisible: 後手勝ち・詰み終局
+- assertNotVisible: '.*手詰め ›'
+- takeScreenshot: gote-02-checkmate-eval
