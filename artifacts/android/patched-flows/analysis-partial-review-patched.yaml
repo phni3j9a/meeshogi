@@ -1,0 +1,75 @@
+appId: com.meeshogi.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+# Set the standard budget explicitly; flows share persisted app settings.
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 解析の長さ
+    direction: DOWN
+- tapOn: 解析の長さ
+- tapOn: 標準
+- tapOn: '.*, 棋譜'
+- extendedWaitUntil:
+    visible:
+      text: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- scrollUntilVisible:
+    element:
+      id: analysis-start
+    direction: DOWN
+- tapOn:
+    id: analysis-start
+    waitToSettleTimeoutMs: 500
+- extendedWaitUntil:
+    visible: 解析処理が終了しました
+    timeout: 600000
+- assertVisible: '.*局面を解析済み、.*局面は探索量不足です.*'
+- assertNotVisible: 全局解析が完了しました
+- takeScreenshot: 51-partial-analysis
+
+# Ply 41 is a known budget-shortfall position in the KeroPona fixture.
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 39
+    delay: 350
+- assertVisible: '41 / 80手'
+- scrollUntilVisible:
+    element:
+      text: '—'
+    direction: UP
+- assertVisible: '—'
+- assertNotVisible:
+    id: candidate-0
+- assertVisible: 解析すると候補手を確認できます。
+- takeScreenshot: 52-partial-skipped-ply
+
+# A second run must be a finite partial retry, not an error state or crash.
+- scrollUntilVisible:
+    element:
+      id: analysis-start
+    direction: DOWN
+- assertVisible:
+    id: analysis-start
+- assertVisible: 解析を再開
+- tapOn:
+    id: analysis-start
+    waitToSettleTimeoutMs: 500
+- extendedWaitUntil:
+    visible: 解析処理が終了しました
+    timeout: 600000
+- assertVisible: '.*局面を解析済み、.*局面は探索量不足です.*'
+- assertNotVisible: 全局解析が完了しました
+- assertNotVisible: 解析を再開できます
+- assertNotVisible: '解析に失敗しました。もう一度解析できます。'
