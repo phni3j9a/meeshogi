@@ -123,6 +123,12 @@ SFEN は TypeScript と Rust の両境界で検証する。盤面は9段×9筋�
 - 完了済みの反復が一つでもあれば、その候補集合・score・depth を一組で保持する。後続の深い反復が node budget で止まっても、完成済み結果を返して `complete` とし、`budgetReached: true` になり得る。この場合は完了済み結果を保存・表示に使う。
 - `candidates` の `scoreCp` と `mate` は排他的。通常探索のmate sentinelを1手／3手詰め証明の根拠にせず、`mateProof` は別の全応手検証の結果だけを示す。
 
+全局解析で扱う予算不足
+
+JavaScriptのnative境界は、`status: "incomplete"` を無条件に回復可能とは扱わない。SFEN、identity、要求条件、top-level値と`meta`、合法手、fallback候補のPVと重複、`mateProof`を全て検証したうえで、非終局・合法手あり・`completedDepth: 0`・`fallback: true`・`budgetReached: true`を満たす場合だけ`AnalysisBudgetIncompleteError`へ変換する。この型は`PositionAnalysis`ではなく、候補・PV・payloadを保存や表示へ渡さない。
+
+全局解析のstoreはこの型だけを局面単位で一度スキップし、後続局面を直列に処理する。通常のnativeエラー、不正payload、キャンセル、保存失敗は従来どおり処理を停止する。全走査後に不足が残る場合は今回実行だけの`partial`状態とし、保存済みの有効結果の件数と不足件数を分けて表示する。`partial`の詳細や不足理由は永続化せず、再起動後は保存済み結果と欠測だけを正直に表示する。予算の自動増加・自動再試行・不完全結果の保存は行わない。
+
 終局は反復深化の成立とは別に扱う。合法手が0で手番側が王手中なら `terminal: "checkmate"`、王手でなければ `terminal: "no-legal-moves"`。候補は空で、depth 0 でも `status: "complete"`、`fallback: false` とする。通常局面で `terminal` を候補の空集合から推測しない。
 
 ## 先手視点への変換

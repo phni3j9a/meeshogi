@@ -4,15 +4,19 @@
 
 2026年9月22日現在、無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)と関連する#9/#11はマージ済みである。現在の作業はIssue #7の解析正しさ修正で、candidate worktree上の未マージ変更として扱う。Expo SDK 57 / React Native 0.86.3、tsshogi 2.3.4、SQLiteとRustの解析経路を採用し、モバイル受入はDevin Cloud常駐セッションへ移行済み（Issue #8）である。GitHub Actionsの`ci.yml`は共通ロジック・型検査・Rustテストを検証し、モバイル受入の代わりにはしない。
 
-Issue #7の実装状態は、Sekirei v0.3.37（`7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac`）固定、既存weight `c-leaf-wrm-seed42`（SHA-256 `807c18da03521414a8c75dfe51dd4de2caf8e9ec4909320826eac12b66852eab`）の維持、探索内でのResidualMaterial（material 1 + NNUE 1、bias 0、clip 0）、成功payloadの`meta`、未完成探索の`incomplete`、checkmate/no-legal-movesの終局区別、engine/model identityによる旧cache除外までを含む。
+Issue #7の実装状態は、Sekirei v0.3.37（`7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac`）固定、既存weight `c-leaf-wrm-seed42`（SHA-256 `807c18da03521414a8c75dfe51dd4de2caf8e9ec4909320826eac12b66852eab`）の維持、探索内でのResidualMaterial（material 1 + NNUE 1、bias 0、clip 0）、成功payloadの`meta`、未完成探索の`incomplete`、checkmate/no-legal-movesの終局区別、engine/model identityによる旧cache除外までを含む。今回の継続修正では、native境界で整合性を確認できた初回反復の予算不足だけを局面単位でスキップし、後続局面を処理する`partial`終了と正直な再起動後表示を追加する。payloadとidentityは変更しない。
 
 この作業でホスト上確認したのは、公開fixture `fixtures/analysis/positions.json`に対する診断専用A/B/C/D比較である。Threads 1、`SpecTopN=0`、局面ごとに新規16 MiB TT、`max_depth=8`、1/10,000 nodes（連続王手局面は100,000/1,000,000 nodes）を揃え、v0.3.36 NNUE-only、単一合法手だけを直した隔離版、v0.3.37 Absolute、candidate worktreeのbridgeを初期化したResidualMaterialを比較した。結果は[エンジン診断記録](ENGINE-DIAGNOSTICS.md)とハーネスのREADMEに保存する。
 
 診断で、単一合法手の製品baselineは実nodes 0のまま完了扱いになる一方、修正版・v0.3.37では同じ局面が実探索（代表値164 nodes）へ入ること、連続王手でbaselineのmate→CP→mate往復を再現できることを確認した。これはホスト上のcore/bridge初期化診断であり、アプリのビルド・起動・操作・画面受入や棋力向上の証拠ではない。診断用Bは製品へ切り替えない。
 
-このcandidateでIssue #7の受入完了としていないものは、native変更を含む同一commitからのAndroid/iOS新規ビルド、インストール・起動、公開fixtureの再解析、停止・再開・旧cache更新、終局表示、分岐復帰、両OSのスクリーンショット目視である。過去PRのモバイル証拠はnative変更後の受入を代替しないため、Mainが両OS別に実行・記録する。
+このcandidateでIssue #7の受入完了としていないものは、native変更を含む同一commitからのAndroid/iOS新規ビルド、インストール・起動、公開fixtureの再解析、予算不足を挟む後続局面までの停止・再開・旧cache更新、部分終了/終局表示、分岐復帰、両OSのスクリーンショット目視である。過去PRのモバイル証拠はnative変更後の受入を代替しないため、Mainが両OS別に実行・記録する。
 
-このworkerでは`npm ci`、`npm run check`、製品nativeの`cargo test`、`scripts/engine/test.sh`は実行していない。これらはcandidateの統合後にMainが実行し、CI通過・host目視・emulator／Simulator・物理端末を分けて報告する。
+全局解析の予算不足制御
+
+`incomplete` payloadは、SFEN・identity・条件・`meta`・合法fallback・詰み証明をnative境界で検証し、初回反復の予算不足として成立した場合だけ専用エラーにする。storeはその局面を保存せず一度だけスキップし、後続局面を直列に解析する。走査完了時に不足があれば今回のjobを`partial`にして、解析済み件数と探索量不足件数を表示する。jobの不足履歴やfallbackはSQLiteへ保存しないため、再起動後は保存済みの現行結果件数と欠測だけを表示する。設定変更、停止、棋譜削除、別棋譜開始、通常エラー、保存失敗は既存のgeneration/cancellation/write guardで処理を停止し、不足スキップへ変換しない。
+
+このworkerでは`npm run check`（typecheckとVitest 106 tests）と`git diff --check`を実行して通過した。`npm ci`、製品nativeの`cargo test`、`scripts/engine/test.sh`は実行していない。native検査とCI通過・host目視・emulator／Simulator・物理端末は分けて報告する。
 
 ## 継続する検証と対象外
 

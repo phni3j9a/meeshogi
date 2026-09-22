@@ -8,8 +8,10 @@ import type {
   Side,
 } from '../domain/model';
 
+import { AnalysisBudgetIncompleteError } from './errors';
 import { ENGINE_ID, MODEL_ID } from './identity';
 export { ENGINE_ID, MODEL_ID } from './identity';
+export { AnalysisBudgetIncompleteError } from './errors';
 
 const NATIVE_MODULE_NAME = 'MeeshogiSekirei';
 const MIN_NODES = 1;
@@ -120,8 +122,8 @@ function parseCandidate(value: unknown, index: number): AnalysisCandidate {
   const candidate = asRecord(value, `candidates[${index}]`);
   const scoreCp = nullableInteger(candidate.scoreCp, `candidates[${index}].scoreCp`);
   const mate = nullableInteger(candidate.mate, `candidates[${index}].mate`);
-  if (scoreCp !== null && mate !== null)
-    throw new Error(`候補 ${index + 1} に score と mate が同時に設定されています。`);
+  if ((scoreCp === null) === (mate === null))
+    throw new Error(`候補 ${index + 1} には score または mate の一方が必要です。`);
   const depth = asFiniteInteger(candidate.depth, `candidates[${index}].depth`);
   if (depth < 0 || depth > MAX_DEPTH)
     throw new Error(`ネイティブ解析結果の candidates[${index}].depth が不正です。`);
@@ -152,7 +154,7 @@ function parseMeta(value: unknown, conditions: AnalysisConditions): NativeMeta {
   if (typeof meta.fallback !== 'boolean' || typeof meta.budgetReached !== 'boolean') {
     throw new Error('ネイティブ解析結果の meta の真偽値が不正です。');
   }
-  if (meta.fallback || meta.budgetReached !== nodes >= requestedNodes) {
+  if (meta.budgetReached !== nodes >= requestedNodes) {
     throw new Error('ネイティブ解析結果の meta の成立条件が不正です。');
   }
   return {
@@ -232,6 +234,8 @@ function parseProof(value: unknown, expectedSide: Side, sfen: string): MateProof
   const pv = asPv(proof.pv, 'mateProof.pv');
   if (status === 'proven' && pv.length !== plies)
     throw new Error('証明済み詰みの PV 長が手数と一致しません。');
+  if (status !== 'proven' && (plies !== undefined || pv.length !== 0))
+    throw new Error('未証明の詰み結果には手数と PV を設定できません。');
   if (pv.length > 0) validatePv(sfen, pv, 'mateProof.pv');
   return { status, plies, side: side as Side, pv };
 }
@@ -252,20 +256,19 @@ function parseNativeResult(
   const result = asRecord(value, 'result');
   if (typeof result.error === 'string') throw new Error(result.error);
   const status = asString(result.status, 'status');
-  if (status !== 'complete') throw new Error(`ネイティブ解析が完了しませんでした: ${status}`);
-  const meta = parseMeta(result.meta, conditions);
-  const nodes = asFiniteInteger(result.nodes, 'nodes');
-  const depth = asFiniteInteger(result.depth, 'depth');
-  if (nodes !== meta.nodes || depth !== meta.completedDepth) {
-    throw new Error('ネイティブ解析結果のトップレベル nodes/depth と meta が一致しません。');
-  }
-  if (asString(result.sfen, 'sfen') !== sfen)
-    throw new Error('ネイティブ解析結果の局面が一致しません。');
+  const resultSfen = asString(result.sfen, 'sfen');
+  if (resultSfen !== sfen) throw new Error('ネイティブ解析結果の局面が一致しません。');
   if (
     asString(result.engineId, 'engineId') !== ENGINE_ID ||
     asString(result.modelId, 'modelId') !== MODEL_ID
   ) {
     throw new Error('ネイティブ解析結果の engine/model identity が一致しません。');
+  }
+  const meta = parseMeta(result.meta, conditions);
+  const nodes = asFiniteInteger(result.nodes, 'nodes');
+  const depth = asFiniteInteger(result.depth, 'depth');
+  if (nodes !== meta.nodes || depth !== meta.completedDepth) {
+    throw new Error('ネイティブ解析結果のトップレベル nodes/depth と meta が一致しません。');
   }
   const expectedSide = sideFromSfen(sfen);
   if (!Array.isArray(result.candidates))
@@ -298,19 +301,9 @@ function parseNativeResult(
     if (positionLegalMoves.length === 0) {
       throw new Error('合法手のない解析結果には terminal が必要です。');
     }
-    if (meta.fallback || meta.completedDepth === 0) {
-      throw new Error('未完了のネイティブ解析を完了結果として保存できません。');
-    }
-    if (candidates.some((candidate) => candidate.depth !== meta.completedDepth)) {
-      throw new Error('ネイティブ解析結果の候補手 depth が meta.completedDepth と一致しません。');
-    }
-    const expectedCandidates = Math.min(conditions.multiPV, positionLegalMoves.length);
-    if (candidates.length !== expectedCandidates) {
-      throw new Error(`ネイティブ解析結果の候補手数が不正です。期待値: ${expectedCandidates}`);
-    }
   } else {
     if (candidates.length !== 0) throw new Error('終局解析には候補手を設定できません。');
-    if (meta.nodes !== 0 || meta.completedDepth !== 0) {
+    if (meta.nodes !== 0 || meta.completedDepth !== 0 || meta.fallback) {
       throw new Error('終局解析の meta.nodes と meta.completedDepth は0である必要があります。');
     }
     if (positionLegalMoves.length !== 0)
@@ -326,6 +319,41 @@ function parseNativeResult(
       throw new Error('ネイティブ解析結果の terminal が局面の王手状態と一致しません。');
     }
   }
+  const mateProof = parseProof(result.mateProof, expectedSide, sfen);
+  if (status === 'incomplete') {
+    if (
+      terminal !== undefined ||
+      positionLegalMoves.length === 0 ||
+      meta.completedDepth !== 0 ||
+      !meta.fallback ||
+      !meta.budgetReached
+    ) {
+      throw new Error('ネイティブ解析の incomplete 結果が予算不足の成立条件を満たしません。');
+    }
+    const maxFallbackCandidates = Math.min(conditions.multiPV, positionLegalMoves.length);
+    if (candidates.length < 1 || candidates.length > maxFallbackCandidates) {
+      throw new Error('ネイティブ解析結果の予算不足候補手数が不正です。');
+    }
+    if (candidates.some((candidate) => candidate.depth !== meta.completedDepth)) {
+      throw new Error(
+        'ネイティブ解析結果の予算不足候補手 depth が meta.completedDepth と一致しません。',
+      );
+    }
+    throw new AnalysisBudgetIncompleteError(sfen, conditions, meta);
+  }
+  if (status !== 'complete') throw new Error(`ネイティブ解析が完了しませんでした: ${status}`);
+  if (terminal === undefined) {
+    if (meta.fallback || meta.completedDepth === 0) {
+      throw new Error('未完了のネイティブ解析を完了結果として保存できません。');
+    }
+    if (candidates.some((candidate) => candidate.depth !== meta.completedDepth)) {
+      throw new Error('ネイティブ解析結果の候補手 depth が meta.completedDepth と一致しません。');
+    }
+    const expectedCandidates = Math.min(conditions.multiPV, positionLegalMoves.length);
+    if (candidates.length !== expectedCandidates) {
+      throw new Error(`ネイティブ解析結果の候補手数が不正です。期待値: ${expectedCandidates}`);
+    }
+  }
   return {
     sfen,
     engineId: ENGINE_ID,
@@ -335,7 +363,7 @@ function parseNativeResult(
     conditions: { ...conditions },
     candidates,
     ...(terminal === undefined ? {} : { terminal }),
-    mateProof: parseProof(result.mateProof, expectedSide, sfen),
+    mateProof,
     completedAt: new Date().toISOString(),
   };
 }

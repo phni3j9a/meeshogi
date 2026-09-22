@@ -10,18 +10,45 @@ import {
   type PositionAnalysis,
   type Settings,
 } from '../../src/domain/model';
-import { getStatistics, parseKif } from '../../src/domain';
+import { getStatistics, legalMoves, parseKif } from '../../src/domain';
 import { LocalRepository, type Database } from '../../src/storage/repository';
 import { CURRENT_ANALYSIS_IDENTITY } from '../../src/analysis/identity';
+import { AnalysisBudgetIncompleteError } from '../../src/analysis/errors';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 const fixture = () => parseKif(readFileSync('fixtures/kif/shogiwars.kif', 'utf8'));
+function shortGame(id = 'short-game'): GameRecord {
+  const parsed = fixture();
+  return {
+    ...parsed,
+    id,
+    moves: parsed.moves.slice(0, 2),
+    positions: parsed.positions.slice(0, 3),
+    createdAt: '2026-09-22T00:00:00.000Z',
+    favorite: false,
+    lastViewedPly: 0,
+    mySide: null,
+    attribution: 'none',
+    analysis: {},
+  };
+}
+function budgetIncomplete(sfen: string, conditions: { nodes: number; multiPV: number }) {
+  return new AnalysisBudgetIncompleteError(sfen, conditions, {
+    requestedNodes: conditions.nodes,
+    nodes: conditions.nodes,
+    completedDepth: 0,
+    fallback: true,
+    budgetReached: true,
+  });
+}
 function database(path: string) {
   const db = new DatabaseSync(path);
   const adapter: Database = {
@@ -515,5 +542,254 @@ describe('棋譜の更新と解析の隔離', () => {
     pending[3].resolve(result(game.positions[0]));
     await new Promise((resolve) => setImmediate(resolve));
     expect(store.getState().games[0].analysis).toEqual({});
+  });
+});
+
+describe('探索量不足の局面単位スキップ', () => {
+  const conditions = { nodes: 10000, multiPV: 2 };
+  const resultFor = (sfen: string, requested = conditions): PositionAnalysis => {
+    const candidates = legalMoves(sfen)
+      .slice(0, requested.multiPV)
+      .map((usi, index) => ({
+        usi,
+        pv: [usi],
+        depth: 1,
+        scoreCp: index,
+        mate: null,
+      }));
+    return {
+      sfen,
+      ...CURRENT_ANALYSIS_IDENTITY,
+      status: 'complete',
+      meta: {
+        requestedNodes: requested.nodes,
+        nodes: 1,
+        completedDepth: 1,
+        fallback: false,
+        budgetReached: false,
+      },
+      conditions: requested,
+      candidates,
+      mateProof: null,
+      completedAt: 'now',
+    };
+  };
+
+  it('success→shortfall→success reaches the last position without saving the fallback', async () => {
+    const game = shortGame('skip-middle');
+    const { store, analyze, persisted } = setup([game]);
+    await store.getState().initialize();
+    const calls: string[] = [];
+    analyze.mockImplementation(async (sfen, requested) => {
+      calls.push(sfen);
+      if (calls.length === 2) throw budgetIncomplete(sfen, requested);
+      return resultFor(sfen, requested);
+    });
+
+    await store.getState().startAnalysis(game.id);
+
+    expect(calls).toEqual(game.positions);
+    expect(Object.keys(persisted()[0].analysis).map(Number)).toEqual([0, 2]);
+    expect(store.getState().analysisJob).toMatchObject({
+      gameId: game.id,
+      status: 'partial',
+      completed: 2,
+      total: 3,
+      budgetShortfallPlies: [1],
+    });
+  });
+
+  it('retries only the missing position on an explicit resume and clears partial state after success', async () => {
+    const game = shortGame('resume-missing');
+    const { store, analyze } = setup([game]);
+    await store.getState().initialize();
+    // Seed the same partial run through the native-boundary error type.
+    analyze.mockReset();
+    const firstCalls: string[] = [];
+    analyze.mockImplementation(async (sfen, requested) => {
+      firstCalls.push(sfen);
+      if (firstCalls.length === 2) throw budgetIncomplete(sfen, requested);
+      return resultFor(sfen, requested);
+    });
+    await store.getState().startAnalysis(game.id);
+
+    analyze.mockReset();
+    const resumedCalls: string[] = [];
+    analyze.mockImplementation(async (sfen, requested) => {
+      resumedCalls.push(sfen);
+      return resultFor(sfen, requested);
+    });
+    await store.getState().startAnalysis(game.id);
+
+    expect(resumedCalls).toEqual([game.positions[1]]);
+    expect(store.getState().analysisJob).toBeNull();
+    expect(Object.keys(store.getState().games[0].analysis).map(Number)).toEqual([0, 1, 2]);
+  });
+
+  it('finishes in a finite pass when every position is below budget', async () => {
+    const game = shortGame('skip-all');
+    const { store, analyze, persisted } = setup([game]);
+    await store.getState().initialize();
+    analyze.mockImplementation(async (sfen, requested) => {
+      throw budgetIncomplete(sfen, requested);
+    });
+
+    await store.getState().startAnalysis(game.id);
+
+    expect(analyze).toHaveBeenCalledTimes(game.positions.length);
+    expect(persisted()[0].analysis).toEqual({});
+    expect(store.getState().analysisJob).toMatchObject({
+      status: 'partial',
+      completed: 0,
+      total: 3,
+      budgetShortfallPlies: [0, 1, 2],
+    });
+  });
+
+  it('keeps ordinary analysis and save errors fatal', async () => {
+    const game = shortGame('ordinary-errors');
+    const ordinary = setup([game]);
+    await ordinary.store.getState().initialize();
+    ordinary.analyze.mockImplementationOnce(async () => {
+      throw new Error('native failure');
+    });
+    await ordinary.store.getState().startAnalysis(game.id);
+    expect(ordinary.analyze).toHaveBeenCalledTimes(1);
+    expect(ordinary.store.getState().analysisJob).toMatchObject({
+      status: 'error',
+      completed: 0,
+    });
+
+    const saveFailure = setup([shortGame('save-failure')]);
+    await saveFailure.store.getState().initialize();
+    saveFailure.analyze.mockImplementation(async (sfen, requested) => resultFor(sfen, requested));
+    saveFailure.repository.save.mockRejectedValueOnce(new Error('disk full'));
+    await saveFailure.store.getState().startAnalysis('save-failure');
+    expect(saveFailure.analyze).toHaveBeenCalledTimes(1);
+    expect(saveFailure.store.getState().analysisJob).toMatchObject({
+      status: 'error',
+      completed: 0,
+    });
+  });
+
+  it('does not record a late budget response after stop', async () => {
+    const game = shortGame('stop-race');
+    const { store, analyze, persisted } = setup([game]);
+    await store.getState().initialize();
+    const pending = deferred<PositionAnalysis>();
+    const entered = deferred<void>();
+    analyze.mockImplementationOnce(async () => {
+      entered.resolve();
+      return pending.promise;
+    });
+    const run = store.getState().startAnalysis(game.id);
+    await entered.promise;
+    store.getState().stopAnalysis();
+    pending.reject(budgetIncomplete(game.positions[0], conditions));
+    await run;
+
+    expect(persisted()[0].analysis).toEqual({});
+    expect(store.getState().analysisJob).toMatchObject({ status: 'paused' });
+    expect(store.getState().analysisJob).not.toMatchObject({ budgetShortfallPlies: [0] });
+  });
+
+  it('does not record a late budget response after settings change or deletion', async () => {
+    const settingsGame = shortGame('settings-race');
+    const settingsSetup = setup([settingsGame]);
+    await settingsSetup.store.getState().initialize();
+    const settingsPending = deferred<PositionAnalysis>();
+    const settingsEntered = deferred<void>();
+    settingsSetup.analyze.mockImplementationOnce(async () => {
+      settingsEntered.resolve();
+      return settingsPending.promise;
+    });
+    const settingsRun = settingsSetup.store.getState().startAnalysis(settingsGame.id);
+    await settingsEntered.promise;
+    await settingsSetup.store.getState().updateSettings({ analysisNodes: 50000 });
+    settingsPending.reject(budgetIncomplete(settingsGame.positions[0], conditions));
+    await settingsRun;
+    expect(settingsSetup.store.getState().analysisJob).toBeNull();
+    expect(settingsSetup.persisted()[0].analysis).toEqual({});
+
+    const deleteGame = shortGame('delete-race');
+    const deleteSetup = setup([deleteGame]);
+    await deleteSetup.store.getState().initialize();
+    const deletePending = deferred<PositionAnalysis>();
+    const deleteEntered = deferred<void>();
+    deleteSetup.analyze.mockImplementationOnce(async () => {
+      deleteEntered.resolve();
+      return deletePending.promise;
+    });
+    const deleteRun = deleteSetup.store.getState().startAnalysis(deleteGame.id);
+    await deleteEntered.promise;
+    const deleting = deleteSetup.store.getState().deleteGame(deleteGame.id);
+    deletePending.reject(budgetIncomplete(deleteGame.positions[0], conditions));
+    await Promise.all([deleting, deleteRun]);
+    expect(deleteSetup.store.getState().games).toEqual([]);
+    expect(deleteSetup.store.getState().analysisJob).toBeNull();
+  });
+
+  it('does not let a replaced job receive a budget response from the previous job', async () => {
+    const firstGame = shortGame('first-job');
+    const secondGame = shortGame('second-job');
+    const { store, analyze } = setup([firstGame, secondGame]);
+    await store.getState().initialize();
+    const pending = deferred<PositionAnalysis>();
+    const entered = deferred<void>();
+    let firstCall = true;
+    analyze.mockImplementation(async (sfen, requested) => {
+      if (firstCall) {
+        firstCall = false;
+        entered.resolve();
+        return pending.promise;
+      }
+      return resultFor(sfen, requested);
+    });
+    const firstRun = store.getState().startAnalysis(firstGame.id);
+    await entered.promise;
+    const secondRun = store.getState().startAnalysis(secondGame.id);
+    pending.resolve(resultFor(firstGame.positions[0], conditions));
+    await Promise.all([firstRun, secondRun]);
+
+    expect(store.getState().games.find((game) => game.id === firstGame.id)?.analysis).toEqual({});
+    expect(
+      Object.keys(store.getState().games.find((game) => game.id === secondGame.id)!.analysis),
+    ).toHaveLength(secondGame.positions.length);
+    expect(store.getState().analysisJob).toBeNull();
+  });
+
+  it('does not persist partial-job details, while successful positions survive SQLite reload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'meeshogi-partial-db-'));
+    try {
+      const path = join(dir, 'data.db');
+      const first = database(path);
+      await first.repository.initialize();
+      const game = shortGame('sqlite-partial');
+      await first.repository.insert(game);
+      const store = makeAppStore({
+        openRepository: async () => first.repository,
+        analyze: vi.fn(async (sfen, requested) => {
+          if (sfen === game.positions[1]) throw budgetIncomplete(sfen, requested);
+          return resultFor(sfen, requested);
+        }),
+        cancel: vi.fn<() => void | Promise<void>>(),
+        createId: () => 'unused',
+      });
+      await store.getState().initialize();
+      await store.getState().startAnalysis(game.id);
+      const loaded = await first.repository.load();
+      expect(Object.keys(loaded.games[0].analysis).map(Number)).toEqual([0, 2]);
+      expect(store.getState().analysisJob).toMatchObject({ status: 'partial' });
+      first.db.close();
+
+      const second = database(path);
+      await second.repository.initialize();
+      const restarted = await second.repository.load();
+      expect(Object.keys(restarted.games[0].analysis).map(Number)).toEqual([0, 2]);
+      expect(restarted.games[0].analysis[1]).toBeUndefined();
+      second.db.close();
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
   });
 });

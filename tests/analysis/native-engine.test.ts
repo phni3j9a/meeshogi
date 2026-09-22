@@ -6,6 +6,7 @@ vi.mock('expo-modules-core', () => ({
 
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { analyzeNative, cancelNative, ENGINE_ID, MODEL_ID } from '../../src/analysis/native-engine';
+import { AnalysisBudgetIncompleteError } from '../../src/analysis/errors';
 
 const initialSfen = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/2P6/PP1PPPPPP/1B5R1/LNSGKGSNL w - 1';
 const whiteCheckmateSfen = '4k4/3RG4/9/9/9/9/9/9/8K w - 1';
@@ -145,13 +146,127 @@ function completePayload(sfen: string, overrides: Record<string, unknown> = {}) 
   };
 }
 
+function incompletePayload(sfen: string, overrides: Record<string, unknown> = {}) {
+  return {
+    status: 'incomplete',
+    sfen,
+    engineId: ENGINE_ID,
+    modelId: MODEL_ID,
+    nodes: 1,
+    depth: 0,
+    candidates: [{ usi: '8c8d', pv: ['8c8d'], scoreCp: -1, mate: null, depth: 0 }],
+    terminal: null,
+    mateProof: null,
+    meta: { requestedNodes: 1, nodes: 1, completedDepth: 0, fallback: true, budgetReached: true },
+    ...overrides,
+  };
+}
+
 describe('native result contract', () => {
-  it('rejects an incomplete first iteration through the existing error path', async () => {
-    const nativeModule = nativeModuleFor({ status: 'incomplete' });
+  it('converts a fully validated budget-incomplete position to the dedicated error', async () => {
+    const nativeModule = nativeModuleFor(incompletePayload(initialSfen));
     vi.mocked(requireOptionalNativeModule).mockReturnValue(nativeModule);
-    await expect(analyzeNative(initialSfen, { nodes: 1, multiPV: 1 })).rejects.toThrow(
-      'ネイティブ解析が完了しませんでした: incomplete',
+    const error = await analyzeNative(initialSfen, { nodes: 1, multiPV: 1 }).catch(
+      (reason: unknown) => reason,
     );
+    expect(error).toBeInstanceOf(AnalysisBudgetIncompleteError);
+    expect((error as AnalysisBudgetIncompleteError).meta).toMatchObject({
+      requestedNodes: 1,
+      completedDepth: 0,
+      fallback: true,
+      budgetReached: true,
+    });
+    expect((error as Error).message).toContain('探索量が不足');
+    expect((error as Error).message).not.toContain(initialSfen);
+  });
+
+  it.each([
+    [
+      'fallback flag is false',
+      incompletePayload(initialSfen, {
+        meta: {
+          requestedNodes: 1,
+          nodes: 1,
+          completedDepth: 0,
+          fallback: false,
+          budgetReached: true,
+        },
+      }),
+    ],
+    [
+      'budget was not reached',
+      incompletePayload(initialSfen, {
+        nodes: 0,
+        meta: {
+          requestedNodes: 1,
+          nodes: 0,
+          completedDepth: 0,
+          fallback: true,
+          budgetReached: false,
+        },
+      }),
+    ],
+    [
+      'a completed depth is present',
+      incompletePayload(initialSfen, {
+        nodes: 1,
+        depth: 1,
+        candidates: [{ usi: '8c8d', pv: ['8c8d'], scoreCp: -1, mate: null, depth: 1 }],
+        meta: {
+          requestedNodes: 1,
+          nodes: 1,
+          completedDepth: 1,
+          fallback: true,
+          budgetReached: true,
+        },
+      }),
+    ],
+    [
+      'the position is terminal',
+      incompletePayload(whiteCheckmateSfen, {
+        nodes: 0,
+        depth: 0,
+        candidates: [],
+        terminal: 'checkmate',
+        meta: {
+          requestedNodes: 1,
+          nodes: 0,
+          completedDepth: 0,
+          fallback: false,
+          budgetReached: false,
+        },
+      }),
+    ],
+    [
+      'fallback PV is illegal',
+      incompletePayload(initialSfen, {
+        candidates: [{ usi: '8c8e', pv: ['8c8e'], scoreCp: -1, mate: null, depth: 0 }],
+      }),
+    ],
+    [
+      'fallback candidates are duplicated',
+      incompletePayload(initialSfen, {
+        candidates: [
+          { usi: '8c8d', pv: ['8c8d'], scoreCp: -1, mate: null, depth: 0 },
+          { usi: '8c8d', pv: ['8c8d'], scoreCp: -2, mate: null, depth: 0 },
+        ],
+      }),
+    ],
+    [
+      'fallback mate proof is malformed',
+      incompletePayload(initialSfen, {
+        mateProof: { status: 'incomplete', side: 'white', plies: 1, pv: [] },
+      }),
+    ],
+    ['fallback candidate set is empty', incompletePayload(initialSfen, { candidates: [] })],
+    ['status is unknown', incompletePayload(initialSfen, { status: 'paused' })],
+  ])('keeps %s on the ordinary fatal path', async (_name, payload) => {
+    vi.mocked(requireOptionalNativeModule).mockReturnValue(nativeModuleFor(payload));
+    const error = await analyzeNative(initialSfen, { nodes: 1, multiPV: 2 }).catch(
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(AnalysisBudgetIncompleteError);
   });
 
   it.each([
@@ -179,7 +294,22 @@ describe('native result contract', () => {
   ])('rejects malformed meta: %s', async (_name, meta) => {
     const nativeModule = nativeModuleFor(completePayload(initialSfen, { meta }));
     vi.mocked(requireOptionalNativeModule).mockReturnValue(nativeModule);
-    await expect(analyzeNative(initialSfen, { nodes: 1, multiPV: 1 })).rejects.toThrow('meta');
+    await expect(analyzeNative(initialSfen, { nodes: 1, multiPV: 1 })).rejects.toThrow(
+      meta === undefined || (meta as Record<string, unknown>).fallback !== true ? 'meta' : '未完了',
+    );
+  });
+
+  it('keeps an incomplete mate proof separate from a complete search result', async () => {
+    const nativeModule = nativeModuleFor(
+      completePayload(initialSfen, {
+        mateProof: { status: 'incomplete', side: 'white', pv: [] },
+      }),
+    );
+    vi.mocked(requireOptionalNativeModule).mockReturnValue(nativeModule);
+    await expect(analyzeNative(initialSfen, { nodes: 1, multiPV: 1 })).resolves.toMatchObject({
+      status: 'complete',
+      mateProof: { status: 'incomplete', side: 'white', pv: [] },
+    });
   });
 
   it('accepts observed nodes above the requested budget', async () => {
