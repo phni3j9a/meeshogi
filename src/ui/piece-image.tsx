@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Image, ImageSourcePropType, StyleSheet, View } from 'react-native';
+import { Image, ImageSourcePropType } from 'react-native';
 import { PieceType } from 'tsshogi';
 import { Side } from '@/domain/model';
 
@@ -20,7 +20,22 @@ const images: Record<PieceType, ImageSourcePropType> = {
   [PieceType.HORSE]: require('../../assets/pieces/horse.png'),
   [PieceType.DRAGON]: require('../../assets/pieces/dragon.png'),
 };
-const jewel = require('../../assets/pieces/jewel.png');
+const goteImages: Record<PieceType, ImageSourcePropType> = {
+  [PieceType.PAWN]: require('../../assets/pieces/gote/pawn.png'),
+  [PieceType.LANCE]: require('../../assets/pieces/gote/lance.png'),
+  [PieceType.KNIGHT]: require('../../assets/pieces/gote/knight.png'),
+  [PieceType.SILVER]: require('../../assets/pieces/gote/silver.png'),
+  [PieceType.GOLD]: require('../../assets/pieces/gote/gold.png'),
+  [PieceType.BISHOP]: require('../../assets/pieces/gote/bishop.png'),
+  [PieceType.ROOK]: require('../../assets/pieces/gote/rook.png'),
+  [PieceType.KING]: require('../../assets/pieces/gote/jewel.png'),
+  [PieceType.PROM_PAWN]: require('../../assets/pieces/gote/promoted-pawn.png'),
+  [PieceType.PROM_LANCE]: require('../../assets/pieces/gote/promoted-lance.png'),
+  [PieceType.PROM_KNIGHT]: require('../../assets/pieces/gote/promoted-knight.png'),
+  [PieceType.PROM_SILVER]: require('../../assets/pieces/gote/promoted-silver.png'),
+  [PieceType.HORSE]: require('../../assets/pieces/gote/horse.png'),
+  [PieceType.DRAGON]: require('../../assets/pieces/gote/dragon.png'),
+};
 
 /** The enclosing square/hand button supplies the accessible piece name. */
 export const PieceImage = memo(function PieceImage({
@@ -36,38 +51,15 @@ export const PieceImage = memo(function PieceImage({
   height: number;
   rotated?: boolean;
 }) {
-  const source = piece === PieceType.KING && side === 'white' ? jewel : images[piece];
   return (
-    <View
-      pointerEvents="none"
+    <Image
+      source={side === 'white' ? goteImages[piece] : images[piece]}
+      resizeMode="contain"
+      fadeDuration={0}
       accessible={false}
       accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      importantForAccessibility="no"
       style={{ width, height, transform: [{ rotate: rotated ? '180deg' : '0deg' }] }}
-    >
-      <Image
-        source={source}
-        resizeMode="contain"
-        fadeDuration={0}
-        accessible={false}
-        style={[StyleSheet.absoluteFill, { width, height }]}
-      />
-      {side === 'white' && (
-        <Image
-          source={source}
-          resizeMode="contain"
-          fadeDuration={0}
-          accessible={false}
-          tintColor="#281400"
-          // Darken toward amber without a pale tint over the ink. The generated
-          // sprite supplies the alpha mask and follows ownership on capture.
-          style={[StyleSheet.absoluteFill, { width, height }, styles.goteTone]}
-        />
-      )}
-    </View>
+    />
   );
-});
-
-const styles = StyleSheet.create({
-  goteTone: { opacity: 0.2 },
 });

@@ -1,0 +1,290 @@
+{
+  "scope": "Actual GameScreen, ShogiBoard, and PieceImage in RN Web. Synthetic analysis; constructed capture/drop and promotion SFEN fixtures. Single-image asset selection verifies the RN Web path; native device rendering remains unverified.",
+  "source": "src/ui/piece-image.tsx",
+  "sourceHash": "cff6f2cd7927aa8f92169ba8a1f14a8f183837c087083baeecc33961cdbaa140",
+  "cases": [
+    {
+      "key": "light",
+      "pieces": 40,
+      "goteAssets": 23,
+      "overlays": 0,
+      "overflow": false
+    },
+    {
+      "key": "dark",
+      "pieces": 40,
+      "goteAssets": 23,
+      "overlays": 0,
+      "overflow": false
+    },
+    {
+      "key": "flipped",
+      "pieces": 40,
+      "goteAssets": 23,
+      "overlays": 0,
+      "overflow": false
+    },
+    {
+      "key": "320",
+      "pieces": 40,
+      "goteAssets": 23,
+      "overlays": 0,
+      "overflow": false
+    },
+    {
+      "key": "comparison-light",
+      "actualComponent": true
+    },
+    {
+      "key": "comparison-dark",
+      "actualComponent": true
+    },
+    {
+      "key": "promoted-white",
+      "promoted": [
+        {
+          "source": "promoted-pawn.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/promoted-pawn.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-lance.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/promoted-lance.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-knight.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/promoted-knight.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-silver.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/promoted-silver.png",
+          "overlays": 0
+        },
+        {
+          "source": "horse.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/horse.png",
+          "overlays": 0
+        },
+        {
+          "source": "dragon.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/dragon.png",
+          "overlays": 0
+        }
+      ],
+      "heldTypes": 7
+    },
+    {
+      "key": "promoted-black",
+      "promoted": [
+        {
+          "source": "promoted-pawn.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/promoted-pawn.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-lance.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/promoted-lance.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-knight.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/promoted-knight.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-silver.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/promoted-silver.png",
+          "overlays": 0
+        },
+        {
+          "source": "horse.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/horse.png",
+          "overlays": 0
+        },
+        {
+          "source": "dragon.png",
+          "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/dragon.png",
+          "overlays": 0
+        }
+      ],
+      "heldTypes": 7
+    }
+  ],
+  "ownership": [
+    {
+      "side": "white",
+      "before": {
+        "label": "5五、先手の歩",
+        "images": 1,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "held": {
+        "label": "後手の持駒、歩1枚",
+        "images": 1,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 31,
+          "height": 37
+        }
+      },
+      "dropped": {
+        "label": "4五、後手の歩",
+        "images": 1,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "flipped": {
+        "label": "4五、後手の歩",
+        "images": 1,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "legalSequence": [
+        "5c5e",
+        "9i8i",
+        "P*4e"
+      ],
+      "counter": "3手目・分岐3手"
+    },
+    {
+      "side": "black",
+      "before": {
+        "label": "5五、後手の歩",
+        "images": 1,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/gote/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "held": {
+        "label": "先手の持駒、歩1枚",
+        "images": 1,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 31,
+          "height": 37
+        }
+      },
+      "dropped": {
+        "label": "4五、先手の歩",
+        "images": 1,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "flipped": {
+        "label": "4五、先手の歩",
+        "images": 1,
+        "source": "pawn.png",
+        "sourcePath": "/@fs/workspace/scratch/913b74a5a03b/meeshogi-work/assets/pieces/pawn.png",
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "filters": 0,
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "legalSequence": [
+        "5g5e",
+        "1a2a",
+        "P*4e"
+      ],
+      "counter": "3手目・分岐3手"
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "goteAssets": {
+    "bishop.png": "67df03a1bd2c70dfd4e62feb5546c44c1e163cd56dbeeffab97d02d432c6783d",
+    "dragon.png": "7acf351e7f35b327cab8b63ce36661a30821b4f2e5d54f5095d341af398c6cec",
+    "gold.png": "2e5e0c2b70f35ab7bf6a6e5c00b64498f04d4875b502b285622b8c81086815ee",
+    "horse.png": "dc8227de9a5cc9aa87fda6b4872bb05ee2a75969f5d91d02e51994f14d993aa0",
+    "jewel.png": "e3ecd7fe14dff1c8e7864f02eeb49523de4e0c5be1451fdb06474183892fcc73",
+    "knight.png": "04e2de2e8ed4f5b284c7bc81a2b57397eae91f6cdb58e41089cd217764577858",
+    "lance.png": "29b32510198566636596ba7d54187e499ce16a929d527da96fe0158a63fc6288",
+    "pawn.png": "15984f6e3ba056c5f0692a1c2262076e80948e9b5ae8149498b598377c103e17",
+    "promoted-knight.png": "0ab42f0662945c5a2e8e78b3091ae5409fe368936765672edc7c07733c8327a9",
+    "promoted-lance.png": "ad4b723d530591dd13f70dc87c8ecda0a7dc3a776c2952665cc86e46fbbb5c37",
+    "promoted-pawn.png": "6dde5099c137af58677afe2f8b2ef63b19b0d82cd377b689a9ae644877630a6f",
+    "promoted-silver.png": "d298509e4d8f070cc99a270dfe5ac782f7c71ec30e96b6aca1aeb89663988217",
+    "rook.png": "e53e7c393cf90ad0f331e870d2cb7209ecf2df81ded9ad0ad3bc592f1cf95ccc",
+    "silver.png": "f8540b93104df7d711d025002e15391636c5417d194d8bc1a645134c3ba2e85c"
+  },
+  "flipOwnership": true,
+  "sourceHashAfter": "cff6f2cd7927aa8f92169ba8a1f14a8f183837c087083baeecc33961cdbaa140",
+  "nativeExecution": false,
+  "validation": {
+    "typecheck": "passed",
+    "existingTests": {
+      "passed": 63,
+      "files": 7
+    },
+    "newTests": 0,
+    "originalPngs": "All15 unchanged from original recorded SHA-256.",
+    "generatedGotePngs": "All14 match generator manifest and preview asset hashes.",
+    "iosHermesExport": "entry-79bd2c3165a570db0c8987d32d504954.hbc",
+    "androidHermesExport": "entry-d6eb9886942ad3b880e328580809ffa2.hbc",
+    "bundledPieceAssets": 28,
+    "nativeRuntime": "Unavailable; remaining Draft PR acceptance."
+  }
+}
