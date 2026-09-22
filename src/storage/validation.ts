@@ -1,7 +1,13 @@
 import { Position } from 'tsshogi';
 import { isInCheck, legalMoves } from '../domain';
-import { DEFAULT_SETTINGS, type GameRecord, type Settings } from '../domain/model';
+import {
+  DEFAULT_SETTINGS,
+  type AnalysisMeta,
+  type GameRecord,
+  type Settings,
+} from '../domain/model';
 import { CURRENT_ANALYSIS_IDENTITY } from '../analysis/identity';
+import { isValidAnalysisMeta } from '../analysis/meta';
 
 const services = ['shogiwars', 'kiou', 'unknown'];
 const sides = ['black', 'white'];
@@ -38,6 +44,12 @@ function validAnalysis(value: unknown, sfen: string): boolean {
   const isCurrentIdentity =
     value.engineId === CURRENT_ANALYSIS_IDENTITY.engineId &&
     value.modelId === CURRENT_ANALYSIS_IDENTITY.modelId;
+  // Current records fail closed when the complete-result contract is absent;
+  // old identities remain lenient so loading never performs a destructive migration.
+  const currentMeta = isValidAnalysisMeta(value.meta, value.conditions)
+    ? (value.meta as AnalysisMeta)
+    : undefined;
+  if (isCurrentIdentity && (value.status !== 'complete' || !currentMeta)) return false;
   let positionLegalMoves: string[] | undefined;
   if (isCurrentIdentity) {
     try {
@@ -63,6 +75,7 @@ function validAnalysis(value: unknown, sfen: string): boolean {
   if (value.candidates.length === 0) {
     if (!member(value.terminal, ['checkmate', 'no-legal-moves'])) return false;
     if (isCurrentIdentity) {
+      if (currentMeta?.nodes !== 0 || currentMeta?.completedDepth !== 0) return false;
       if (positionLegalMoves?.length !== 0) return false;
       let inCheck: boolean;
       try {
@@ -76,7 +89,15 @@ function validAnalysis(value: unknown, sfen: string): boolean {
   if (
     isCurrentIdentity &&
     value.terminal === undefined &&
-    value.candidates.length !== Math.min(value.conditions.multiPV, positionLegalMoves?.length ?? 0)
+    (value.candidates.length !==
+      Math.min(value.conditions.multiPV, positionLegalMoves?.length ?? 0) ||
+      currentMeta?.nodes === 0 ||
+      currentMeta?.fallback ||
+      currentMeta?.completedDepth === 0 ||
+      value.candidates.some(
+        (candidate: unknown) =>
+          !object(candidate) || candidate.depth !== currentMeta?.completedDepth,
+      ))
   )
     return false;
   if (value.mateProof === null) return true;

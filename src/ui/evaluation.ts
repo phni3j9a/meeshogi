@@ -1,4 +1,5 @@
 import { CURRENT_ANALYSIS_IDENTITY } from '../analysis/identity';
+import { isValidAnalysisMeta } from '../analysis/meta';
 import type { AnalysisCandidate, MateProof, PositionAnalysis, Side } from '../domain/model';
 
 export type EvaluationValue =
@@ -78,8 +79,9 @@ export function resolveCurrentEvaluation(
   analysis: PositionAnalysis | null | undefined,
 ): EvaluationValue {
   if (!analysis) return { kind: 'missing' };
-  const maybeStatus = (analysis as PositionAnalysis & { status?: unknown }).status;
-  if (maybeStatus !== undefined && maybeStatus !== 'complete') return { kind: 'missing' };
+  if (analysis.status !== 'complete' || !isValidAnalysisMeta(analysis.meta, analysis.conditions)) {
+    return { kind: 'missing' };
+  }
   if (
     analysis.engineId !== CURRENT_ANALYSIS_IDENTITY.engineId ||
     analysis.modelId !== CURRENT_ANALYSIS_IDENTITY.modelId

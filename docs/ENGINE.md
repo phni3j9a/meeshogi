@@ -78,7 +78,7 @@ SFEN は TypeScript と Rust の両境界で検証する。盤面は9段×9筋�
 ```json
 {
   "status": "complete",
-  "sfen": "...",
+  "sfen": "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
   "engineId": "sekirei-v0.3.37@7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac+meeshogi-analysis-v2+eval-material1-nnue1-bias0-clip0",
   "modelId": "c-leaf-wrm-seed42@807c18da03521414a8c75dfe51dd4de2caf8e9ec4909320826eac12b66852eab",
   "meta": {
@@ -90,7 +90,15 @@ SFEN は TypeScript と Rust の両境界で検証する。盤面は9段×9筋�
   },
   "nodes": 10000,
   "depth": 1,
-  "candidates": [],
+  "candidates": [
+    {
+      "usi": "7g7f",
+      "pv": ["7g7f"],
+      "scoreCp": -35,
+      "mate": null,
+      "depth": 1
+    }
+  ],
   "terminal": null,
   "mateProof": null
 }
@@ -112,7 +120,7 @@ SFEN は TypeScript と Rust の両境界で検証する。盤面は9段×9筋�
 
 - 非終局では、要求した MultiPV と合法手数の小さい方と同数の候補を持つ、最後の完全な MultiPV 反復だけを `complete` とする。
 - 最初の MultiPV 反復が node budget で完了しなければ `incomplete`。合法な `bestMove` を候補に含めることはあるが、`fallback: true` として診断に限定し、JavaScript は有効な `PositionAnalysis` として保存・グラフ反映しない。
-- 完了済みの反復が一つでもあれば、その候補集合・score・depth を一組で保持する。後続の深い反復が node budget で止まっても、完成済み結果を返して `complete` とし、`budgetReached: true` になり得る。
+- 完了済みの反復が一つでもあれば、その候補集合・score・depth を一組で保持する。後続の深い反復が node budget で止まっても、完成済み結果を返して `complete` とし、`budgetReached: true` になり得る。この場合は完了済み結果を保存・表示に使う。
 - `candidates` の `scoreCp` と `mate` は排他的。通常探索のmate sentinelを1手／3手詰め証明の根拠にせず、`mateProof` は別の全応手検証の結果だけを示す。
 
 終局は反復深化の成立とは別に扱う。合法手が0で手番側が王手中なら `terminal: "checkmate"`、王手でなければ `terminal: "no-legal-moves"`。候補は空で、depth 0 でも `status: "complete"`、`fallback: false` とする。通常局面で `terminal` を候補の空集合から推測しない。

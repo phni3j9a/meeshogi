@@ -6,6 +6,14 @@ import type { PositionAnalysis } from '../../src/domain/model';
 const analysis: PositionAnalysis = {
   ...CURRENT_ANALYSIS_IDENTITY,
   sfen: '4k4/9/4G4/9/9/9/9/9/K8 b G 1',
+  status: 'complete',
+  meta: {
+    requestedNodes: 10000,
+    nodes: 10000,
+    completedDepth: 1,
+    fallback: false,
+    budgetReached: true,
+  },
   conditions: { nodes: 10000, multiPV: 2 },
   candidates: [{ usi: 'G*5b', pv: ['G*5b'], scoreCp: null, mate: 1, depth: 1 }],
   mateProof: { status: 'proven', plies: 1, side: 'black', pv: ['G*5b'] },
@@ -22,6 +30,8 @@ describe('saved analysis compatibility', () => {
       { ...analysis, conditions: { ...analysis.conditions, nodes: 50000 } },
       { ...analysis, conditions: { ...analysis.conditions, multiPV: 3 } },
       { ...analysis, status: 'incomplete' } as unknown as PositionAnalysis,
+      { ...analysis, status: undefined } as unknown as PositionAnalysis,
+      { ...analysis, meta: undefined } as unknown as PositionAnalysis,
     ])
       expect(isCompatibleAnalysis(changed, analysis.sfen, analysis.conditions)).toBe(false);
     expect(isCompatibleAnalysis(null, analysis.sfen, analysis.conditions)).toBe(false);

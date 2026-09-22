@@ -28,17 +28,26 @@ describe('native engine cancellation', () => {
     const nativeModule = {
       initializeAsync: vi.fn(() => init.promise),
       prepareRequest: vi.fn(() => 1),
-      analyzeAsync: vi.fn(async (_sfen: string, _nodes: number, _multiPV: number, _requestId: number) =>
-        JSON.stringify({
-          status: 'complete',
-          sfen: initialSfen,
-          engineId: ENGINE_ID,
-          modelId: MODEL_ID,
-          candidates: [{ usi: '8c8d', pv: ['8c8d'], scoreCp: 0, mate: null, depth: 1 }],
-          terminal: null,
-          mateProof: null,
-          meta: { requestedNodes: 1, nodes: 1, completedDepth: 1, fallback: false, budgetReached: true },
-        }),
+      analyzeAsync: vi.fn(
+        async (_sfen: string, _nodes: number, _multiPV: number, _requestId: number) =>
+          JSON.stringify({
+            status: 'complete',
+            sfen: initialSfen,
+            engineId: ENGINE_ID,
+            modelId: MODEL_ID,
+            nodes: 1,
+            depth: 1,
+            candidates: [{ usi: '8c8d', pv: ['8c8d'], scoreCp: 0, mate: null, depth: 1 }],
+            terminal: null,
+            mateProof: null,
+            meta: {
+              requestedNodes: 1,
+              nodes: 1,
+              completedDepth: 1,
+              fallback: false,
+              budgetReached: true,
+            },
+          }),
       ),
       cancelAsync: vi.fn(async (_requestId: number) => undefined),
     };
@@ -67,7 +76,11 @@ describe('native engine cancellation', () => {
     vi.mocked(requireOptionalNativeModule).mockReturnValue(nativeModule);
 
     const analysis = analyzeNative(initialSfen, { nodes: 1, multiPV: 1 });
-    for (let attempt = 0; attempt < 8 && nativeModule.analyzeAsync.mock.calls.length === 0; attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < 8 && nativeModule.analyzeAsync.mock.calls.length === 0;
+      attempt += 1
+    ) {
       await Promise.resolve();
     }
     expect(nativeModule.analyzeAsync).toHaveBeenCalledOnce();
@@ -82,10 +95,18 @@ describe('native engine cancellation', () => {
         sfen: initialSfen,
         engineId: ENGINE_ID,
         modelId: MODEL_ID,
+        nodes: 1,
+        depth: 1,
         candidates: [{ usi: '8c8d', pv: ['8c8d'], scoreCp: 0, mate: null, depth: 1 }],
         terminal: null,
         mateProof: null,
-        meta: { requestedNodes: 1, nodes: 1, completedDepth: 1, fallback: false, budgetReached: true },
+        meta: {
+          requestedNodes: 1,
+          nodes: 1,
+          completedDepth: 1,
+          fallback: false,
+          budgetReached: true,
+        },
       }),
     );
     await expect(analysis).rejects.toThrow('解析がキャンセルされました');
@@ -114,6 +135,8 @@ function completePayload(sfen: string, overrides: Record<string, unknown> = {}) 
     sfen,
     engineId: ENGINE_ID,
     modelId: MODEL_ID,
+    nodes: 1,
+    depth: 1,
     candidates: [{ usi: '8c8d', pv: ['8c8d'], scoreCp: 0, mate: null, depth: 1 }],
     terminal: null,
     mateProof: null,
@@ -133,9 +156,26 @@ describe('native result contract', () => {
 
   it.each([
     ['missing meta', undefined],
-    ['non-integer requestedNodes', { requestedNodes: 1.5, nodes: 1, completedDepth: 1, fallback: false, budgetReached: true }],
-    ['invalid nodes range', { requestedNodes: 1, nodes: -1, completedDepth: 1, fallback: false, budgetReached: true }],
-    ['invalid boolean', { requestedNodes: 1, nodes: 1, completedDepth: 1, fallback: 'false', budgetReached: true }],
+    [
+      'non-integer requestedNodes',
+      { requestedNodes: 1.5, nodes: 1, completedDepth: 1, fallback: false, budgetReached: true },
+    ],
+    [
+      'invalid nodes range',
+      { requestedNodes: 1, nodes: -1, completedDepth: 1, fallback: false, budgetReached: true },
+    ],
+    [
+      'invalid boolean',
+      { requestedNodes: 1, nodes: 1, completedDepth: 1, fallback: 'false', budgetReached: true },
+    ],
+    [
+      'fallback on complete result',
+      { requestedNodes: 1, nodes: 1, completedDepth: 1, fallback: true, budgetReached: true },
+    ],
+    [
+      'budget flag mismatch',
+      { requestedNodes: 1, nodes: 1, completedDepth: 1, fallback: false, budgetReached: false },
+    ],
   ])('rejects malformed meta: %s', async (_name, meta) => {
     const nativeModule = nativeModuleFor(completePayload(initialSfen, { meta }));
     vi.mocked(requireOptionalNativeModule).mockReturnValue(nativeModule);
@@ -156,7 +196,26 @@ describe('native result contract', () => {
     });
     vi.mocked(requireOptionalNativeModule).mockReturnValue(nativeModuleFor(twoCandidates));
     const analysis = await analyzeNative(initialSfen, { nodes: 1, multiPV: 2 });
-    expect(analysis.candidates.map((candidate) => candidate.usi)).toEqual(['8c8d', '2c2d']);
+    expect(analysis).toMatchObject({
+      status: 'complete',
+      meta: {
+        requestedNodes: 1,
+        nodes: 1,
+        completedDepth: 1,
+        fallback: false,
+        budgetReached: true,
+      },
+      candidates: [{ usi: '8c8d' }, { usi: '2c2d' }],
+    });
+  });
+
+  it('rejects top-level nodes/depth that disagree with meta', async () => {
+    vi.mocked(requireOptionalNativeModule).mockReturnValue(
+      nativeModuleFor(completePayload(initialSfen, { nodes: 2 })),
+    );
+    await expect(analyzeNative(initialSfen, { nodes: 1, multiPV: 1 })).rejects.toThrow(
+      'トップレベル nodes/depth と meta が一致しません',
+    );
   });
 
   it('accepts both terminal kinds only when they match check state and legal moves', async () => {
@@ -169,7 +228,15 @@ describe('native result contract', () => {
         completePayload(sfen, {
           candidates: [],
           terminal,
-          meta: { requestedNodes: 1, nodes: 0, completedDepth: 0, fallback: false, budgetReached: false },
+          nodes: 0,
+          depth: 0,
+          meta: {
+            requestedNodes: 1,
+            nodes: 0,
+            completedDepth: 0,
+            fallback: false,
+            budgetReached: false,
+          },
         }),
       );
       vi.mocked(requireOptionalNativeModule).mockReturnValue(nativeModule);
@@ -190,7 +257,15 @@ describe('native result contract', () => {
         completePayload(sfen, {
           candidates: [],
           terminal,
-          meta: { requestedNodes: 1, nodes: 0, completedDepth: 0, fallback: false, budgetReached: false },
+          nodes: 0,
+          depth: 0,
+          meta: {
+            requestedNodes: 1,
+            nodes: 0,
+            completedDepth: 0,
+            fallback: false,
+            budgetReached: false,
+          },
         }),
       ),
     );

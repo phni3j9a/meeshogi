@@ -14,6 +14,8 @@ import {
 const checkmateWhiteToMove: PositionAnalysis = {
   ...CURRENT_ANALYSIS_IDENTITY,
   sfen: '4k4/3RG4/9/9/9/9/9/9/8K w - 1',
+  status: 'complete',
+  meta: { requestedNodes: 1, nodes: 0, completedDepth: 0, fallback: false, budgetReached: false },
   conditions: { nodes: 1, multiPV: 1 },
   candidates: [],
   terminal: 'checkmate',
@@ -23,6 +25,8 @@ const checkmateWhiteToMove: PositionAnalysis = {
 const checkmateBlackToMove: PositionAnalysis = {
   ...CURRENT_ANALYSIS_IDENTITY,
   sfen: '8k/9/9/9/9/9/9/3rg4/4K4 b - 1',
+  status: 'complete',
+  meta: { requestedNodes: 1, nodes: 0, completedDepth: 0, fallback: false, budgetReached: false },
   conditions: { nodes: 1, multiPV: 1 },
   candidates: [],
   terminal: 'checkmate',
@@ -32,6 +36,8 @@ const checkmateBlackToMove: PositionAnalysis = {
 const noLegalMoves: PositionAnalysis = {
   ...CURRENT_ANALYSIS_IDENTITY,
   sfen: 'k8/9/9/9/9/9/4n4/2r6/4K4 b - 1',
+  status: 'complete',
+  meta: { requestedNodes: 1, nodes: 0, completedDepth: 0, fallback: false, budgetReached: false },
   conditions: { nodes: 1, multiPV: 1 },
   candidates: [],
   terminal: 'no-legal-moves',
@@ -158,9 +164,9 @@ describe('現在局面の評価 resolver', () => {
   it('no-legal-moves、旧identity、未解析は全て欠測のままにする', () => {
     expect(resolveCurrentEvaluation(noLegalMoves)).toEqual({ kind: 'missing' });
     expect(resolveCurrentEvaluation(undefined)).toEqual({ kind: 'missing' });
-    expect(
-      resolveCurrentEvaluation({ ...checkmateWhiteToMove, engineId: 'old-engine' }),
-    ).toEqual({ kind: 'missing' });
+    expect(resolveCurrentEvaluation({ ...checkmateWhiteToMove, engineId: 'old-engine' })).toEqual({
+      kind: 'missing',
+    });
     expect(
       resolveCurrentEvaluation({
         ...checkmateWhiteToMove,

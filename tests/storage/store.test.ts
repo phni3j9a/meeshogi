@@ -1,4 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { makeAppStore } from '../../src/store/create-app-store';
 import {
   DEFAULT_SETTINGS,
@@ -7,8 +11,7 @@ import {
   type Settings,
 } from '../../src/domain/model';
 import { getStatistics, parseKif } from '../../src/domain';
-import { readFileSync } from 'node:fs';
-import type { LocalRepository } from '../../src/storage/repository';
+import { LocalRepository, type Database } from '../../src/storage/repository';
 import { CURRENT_ANALYSIS_IDENTITY } from '../../src/analysis/identity';
 
 function deferred<T>() {
@@ -19,6 +22,16 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const fixture = () => parseKif(readFileSync('fixtures/kif/shogiwars.kif', 'utf8'));
+function database(path: string) {
+  const db = new DatabaseSync(path);
+  const adapter: Database = {
+    execAsync: async (sql) => db.exec(sql),
+    runAsync: async (sql, ...args) => db.prepare(sql).run(...args),
+    getAllAsync: async <T>(sql: string, ...args: (string | number | null)[]) =>
+      db.prepare(sql).all(...args) as T[],
+  };
+  return { db, repository: new LocalRepository(adapter) };
+}
 function setup(initialGames: GameRecord[] = []) {
   let persisted: GameRecord[] = [...initialGames];
   const repository = {
@@ -41,6 +54,14 @@ function setup(initialGames: GameRecord[] = []) {
     ): Promise<PositionAnalysis> => ({
       sfen,
       ...CURRENT_ANALYSIS_IDENTITY,
+      status: 'complete',
+      meta: {
+        requestedNodes: conditions.nodes,
+        nodes: 1,
+        completedDepth: 1,
+        fallback: false,
+        budgetReached: false,
+      },
       conditions,
       candidates: [{ usi: '7g7f', pv: ['7g7f'], depth: 1, scoreCp: 10, mate: null }],
       mateProof: null,
@@ -58,9 +79,105 @@ function setup(initialGames: GameRecord[] = []) {
   return { store, repository, analyze, cancel, persisted: () => persisted };
 }
 describe('棋譜の更新と解析の隔離', () => {
+  it('旧DBを読み込み、停止・再開後のcurrent解析をSQLiteへ保存して再起動後も復元する', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'meeshogi-store-db-'));
+    const terminalSfen = '4k4/3RG4/9/9/9/9/9/9/8K w - 1';
+    const conditions = { nodes: 10000, multiPV: 2 };
+    const currentResult: PositionAnalysis = {
+      sfen: terminalSfen,
+      ...CURRENT_ANALYSIS_IDENTITY,
+      status: 'complete',
+      meta: {
+        requestedNodes: 10000,
+        nodes: 0,
+        completedDepth: 0,
+        fallback: false,
+        budgetReached: false,
+      },
+      conditions,
+      candidates: [],
+      terminal: 'checkmate',
+      mateProof: null,
+      completedAt: '2026-09-22T00:00:00.000Z',
+    };
+    try {
+      const parsed = fixture();
+      const oldAnalysis = {
+        sfen: terminalSfen,
+        engineId: 'sekirei-v0.3.36@old',
+        modelId: 'old-model',
+        conditions,
+        candidates: [],
+        terminal: 'checkmate',
+        mateProof: null,
+        completedAt: '2026-09-12T00:00:00.000Z',
+      } as unknown as PositionAnalysis;
+      const oldGame: GameRecord = {
+        ...parsed,
+        id: 'old-db-game',
+        createdAt: '2026-09-22T00:00:00.000Z',
+        favorite: false,
+        mySide: null,
+        attribution: 'none',
+        moves: [],
+        positions: [terminalSfen],
+        lastViewedPly: 0,
+        analysis: { 0: oldAnalysis },
+      };
+      const path = join(dir, 'data.db');
+      const first = database(path);
+      await first.repository.initialize();
+      await first.repository.insert(oldGame);
+      first.db.close();
+
+      const reopened = database(path);
+      await reopened.repository.initialize();
+      const entered = deferred<void>();
+      const pending = deferred<PositionAnalysis>();
+      const analyze = vi
+        .fn<
+          (
+            sfen: string,
+            conditions: { nodes: number; multiPV: number },
+          ) => Promise<PositionAnalysis>
+        >()
+        .mockImplementationOnce(async () => {
+          entered.resolve();
+          return pending.promise;
+        });
+      const cancel = vi.fn<() => void | Promise<void>>();
+      const store = makeAppStore({
+        openRepository: async () => reopened.repository,
+        analyze,
+        cancel,
+        createId: () => 'unused',
+      });
+      await store.getState().initialize();
+      expect(store.getState().games[0].analysis[0]).toEqual(oldAnalysis);
+
+      const interruptedRun = store.getState().startAnalysis(oldGame.id);
+      await entered.promise;
+      store.getState().stopAnalysis();
+      pending.resolve(currentResult);
+      await interruptedRun;
+      expect((await reopened.repository.load()).games[0].analysis[0]).toEqual(oldAnalysis);
+
+      analyze.mockResolvedValue(currentResult);
+      await store.getState().startAnalysis(oldGame.id);
+      expect((await reopened.repository.load()).games[0].analysis[0]).toEqual(currentResult);
+      reopened.db.close();
+
+      const afterRestart = database(path);
+      await afterRestart.repository.initialize();
+      expect((await afterRestart.repository.load()).games[0].analysis[0]).toEqual(currentResult);
+      afterRestart.db.close();
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
   it('再起動後も旧identityの解析を保持するが、完了件数と再解析の再利用対象にはしない', async () => {
     const parsed = fixture();
-    const old: PositionAnalysis = {
+    const old = {
       sfen: parsed.positions[0],
       engineId: 'sekirei-v0.3.36@old',
       modelId: 'old-model',
@@ -68,7 +185,7 @@ describe('棋譜の更新と解析の隔離', () => {
       candidates: [],
       mateProof: null,
       completedAt: '2026-09-12',
-    };
+    } as unknown as PositionAnalysis;
     const oldGame: GameRecord = {
       ...parsed,
       id: 'reloaded-old',
@@ -91,12 +208,23 @@ describe('棋譜の更新と解析の隔離', () => {
     });
     const run = store.getState().startAnalysis(oldGame.id);
     await entered.promise;
-    expect(store.getState().analysisJob).toMatchObject({ completed: 0, total: parsed.positions.length });
+    expect(store.getState().analysisJob).toMatchObject({
+      completed: 0,
+      total: parsed.positions.length,
+    });
     store.getState().stopAnalysis();
     expect(cancel).toHaveBeenCalled();
     pending.resolve({
       sfen: parsed.positions[0],
       ...CURRENT_ANALYSIS_IDENTITY,
+      status: 'complete',
+      meta: {
+        requestedNodes: 10000,
+        nodes: 1,
+        completedDepth: 1,
+        fallback: false,
+        budgetReached: false,
+      },
       conditions: { nodes: 10000, multiPV: 2 },
       candidates: [],
       mateProof: null,
@@ -124,6 +252,14 @@ describe('棋譜の更新と解析の隔離', () => {
     pending.resolve({
       sfen: game.positions[0],
       ...CURRENT_ANALYSIS_IDENTITY,
+      status: 'complete',
+      meta: {
+        requestedNodes: 10000,
+        nodes: 1,
+        completedDepth: 1,
+        fallback: false,
+        budgetReached: false,
+      },
       conditions: { nodes: 10000, multiPV: 2 },
       candidates: [],
       mateProof: null,
@@ -235,6 +371,14 @@ describe('棋譜の更新と解析の隔離', () => {
     pending.resolve({
       sfen: game.positions[0],
       ...CURRENT_ANALYSIS_IDENTITY,
+      status: 'complete',
+      meta: {
+        requestedNodes: 10000,
+        nodes: 1,
+        completedDepth: 1,
+        fallback: false,
+        budgetReached: false,
+      },
       conditions: { nodes: 10000, multiPV: 2 },
       candidates: [],
       mateProof: null,
@@ -270,6 +414,14 @@ describe('棋譜の更新と解析の隔離', () => {
     initial.resolve({
       sfen: game.positions[0],
       ...CURRENT_ANALYSIS_IDENTITY,
+      status: 'complete',
+      meta: {
+        requestedNodes: 10000,
+        nodes: 1,
+        completedDepth: 1,
+        fallback: false,
+        budgetReached: false,
+      },
       conditions: { nodes: 10000, multiPV: 2 },
       candidates: [],
       mateProof: null,
@@ -331,6 +483,14 @@ describe('棋譜の更新と解析の隔離', () => {
     const result = (sfen: string): PositionAnalysis => ({
       sfen,
       ...CURRENT_ANALYSIS_IDENTITY,
+      status: 'complete',
+      meta: {
+        requestedNodes: 50000,
+        nodes: 1,
+        completedDepth: 1,
+        fallback: false,
+        budgetReached: false,
+      },
       conditions: { nodes: 50000, multiPV: 2 },
       candidates: [],
       mateProof: null,
