@@ -1,0 +1,44 @@
+07:36:49.413 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+07:36:49.415 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+07:36:49.415 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+07:36:49.415 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+07:36:49.415 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Apply configuration RUNNING
+07:36:49.415 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Apply configuration COMPLETED
+07:36:49.416 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Launch app "com.meeshogi.app" with clear state RUNNING
+07:36:49.416 [ INFO] maestro.Maestro.clearAppState$lambda$8: Clearing app state com.meeshogi.app
+07:36:53.282 [ INFO] maestro.Maestro.launchApp$lambda$5: Launching app com.meeshogi.app
+07:36:53.282 [ INFO] maestro.Maestro.launchApp$lambda$5: Stopping com.meeshogi.app app during launch
+07:36:53.502 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Launch app "com.meeshogi.app" with clear state COMPLETED
+07:36:53.502 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: library-screen is visible RUNNING
+07:36:57.712 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: library-screen is visible COMPLETED
+07:36:57.712 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on id: import-button RUNNING
+07:36:57.887 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=棋譜を追加, title=, value=, text=, hintText=, resource-id=import-button, bounds=[334,117][382,165], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=334, y=117, width=48, height=48))
+07:36:58.019 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+07:36:58.021 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (358, 141) using hierarchy based logic for wait
+07:36:58.022 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+07:36:58.023 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+07:36:59.131 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+07:36:59.131 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on id: import-button COMPLETED
+07:36:59.131 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: import-paste is visible RUNNING
+07:36:59.286 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: import-paste is visible COMPLETED
+07:36:59.286 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on id: import-paste RUNNING
+07:36:59.424 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=paste, ペースト, title=, value=, text=, hintText=, resource-id=import-paste, bounds=[277,403][368,451], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=277, y=403, width=91, height=48))
+07:36:59.553 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+07:36:59.554 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (322, 427) using hierarchy based logic for wait
+07:36:59.554 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+07:36:59.554 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+07:37:00.426 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+07:37:00.426 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on id: import-paste COMPLETED
+07:37:00.426 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on (Optional) "Allow Paste|ペーストを許可" RUNNING
+07:37:00.639 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Allow Paste, title=, value=, text=, hintText=, resource-id=, bounds=[57,446][345,494], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=57, y=446, width=288, height=48))
+07:37:00.789 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+07:37:00.790 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (201, 470) using hierarchy based logic for wait
+07:37:00.790 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+07:37:00.790 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+07:37:01.720 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+07:37:01.720 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on (Optional) "Allow Paste|ペーストを許可" COMPLETED
+07:37:01.720 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that ".*${MATE_PLY}手の棋譜を読み取りました.*" is visible RUNNING
+07:38:02.000 [ERROR] maestro.orchestra.Orchestra.executeCommands: [Command execution] CommandFailed: Assertion is false: ".*29手の棋譜を読み取りました.*" is visible
+07:38:02.179 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+07:38:02.179 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+07:38:02.256 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that ".*${MATE_PLY}手の棋譜を読み取りました.*" is visible FAILED

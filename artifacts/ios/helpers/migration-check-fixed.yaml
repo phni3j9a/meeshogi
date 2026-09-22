@@ -1,0 +1,79 @@
+appId: com.meeshogi.app
+---
+# Issue #7 migration check (fixed build): new build over old-ENGINE_ID data.
+# Phase A — before re-analysis: old records excluded from all surfaces.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 180000
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- assertVisible: '.* / 80手'
+- assertNotVisible:
+    id: analysis-ready
+- assertNotVisible: 全局解析が完了しました
+- assertNotVisible: '後手・3手詰め ›'
+- assertNotVisible: '後手・1手詰め ›'
+- takeScreenshot: migration2-01-excluded-before-reanalysis
+# Phase B — re-analysis must now succeed and surface only new-ENGINE_ID points.
+- scrollUntilVisible:
+    element:
+      id: analysis-start
+    direction: DOWN
+    timeout: 30000
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible: 全局解析が完了しました
+    timeout: 300000
+- takeScreenshot: migration2-02-reanalysis-complete
+- scrollUntilVisible:
+    element:
+      id: analysis-ready
+    direction: DOWN
+    timeout: 30000
+- takeScreenshot: migration2-03-analysis-ready
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 350
+- assertVisible: '67 / 80手'
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- takeScreenshot: migration2-04-mate-badge-reanalysis
+- assertVisible: '後手・3手詰め ›'
+# Phase C — restart: only new-ENGINE_ID points, still no old leakage.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 180000
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 350
+- assertVisible: '67 / 80手'
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- assertVisible: '後手・3手詰め ›'
+- takeScreenshot: migration2-05-after-restart

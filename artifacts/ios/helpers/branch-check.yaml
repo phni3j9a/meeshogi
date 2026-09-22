@@ -1,0 +1,39 @@
+appId: com.meeshogi.app
+---
+# Issue #7 check: branch creation + return to mainline (analysis-independent).
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 180000
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- tapOn:
+    id: move-first
+- scrollUntilVisible:
+    element:
+      id: square-2g
+    direction: UP
+    timeout: 30000
+- tapOn:
+    id: square-2g
+- tapOn:
+    id: square-2f
+- assertVisible: 分岐検討
+- scrollUntilVisible:
+    element:
+      text: '0手目から分岐'
+    direction: UP
+- assertVisible: '0手目から分岐'
+- takeScreenshot: branch-01-variation-created
+- scrollUntilVisible:
+    element:
+      text: 本譜に戻る
+    direction: UP
+- tapOn: 本譜に戻る
+- assertVisible: '0 / 80手'
+- takeScreenshot: branch-02-back-to-mainline

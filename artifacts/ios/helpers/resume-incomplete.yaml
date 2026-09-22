@@ -1,0 +1,26 @@
+appId: com.meeshogi.app
+---
+# Issue #7: resume bulk analysis — documents where the job dies on c8db524.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 180000
+- tapOn: '棋譜.*'
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-start
+    direction: DOWN
+    timeout: 30000
+- takeScreenshot: resume-01-before
+- tapOn:
+    id: analysis-start
+- extendedWaitUntil:
+    visible: '.*ネイティブ解析が完了しませんでした.*|全局解析が完了しました'
+    timeout: 300000
+- takeScreenshot: resume-02-outcome

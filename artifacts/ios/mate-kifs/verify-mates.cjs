@@ -95,6 +95,7 @@ for (const [name, game] of Object.entries(GAMES)) {
     '後手：検証後手',
     '手数----指手---------消費時間--',
     ...rows,
+    `${game.usi.length + 1} 詰み   ( 0:01/00:00:${String(game.usi.length + 1).padStart(2, '0')})`,
     game.summary,
     '',
   ].join('\n');

@@ -1,11 +1,19 @@
 meeshogi iOS Simulator acceptance — Issue #7 engine correctness
 ================================================================
 date (UTC)        : 2026-09-22
-commit under test : e9b5e90dc72e9f4e6c7e7f07808ad4130c6e8866 (issue-7-engine-correctness)
+commits under test:
+  RUN-A  e9b5e90dc72e9f4e6c7e7f07808ad4130c6e8866 (issue-7-engine-correctness)
+         -> verdict FAIL (meta.nodes overshoot vs strict parseMeta)
+  RUN-B  c8db52492e155c5c3b6478e1a930672335a8cba0 (same branch, meta fix:
+         meta.nodes only requires non-negative integer; overshoot allowed)
+         -> standard flows all PASS; one NEW engine defect found
+           (status:"incomplete" on node-budget-exhausted midgame positions)
 base              : origin/main @ 29cd8e2 (PR #9 merge; old ENGINE_ID baseline)
 toolchain         : Xcode 26.6 (17F113), iOS 27.0 Simulator, iPhone 18 Pro
                     udid 1308A109-3EE0-4711-9287-85246639DBC7
-build             : Release / iphonesimulator / arm64 — BUILD SUCCEEDED (build.log)
+build             : Release / iphonesimulator / arm64 — BUILD SUCCEEDED
+                    (build.log = c8db524 build; e9b5e90 build.log lives in the
+                    previous evidence commit 3e98d6a)
 app bundle id     : com.meeshogi.app
 engine            : sekirei v0.3.37 @ 7fd1d9b4 (sekirei-core git dep)
 ENGINE_ID         : sekirei-v0.3.37@7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac
@@ -15,40 +23,77 @@ old app (upgrade source): ~/old-app/meeshogi.app built @29cd8e2,
 
 run directories
 ---------------
-runs/20260922T132739Z-5546/  scripts/ci/ios-acceptance.sh (IOS_ACCEPTANCE_MODE=visual)
+RUN-A (e9b5e90):
+runs/20260922T132739Z-5546/  scripts/ci/ios-acceptance.sh (visual)
   licenses-review  : PASSED
-  import-review    : FAILED — scrollUntilVisible id=analysis-ready timed out (180s)
-  ios-visual-review: NOT RUN — script exits on first flow failure (set -e)
-runs/manual-import-only/     trimmed import flow — PASSED (game re-imported, clean state)
-runs/manual-ios-visual2/     .maestro/ios-visual-review.yaml rerun with correct clipboard prep
-                             FAILED — id: analysis-ready not found (same failure signature)
+  import-review    : FAILED — analysis-ready timeout, meta validation banner
+  ios-visual-review: NOT RUN — script exits on first failure (set -e)
+runs/manual-ios-visual2/     ios-visual-review rerun on e9b5e90 —
+                             FAILED (same analysis-ready signature)
+runs/manual-import-only/     trimmed import flow — PASSED
 runs/manual-oldapp-analysis/ analysis-review.yaml vs OLD app (v0.3.36) — PASSED
-                             (produces 81 old-ENGINE_ID analysis records used for migration check)
-runs/manual-migration/       helpers/migration-check.yaml on NEW build over old-analysis
-                             data — PASSED (old records excluded everywhere; re-analysis errors)
+runs/manual-migration/       migration-check on new build over old data —
+                             PASSED (old records excluded everywhere)
+
+RUN-B (c8db524):
+runs/20260922T144439Z-17396/ scripts/ci/ios-acceptance.sh (visual)
+  licenses-review  : PASSED (32s)
+  import-review    : PASSED (58s) — analysis-ready appears once first
+                     record stored (job later pauses; see defect-2)
+  ios-visual-review: PASSED (2m30s) — incl. focused-analysis mate badge
+                     '後手・3手詰め ›' at ply 67
+runs/manual-migration-fixed/ helpers/migration-check-fixed.yaml on c8db524 —
+                             old-ENGINE exclusion asserts PASS; FAILED at
+                             '全局解析が完了しました' wait (defect 2)
+runs/mate-sente/    mate-check-sente.yaml — PASS
+                    (先手勝ち・詰み終局, graph +1500 endpoint @ply29,
+                     全局解析が完了しました, 30 stored records incl. terminal)
+runs/mate-gote/     mate-check-gote.yaml — PASS
+                    (後手勝ち・詰み終局 display; bulk job died at ply 4 ->
+                     -1500 graph endpoint not persistable, transient only)
+runs/branch-check/  helpers/branch-check.yaml — PASS
+                    (分岐検討, 0手目から分岐, 本譜に戻る -> 0 / 80手)
+runs/resume-incomplete/ helpers/resume-incomplete.yaml — defect-2 evidence:
+                    resume advances stored records 10 -> 41 then dies with
+                    banner 'ネイティブ解析が完了しませんでした: incomplete'
+                    (deterministic at ply index 41)
 
 helpers/
-  import-only.yaml      trimmed import (no analysis wait)
-  migration-check.yaml  issue #7 upgrade-path verification flow
+  import-only.yaml           trimmed import (no analysis wait)
+  migration-check.yaml       issue #7 upgrade-path flow (RUN-A)
+  migration-check-fixed.yaml same, hardened (RUN-B): exclusion asserts,
+                             analysis start, completion wait, restart re-asserts
+  mate-check.yaml            parametrized mate-import + focused-analysis flow
+  mate-check-sente.yaml / mate-check-gote.yaml  per-game copies
+  branch-check.yaml          branch create + return to mainline
+  resume-incomplete.yaml     resume-until-error reproducer
 
 mate-kifs/
-  verify-mates.cjs      tsshogi-based generator+verifier (brute-force legal-move scan)
-  verify-output.txt     CHECKMATE CONFIRMED for both KIFs (checked=true, no legal reply)
+  verify-mates.cjs      tsshogi-based generator+verifier (brute-force legal scan)
+  verify-output.txt     CHECKMATE CONFIRMED for both KIFs
   mate-sente-win.kif    29 plies, gote(white) mated  — まで29手で先手の勝ち
                         final SFEN lnsgk+Bsnl/2r2P3/ppppG2pp/6p2/9/2P6/PP1PP1PPP/7R1/LNSGK1SNL w BG2P 1
   mate-gote-win.kif     34 plies, sente(black) mated — まで34手で後手の勝ち
                         final SFEN lns1kg1nl/7s1/p1p1pp1pp/6p2/1p1p5/2P6/PP1Pg1PPP/4b1R2/LNSGKrSNL b Bg2p 1
+  meeshogi-mate-sente.db / meeshogi-mate-gote.db   post-run DB snapshots
 
 engine-probe/
-  probe-output.txt      raw sekirei JSON on host (rlib probe, same model):
-                          - startpos  requested=10000 -> meta.nodes=10001  (OFF-BY-ONE OVER-
-                            SHOOT that trips the new TS meta validation)
-                          - midgame   requested=10000 -> meta.nodes=10000  (exact)
-                          - both mate SFENs -> status=complete, terminal="checkmate",
-                            nodes=0, engineId=new ENGINE_ID
+  probe-output.txt           RUN-A host probe (rlib, same model):
+                               startpos 10000 -> meta.nodes 10001 (overshoot)
+                               midgame  10000 -> exactly 10000
+                               mate SFENs -> status complete, terminal checkmate
+  probe-output-c8db524.txt   RUN-B defect-2 probe:
+                               KeroPona ply41 SFEN @10000 -> status INCOMPLETE
+                                 (completedDepth 0, fallback true, 1 candidate)
+                               same position @50000 -> status COMPLETE
+                                 (completedDepth 3, 2 candidates)
 
 migration/
-  meeshogi-old-analysis.db   DB snapshot after old-app analysis (81 records, old ENGINE_ID)
-  meeshogi-after-upgrade.db  DB snapshot after new-app run (records preserved, excluded)
+  meeshogi-old-analysis.db    DB after old-app analysis (81 records, old ID)
+  meeshogi-after-upgrade.db   DB after upgrade (exclusion verified)
+  meeshogi-fixed-partial.db   c8db524: 41 new-ID + 40 old-ID records coexist
+  acceptance-meeshogi.db*     DB right after RUN-B acceptance (10 records —
+                              import-review's analysis-stop paused the job)
+  after-resume-meeshogi.db*   DB after resume attempt (41 records, died @41)
 
 see REPORT.md for the structured result summary.
