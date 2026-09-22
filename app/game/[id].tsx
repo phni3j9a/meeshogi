@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,15 +16,7 @@ import { applyUsi, boardView, legalMoves, moveLabel } from '@/domain';
 import { PositionAnalysis, Side, SIDE_LABELS } from '@/domain/model';
 import { useAppStore } from '@/store/app-store';
 import { shareKif } from '@/platform/kif-files';
-import {
-  AppText,
-  EmptyState,
-  Icon,
-  IconButton,
-  Notice,
-  Segment,
-  TextButton,
-} from '@/ui/primitives';
+import { AppText, EmptyState, Icon, IconButton, Notice, TextButton } from '@/ui/primitives';
 import { Playback, ShogiBoard } from '@/ui/board';
 import { LineChart } from '@/ui/charts';
 import { openingDescription } from '@/ui/game-row';
@@ -33,20 +33,20 @@ import { currentGameAnalysis, isCompatibleAnalysis } from '@/analysis/cache';
 
 type Branch = { origin: number; positions: string[]; moves: string[]; cursor: number };
 
-/** Render only the legal prefix of the actual engine line, in board notation. */
+/** Advance through the first move, then show the legal replies without repeating the heading. */
 function principalVariationLabel(sfen: string, moves: string[]): string {
   const labels: string[] = [];
   let position = sfen;
-  for (const move of moves.slice(0, 3)) {
+  for (const [index, move] of moves.slice(0, 3).entries()) {
     try {
       const next = applyUsi(position, move);
-      labels.push(moveLabel(position, move));
+      if (index > 0) labels.push(moveLabel(position, move));
       position = next;
     } catch {
       break;
     }
   }
-  return labels.join('  ');
+  return labels.join('  ') + (labels.length === 2 && moves.length > 3 ? ' …' : '');
 }
 
 export default function GameScreen() {
@@ -61,6 +61,7 @@ export default function GameScreen() {
   const updateGame = useAppStore((state) => state.updateGame);
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight, fontScale } = useWindowDimensions();
   const choose = useChoice();
   const [ply, setPly] = useState(game?.lastViewedPly ?? 0);
   const [branch, setBranch] = useState<Branch | null>(null);
@@ -71,7 +72,15 @@ export default function GameScreen() {
   const [focusedAnalysis, setFocusedAnalysis] = useState<PositionAnalysis | null>(null);
   const [focusBusy, setFocusBusy] = useState(false);
   const [error, setError] = useState('');
+  const [rootHeight, setRootHeight] = useState<number | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const focusRequest = useRef(0);
+  // The measured body excludes the native navigation bar. Reserve space for
+  // player rails, evaluation, tabs, a candidate row, and the fixed playback bar.
+  const boardMaxEdge = Math.max(
+    260,
+    Math.min(440, (rootHeight ?? windowHeight - 91) - insets.bottom - 422),
+  );
   const sfen = branch ? branch.positions[branch.cursor] : game?.positions[ply];
   const validMoves = useMemo(() => (sfen ? legalMoves(sfen) : []), [sfen]);
   const position = useMemo(() => (sfen ? boardView(sfen) : null), [sfen]);
@@ -246,6 +255,7 @@ export default function GameScreen() {
       else setBranch({ origin: ply, positions, moves, cursor: Math.min(1, moves.length) });
       setSelected(null);
       setPlaying(false);
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
     } catch (e) {
       setError(errorMessage(e));
     }
@@ -286,11 +296,13 @@ export default function GameScreen() {
       ? branch.moves[branch.cursor - 1]
       : game.moves[branch.origin - 1]?.usi
     : game.moves[ply - 1]?.usi;
+  const mainlineMoveLabel = (movePly: number) =>
+    movePly > 0 ? moveLabel(game.positions[movePly - 1], game.moves[movePly - 1].usi) : '初期局面';
   const currentMoveLabel = branch
     ? branch.cursor > 0
       ? moveLabel(branch.positions[branch.cursor - 1], branch.moves[branch.cursor - 1])
-      : (game.moves[branch.origin - 1]?.label ?? '初期局面')
-    : (game.moves[ply - 1]?.label ?? '初期局面');
+      : mainlineMoveLabel(branch.origin)
+    : mainlineMoveLabel(ply);
   const evaluationColor =
     currentEvaluation.kind === 'missing'
       ? theme.muted
@@ -319,48 +331,61 @@ export default function GameScreen() {
     <View
       style={{ flex: 1, backgroundColor: theme.background, paddingBottom: insets.bottom }}
       testID="game-screen"
+      onLayout={({ nativeEvent }) => setRootHeight(nativeEvent.layout.height)}
     >
       <Stack.Screen
         options={{
           title: branch ? '分岐検討' : '棋譜解析',
+          headerTitleAlign: 'center',
+          headerTitle: () => (
+            <View style={styles.headerTitle}>
+              <AppText maxFontSizeMultiplier={1.1} style={styles.headerName}>
+                {branch ? '分岐検討' : '棋譜解析'}
+              </AppText>
+              <AppText
+                variant="small"
+                tone="secondary"
+                numberOfLines={1}
+                maxFontSizeMultiplier={1.1}
+                style={styles.headerSubtitle}
+              >
+                {branch ? `${branch.origin}手目から分岐` : openingDescription(game)}
+              </AppText>
+            </View>
+          ),
           headerLeft: branch
             ? () => <IconButton label="本譜に戻る" name="previous" onPress={leaveBranch} />
             : undefined,
           headerRight: () => (
-            <IconButton name="more" label="棋譜の操作" onPress={() => void menu()} />
+            <View style={styles.headerActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="盤面を反転"
+                testID="board-flip"
+                onPress={() => setFlipped((value) => !value)}
+                style={({ pressed }) => [styles.headerIcon, { opacity: pressed ? 0.5 : 1 }]}
+              >
+                <Icon name="flip" size={20} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="棋譜の操作"
+                onPress={() => void menu()}
+                style={({ pressed }) => [styles.headerIcon, { opacity: pressed ? 0.5 : 1 }]}
+              >
+                <Icon name="more" />
+              </Pressable>
+            </View>
           ),
         }}
       />
       <ScrollView
+        ref={scrollRef}
         style={{ flex: 1 }}
         contentContainerStyle={styles.scrollContent}
         contentInsetAdjustmentBehavior="automatic"
       >
         <View style={styles.content}>
-          <View style={styles.metadata}>
-            <View
-              style={[styles.mode, { backgroundColor: branch ? theme.accentSoft : theme.winSoft }]}
-            >
-              {branch && <Icon name="branch" size={13} />}
-              <AppText
-                variant="small"
-                tone={branch ? 'accent' : 'win'}
-                style={{ fontWeight: '600' }}
-              >
-                {branch ? '分岐' : '本譜'}
-              </AppText>
-            </View>
-            <AppText variant="caption" tone="secondary" numberOfLines={2} style={{ flex: 1 }}>
-              {branch ? `${branch.origin}手目から分岐` : openingDescription(game)}
-            </AppText>
-            <IconButton
-              name="flip"
-              label="盤面を反転"
-              testID="board-flip"
-              size={20}
-              onPress={() => setFlipped((value) => !value)}
-            />
-          </View>
           {branch && (
             <View style={[styles.branchBanner, { backgroundColor: theme.accentSoft }]}>
               <AppText variant="caption" tone="accent" style={{ flex: 1 }}>
@@ -371,6 +396,7 @@ export default function GameScreen() {
           )}
           <ShogiBoard
             sfen={sfen}
+            maxEdge={boardMaxEdge}
             bottomSide={bottomSide}
             names={{ black: game.blackName, white: game.whiteName }}
             lastMove={lastMove}
@@ -390,27 +416,26 @@ export default function GameScreen() {
             }}
             arrow={settings.showArrows && !selected ? candidates[0]?.usi : undefined}
           />
-          {error ? <Notice text={error} error action="閉じる" onAction={() => setError('')} /> : null}
+          {error ? (
+            <Notice text={error} error action="閉じる" onAction={() => setError('')} />
+          ) : null}
           <View
             testID={
               candidates.length > 0 && currentAnalysis?.sfen === sfen ? 'analysis-ready' : undefined
             }
-            style={[
-              styles.evaluationCard,
-              { backgroundColor: theme.surface, borderColor: theme.border },
-            ]}
+            style={[styles.evaluationSection, { borderColor: theme.border }]}
           >
             <View style={styles.evaluationHeader}>
-              <View style={{ flex: 1, minWidth: 100 }}>
-                <AppText variant="small" tone="secondary">
-                  評価値 · 先手視点
-                </AppText>
+              <View style={styles.evaluationMetric}>
                 <AppText
                   selectable
                   accessibilityLabel={`先手視点の評価値 ${formatEvaluation(currentEvaluation)}`}
                   style={[styles.evaluationValue, { color: evaluationColor }]}
                 >
                   {formatEvaluation(currentEvaluation)}
+                </AppText>
+                <AppText variant="small" tone="secondary">
+                  先手視点
                 </AppText>
               </View>
               <View style={{ alignItems: 'flex-end', gap: 4, flexShrink: 1 }}>
@@ -437,9 +462,11 @@ export default function GameScreen() {
                   </Pressable>
                 ) : (
                   <View style={styles.inline}>
-                    {(focusBusy || (!branch && job?.status === 'running')) && (
+                    {focusBusy || (!branch && job?.status === 'running') ? (
                       <ActivityIndicator size="small" color={theme.win} />
-                    )}
+                    ) : fullyAnalyzed && !branch ? (
+                      <Icon name="check" size={13} color={theme.win} />
+                    ) : null}
                     <AppText variant="small" tone="secondary" style={{ flexShrink: 1 }}>
                       {branch
                         ? focusBusy
@@ -447,7 +474,9 @@ export default function GameScreen() {
                           : '分岐の評価'
                         : focusBusy
                           ? '追加解析中'
-                          : `全局解析 ${completed} / ${game.positions.length}`}
+                          : fullyAnalyzed
+                            ? '全局解析済み'
+                            : `解析 ${completed} / ${game.positions.length}`}
                     </AppText>
                   </View>
                 )}
@@ -465,12 +494,12 @@ export default function GameScreen() {
                 )}
                 selected={ply}
                 onSelect={(next) => go(next)}
-                height={96}
+                height={74}
               />
             )}
             {branch && (
               <AppText variant="small" tone="secondary">
-                {branch.origin + branch.cursor}手目の局面 · 評価は盤面の向きによらず先手視点
+                {branch.origin + branch.cursor}手目 · 分岐の評価値
               </AppText>
             )}
           </View>
@@ -524,9 +553,35 @@ export default function GameScreen() {
               </AppText>
             </View>
           )}
-          {!branch && <Segment labels={['候補手', '棋譜']} selected={tab} onChange={setTab} />}
+          {!branch && (
+            <View style={[styles.tabs, { borderColor: theme.border }]}>
+              {['候補手', '棋譜'].map((label, index) => (
+                <Pressable
+                  key={label}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: tab === index }}
+                  testID={index === 0 ? 'analysis-tab-candidates' : 'analysis-tab-record'}
+                  onPress={() => setTab(index)}
+                  style={styles.tab}
+                >
+                  <AppText
+                    variant="caption"
+                    style={{
+                      fontWeight: tab === index ? '700' : '400',
+                      color: tab === index ? theme.text : theme.secondary,
+                    }}
+                  >
+                    {label}
+                  </AppText>
+                  {tab === index && (
+                    <View style={[styles.tabIndicator, { backgroundColor: theme.win }]} />
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          )}
           {tab === 0 || branch ? (
-            <View style={{ gap: 8, paddingTop: 8 }}>
+            <View style={{ backgroundColor: theme.surface }}>
               {candidates.map((candidate, index) => {
                 const pv = principalVariationLabel(
                   sfen,
@@ -542,27 +597,26 @@ export default function GameScreen() {
                       previewCandidate(candidate.pv.length ? candidate.pv : [candidate.usi])
                     }
                     style={({ pressed }) => [
-                      styles.candidateCard,
+                      styles.candidateRow,
                       {
-                        borderColor: index === 0 ? theme.win : theme.border,
-                        backgroundColor: pressed ? theme.inset : theme.surface,
+                        borderBottomColor: theme.border,
+                        backgroundColor: pressed ? theme.inset : 'transparent',
                       },
                     ]}
                   >
-                    <View
-                      style={[
-                        styles.rank,
-                        { backgroundColor: index === 0 ? theme.winSoft : theme.inset },
-                      ]}
-                    >
+                    {index === 0 && (
+                      <View style={[styles.bestCandidateMark, { backgroundColor: theme.win }]} />
+                    )}
+                    <View style={[styles.rank, { width: 44 * fontScale }]}>
                       <AppText
-                        variant="caption"
+                        variant="small"
+                        numberOfLines={1}
                         style={{
                           color: index === 0 ? theme.win : theme.secondary,
-                          fontWeight: '700',
+                          fontWeight: index === 0 ? '600' : '400',
                         }}
                       >
-                        {index + 1}
+                        {['第一候補', '第二候補', '第三候補'][index] ?? `第${index + 1}候補`}
                       </AppText>
                     </View>
                     <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
@@ -573,7 +627,8 @@ export default function GameScreen() {
                         <AppText
                           variant="headline"
                           style={{
-                            color: index === 0 ? theme.win : theme.text,
+                            fontSize: 16,
+                            lineHeight: 24,
                             fontVariant: ['tabular-nums'],
                           }}
                         >
@@ -581,7 +636,7 @@ export default function GameScreen() {
                         </AppText>
                       </View>
                       <AppText variant="small" tone="secondary" numberOfLines={2}>
-                        {pv ? `読み筋  ${pv}` : 'タップして盤上で検討'}
+                        {pv || '盤上で検討する'}
                       </AppText>
                     </View>
                     <Icon name="next" size={13} color={theme.muted} />
@@ -589,12 +644,7 @@ export default function GameScreen() {
                 );
               })}
               {!candidates.length && (
-                <View
-                  style={[
-                    styles.emptyCandidates,
-                    { backgroundColor: theme.surface, borderColor: theme.border },
-                  ]}
-                >
+                <View style={[styles.emptyCandidates, { backgroundColor: theme.surface }]}>
                   {focusBusy || (!branch && job?.status === 'running') ? (
                     <ActivityIndicator size="small" color={theme.win} />
                   ) : (
@@ -628,19 +678,7 @@ export default function GameScreen() {
               )}
             </View>
           ) : (
-            <View
-              style={[
-                styles.movesCard,
-                { backgroundColor: theme.surface, borderColor: theme.border },
-              ]}
-            >
-              <AppText
-                variant="small"
-                tone="secondary"
-                style={{ paddingHorizontal: 10, paddingBottom: 8 }}
-              >
-                {ply === 0 ? '初期局面' : `${ply}手目 ${game.moves[ply - 1].label}`}
-              </AppText>
+            <View style={[styles.movesCard, { backgroundColor: theme.surface }]}>
               {game.moves
                 .slice(Math.max(0, ply - 3), Math.min(game.moves.length, ply + 5))
                 .map((move, index) => {
@@ -664,7 +702,7 @@ export default function GameScreen() {
                         {movePly}
                       </AppText>
                       <AppText style={{ flex: 1, fontWeight: movePly === ply ? '600' : '400' }}>
-                        {move.label}
+                        {mainlineMoveLabel(movePly)}
                       </AppText>
                       <AppText variant="small" tone="secondary">
                         {Math.floor(move.elapsedMs / 1000)}秒
@@ -762,38 +800,46 @@ export default function GameScreen() {
 }
 
 const styles = StyleSheet.create({
-  scrollContent: { paddingHorizontal: 12, paddingTop: 0, paddingBottom: 16, alignItems: 'center' },
+  headerTitle: { alignItems: 'center', maxWidth: 160 },
+  headerName: { fontSize: 17, lineHeight: 22, fontWeight: '600' },
+  headerSubtitle: { fontSize: 11, lineHeight: 14 },
+  headerActions: { flexDirection: 'row', alignItems: 'center' },
+  headerIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  scrollContent: { paddingHorizontal: 12, paddingTop: 2, paddingBottom: 12, alignItems: 'center' },
   content: { width: '100%', maxWidth: 500 },
-  metadata: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 },
-  mode: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
   branchBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    marginBottom: 8,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    marginBottom: 2,
   },
-  evaluationCard: {
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 12,
-    marginTop: 8,
-    marginBottom: 12,
+  evaluationSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 4,
+    marginTop: 2,
+    paddingBottom: 2,
+    gap: 2,
+  },
+  evaluationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 8,
+    minHeight: 32,
   },
-  evaluationHeader: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  evaluationMetric: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flex: 1,
+    gap: 8,
+    minWidth: 112,
+  },
   evaluationValue: {
     fontWeight: '700',
-    fontSize: 30,
-    lineHeight: 36,
+    fontSize: 26,
+    lineHeight: 32,
     fontVariant: ['tabular-nums'],
   },
   inline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -801,36 +847,46 @@ const styles = StyleSheet.create({
     minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   variationMove: {
     minHeight: 44,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 6,
     borderWidth: 1,
     justifyContent: 'center',
   },
-  candidateCard: {
-    minHeight: 72,
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
+  tabs: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth },
+  tab: { minHeight: 44, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
+  tabIndicator: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: -0.5,
+    height: 2,
+    borderRadius: 1,
+  },
+  candidateRow: {
+    minHeight: 60,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
-  rank: {
-    width: 28,
-    minHeight: 28,
-    paddingVertical: 3,
-    borderRadius: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
+  bestCandidateMark: {
+    position: 'absolute',
+    top: 12,
+    bottom: 12,
+    left: 0,
+    width: 3,
+    borderRadius: 2,
   },
+  rank: { width: 44, justifyContent: 'center' },
   candidateHeading: {
     flexDirection: 'row',
     alignItems: 'baseline',
@@ -839,31 +895,29 @@ const styles = StyleSheet.create({
     columnGap: 8,
   },
   emptyCandidates: {
-    minHeight: 88,
-    padding: 16,
-    borderWidth: 1,
-    borderRadius: 14,
+    minHeight: 72,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
-  movesCard: { borderWidth: 1, borderRadius: 14, padding: 8, marginTop: 8 },
+  movesCard: { paddingVertical: 4 },
   recordMove: {
     flexDirection: 'row',
     minHeight: 44,
     alignItems: 'center',
     gap: 12,
-    borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  analysisActions: { marginTop: 16, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
-  progressTrack: { height: 4, borderRadius: 4, marginVertical: 8, overflow: 'hidden' },
-  progressFill: { height: 4, borderRadius: 4 },
+  analysisActions: { marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
+  progressTrack: { height: 3, borderRadius: 3, marginVertical: 6, overflow: 'hidden' },
+  progressFill: { height: 3, borderRadius: 3 },
   actionButtons: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    columnGap: 16,
+    columnGap: 12,
   },
 });
