@@ -8,6 +8,11 @@ export interface Database {
 }
 export class LocalRepository {
   constructor(private readonly db: Database) {}
+  private validateForWrite(game: GameRecord) {
+    // Keep invalid/incomplete current-identity analyses out of SQLite. Old
+    // identities remain readable through decodeGame's migration-free path.
+    decodeGame(game, game.id, game.identity);
+  }
   async initialize() {
     const versions = await this.db.getAllAsync<{ user_version: number }>('PRAGMA user_version');
     if ((versions[0]?.user_version ?? 0) > 1)
@@ -50,6 +55,7 @@ export class LocalRepository {
     }
   }
   async insert(game: GameRecord) {
+    this.validateForWrite(game);
     await this.db.runAsync(
       'INSERT INTO games (id, identity, payload) VALUES (?, ?, ?)',
       game.id,
@@ -58,6 +64,7 @@ export class LocalRepository {
     );
   }
   async save(game: GameRecord) {
+    this.validateForWrite(game);
     await this.db.runAsync(
       'UPDATE games SET payload = ? WHERE id = ?',
       JSON.stringify(game),

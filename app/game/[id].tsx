@@ -28,10 +28,12 @@ import { errorMessage, useChoice } from '@/ui/use-choice';
 import {
   formatEvaluation,
   isDisplayableMateProof,
+  resolveCurrentEvaluation,
   toEvaluationChartValue,
   toEvaluationValue,
 } from '@/ui/evaluation';
 import { currentGameAnalysis, isCompatibleAnalysis } from '@/analysis/cache';
+import { analysisJobProcessed, partialAnalysisMessage } from '@/store/analysis-job';
 
 type Branch = { origin: number; positions: string[]; moves: string[]; cursor: number };
 export default function GameScreen() {
@@ -82,7 +84,11 @@ export default function GameScreen() {
         : null;
   const candidates =
     currentAnalysis?.candidates.filter((candidate) => validMoves.includes(candidate.usi)) ?? [];
-  const currentEvaluation = toEvaluationValue(candidates[0]);
+  // Keep the same legality filter for the readout as for the candidate rows.
+  // Native results are validated at the boundary, while this also protects the
+  // UI if a persisted record predates that validation.
+  const displayAnalysis = currentAnalysis ? { ...currentAnalysis, candidates } : currentAnalysis;
+  const currentEvaluation = resolveCurrentEvaluation(displayAnalysis);
   const bottomSide: Side = flipped
     ? game?.mySide === 'white'
       ? 'black'
@@ -266,6 +272,8 @@ export default function GameScreen() {
   const completed = mainlineAnalysis.filter(Boolean).length;
   const fullyAnalyzed = completed >= game.positions.length;
   const previousResults = Object.keys(game.analysis).length - completed;
+  const processed = job ? analysisJobProcessed(job) : completed;
+  const partial = job?.status === 'partial';
   return (
     <View
       style={{ flex: 1, backgroundColor: theme.background, paddingBottom: insets.bottom }}
@@ -396,7 +404,7 @@ export default function GameScreen() {
         {!branch && (
           <LineChart
             values={mainlineAnalysis.map((result) =>
-              toEvaluationChartValue(toEvaluationValue(result?.candidates[0])),
+              toEvaluationChartValue(resolveCurrentEvaluation(result)),
             )}
             selected={ply}
             onSelect={(next) => go(next)}
@@ -542,18 +550,21 @@ export default function GameScreen() {
                 : currentAnalysis
                   ? '分岐の解析結果'
                   : '分岐は未解析'
-              : fullyAnalyzed
-                ? '全局解析が完了しました'
-                : job?.status === 'running'
-                  ? `解析中 ${completed} / ${job.total}局面`
-                  : job?.status === 'paused'
-                    ? `解析を停止中 ${completed} / ${job.total}局面`
-                    : job?.status === 'error'
-                      ? '解析を再開できます'
-                      : completed
-                        ? `${completed}局面を解析済み`
-                        : 'この棋譜は未解析です'}
+              : partial
+                ? '解析処理が終了しました'
+                : fullyAnalyzed
+                  ? '全局解析が完了しました'
+                  : job?.status === 'running'
+                    ? `解析中 ${processed} / ${job.total}局面`
+                    : job?.status === 'paused'
+                      ? `解析を停止中 ${processed} / ${job.total}局面`
+                      : job?.status === 'error'
+                        ? '解析を再開できます'
+                        : completed
+                          ? `解析済み ${completed} / ${game.positions.length}局面`
+                          : 'この棋譜は未解析です'}
           </AppText>
+          {partial && job && <Notice text={partialAnalysisMessage(job)} />}
           {!branch && currentAnalysis && currentAnalysis === focusedAnalysis && (
             <AppText variant="caption" tone="secondary" testID="focused-analysis-ready">
               この局面の追加解析結果を表示中
@@ -565,7 +576,7 @@ export default function GameScreen() {
           {job?.status === 'running' && !branch && (
             <View
               accessibilityRole="progressbar"
-              accessibilityValue={{ now: completed, min: 0, max: job.total }}
+              accessibilityValue={{ now: processed, min: 0, max: job.total }}
               style={{
                 backgroundColor: theme.inset,
                 height: 4,
@@ -578,7 +589,7 @@ export default function GameScreen() {
                   backgroundColor: theme.win,
                   height: 4,
                   borderRadius: 4,
-                  width: `${(completed / job.total) * 100}%`,
+                  width: `${(processed / job.total) * 100}%`,
                 }}
               />
             </View>
@@ -601,7 +612,13 @@ export default function GameScreen() {
                 />
               ) : (
                 <TextButton
-                  label={fullyAnalyzed ? '解析済み' : completed ? '解析を再開' : '解析する'}
+                  label={
+                    fullyAnalyzed
+                      ? '解析済み'
+                      : completed || (job?.budgetShortfallPlies.length ?? 0) > 0
+                        ? '解析を再開'
+                        : '解析する'
+                  }
                   disabled={fullyAnalyzed}
                   testID="analysis-start"
                   onPress={() => void startAnalysis(id).catch((e) => setError(errorMessage(e)))}

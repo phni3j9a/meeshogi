@@ -188,6 +188,7 @@ run_flow player-names .maestro/player-names.yaml
 copy_via_helper "$clipboard_kiou"
 run_flow player-names-kiou .maestro/player-names-kiou.yaml
 run_flow analysis-review .maestro/analysis-review.yaml
+run_flow analysis-partial-review .maestro/analysis-partial-review.yaml
 run_flow candidate-review .maestro/candidate-review.yaml
 run_flow file-import .maestro/file-import.yaml
 run_flow management-review .maestro/management-review.yaml
