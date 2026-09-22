@@ -58,9 +58,9 @@ export const PieceImage = memo(function PieceImage({
           resizeMode="contain"
           fadeDuration={0}
           accessible={false}
-          tintColor="#526879"
-          // The generated sprite supplies the alpha mask. A light wash keeps
-          // its grain and lettering visible, and follows ownership on capture.
+          tintColor="#281400"
+          // Darken toward amber without a pale tint over the ink. The generated
+          // sprite supplies the alpha mask and follows ownership on capture.
           style={[StyleSheet.absoluteFill, { width, height }, styles.goteTone]}
         />
       )}
@@ -69,5 +69,5 @@ export const PieceImage = memo(function PieceImage({
 });
 
 const styles = StyleSheet.create({
-  goteTone: { opacity: 0.14 },
+  goteTone: { opacity: 0.2 },
 });
