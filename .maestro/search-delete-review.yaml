@@ -25,9 +25,10 @@ appId: com.meeshogi.app
 - tapOn: 対局情報を確認・修正
 - scrollUntilVisible:
     element:
-      text: この棋譜を削除
+      text: '.*この棋譜を削除'
     direction: DOWN
-- tapOn: この棋譜を削除
+- tapOn:
+    text: '.*この棋譜を削除'
 - assertVisible: 棋譜を削除しますか？
 - takeScreenshot: 49-delete-confirmation
 - tapOn: 削除
