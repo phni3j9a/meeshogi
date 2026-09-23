@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isCloudAnalysisResultV1 } from '../../src/cloud/analysis-contract';
+import { ANALYSIS_CONTRACT_VERSION, isCloudAnalysisResultV2 } from '../../src/cloud/analysis-contract';
 import { handleRequest, type DriverClient, type WorkerEnv } from '../src/handler';
 
 const SFEN = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1';
@@ -20,11 +20,21 @@ class FakeDriver implements DriverClient {
   analyzeStatus = 200;
   analyzeBody: unknown = {
     engineId: 'Fake USI Engine',
-    candidates: [{ move: '7g7f', pvUsi: ['7g7f', '3c3d'], scoreCp: -35 }],
+    candidates: [
+      { move: '7g7f', pvUsi: ['7g7f', '3c3d'], depth: 4, scoreCp: -35 },
+      { move: '2g2f', pvUsi: ['2g2f', '8c8d'], depth: 4, scoreCp: 25 },
+      { move: '3g3f', pvUsi: ['3g3f', '8c8d'], depth: 4, scoreCp: 10 },
+    ],
     actualNodes: 320,
     completedDepth: 4,
     elapsedMs: 250,
     terminal: 'ok',
+    requestedMultiPv: 3,
+    effectiveMultiPv: 3,
+    rootLegalMoveCount: 30,
+    engineEpoch: 'epoch-1',
+    restartCount: 0,
+    processId: 1234,
     stats: {
       enginePeakRssKiB: 4096,
       engineRssKiB: 3072,
@@ -39,6 +49,10 @@ class FakeDriver implements DriverClient {
     weightSha256: 'abcdef012345',
     cpuFlags: ['avx2'],
     avx2: true,
+    engineEpoch: 'epoch-1',
+    restartCount: 0,
+    lastRestartReason: null,
+    processId: 1234,
   };
   healthStatus = 200;
   stopBody: unknown = { stopped: true };
@@ -47,7 +61,23 @@ class FakeDriver implements DriverClient {
     this.requests.push(request);
     const path = new URL(request.url).pathname;
     if (path === '/health') return response(this.healthBody, this.healthStatus);
-    if (path === '/analyze') return response(this.analyzeBody, this.analyzeStatus);
+    if (path === '/analyze') {
+      if (this.analyzeStatus !== 200) return response(this.analyzeBody, this.analyzeStatus);
+      const requestBody = await request.clone().json() as { multipv?: number; sfen?: string };
+      const requestedMultiPv = requestBody.multipv ?? 1;
+      const effectiveMultiPv = Math.min(requestedMultiPv, 30);
+      const body = this.analyzeBody as Record<string, unknown>;
+      return response({
+        ...body,
+        contractVersion: body.contractVersion ?? ANALYSIS_CONTRACT_VERSION,
+        sfen: requestBody.sfen,
+        requestedMultiPv,
+        effectiveMultiPv,
+        rootLegalMoveCount: 30,
+        multipv: effectiveMultiPv,
+        candidates: (body.candidates as unknown[]).slice(0, effectiveMultiPv),
+      });
+    }
     if (path === '/stop') return response(this.stopBody);
     return response({ error: 'not_found' }, 404);
   }
@@ -73,7 +103,104 @@ function benchRequest(body: unknown, token = TOKEN): Request {
   });
 }
 
+function validV2Result(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    contractVersion: 2,
+    analysisProfileId: 'free-v1',
+    profileVersion: 1,
+    engineId: 'Fake USI Engine',
+    modelId: 'opaque-model@digest',
+    sfen: SFEN,
+    candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 35281 }],
+    actualNodes: 500,
+    completedDepth: 4,
+    elapsedMs: 1000,
+    multipv: 1,
+    requestedMultiPv: 2,
+    effectiveMultiPv: 1,
+    rootLegalMoveCount: 1,
+    completedAt: '2026-09-24T00:00:00.000Z',
+    terminal: 'ok',
+    engineEpoch: 'e2b1d17a',
+    restartCount: 1,
+    processId: 42,
+    ...overrides,
+  };
+}
+
 describe('staging worker route guards', () => {
+  it('accepts finite cp magnitudes through the shared save-validator bound', () => {
+    for (const scoreCp of [-1_000_000, -35_281, 32_000, 35_281, 1_000_000]) {
+      expect(isCloudAnalysisResultV2(validV2Result({
+        candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp }],
+      }))).toBe(true);
+    }
+    expect(isCloudAnalysisResultV2(validV2Result({
+      candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 1_000_001 }],
+    }))).toBe(false);
+    expect(isCloudAnalysisResultV2(validV2Result({
+      candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: Number.MAX_SAFE_INTEGER + 1 }],
+    }))).toBe(false);
+  });
+
+  it('requires effective MultiPV to match legal count and exact distinct completed candidates', () => {
+    expect(isCloudAnalysisResultV2(validV2Result({ effectiveMultiPv: 2, multipv: 2 }))).toBe(false);
+    expect(isCloudAnalysisResultV2(validV2Result({ rootLegalMoveCount: 3 }))).toBe(false);
+    expect(isCloudAnalysisResultV2(validV2Result({
+      candidates: [
+        { move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 1 },
+        { move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 2 },
+      ],
+      requestedMultiPv: 2,
+      effectiveMultiPv: 2,
+      rootLegalMoveCount: 3,
+      multipv: 2,
+    }))).toBe(false);
+    expect(isCloudAnalysisResultV2(validV2Result({
+      candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 3, scoreCp: 1 }],
+    }))).toBe(false);
+    expect(isCloudAnalysisResultV2(validV2Result({
+      candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 1, lowerbound: true }],
+    }))).toBe(false);
+  });
+
+  it('preserves zero-distance mate sign explicitly and rejects a bare numeric zero', () => {
+    expect(isCloudAnalysisResultV2(validV2Result({
+      terminal: 'mate',
+      candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, mateSign: 'gote' }],
+    }))).toBe(true);
+    expect(isCloudAnalysisResultV2(validV2Result({
+      terminal: 'mate',
+      candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreMate: 0, mateSign: 'gote' }],
+    }))).toBe(false);
+    expect(isCloudAnalysisResultV2(validV2Result({
+      terminal: 'mate',
+      candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreMate: -3, mateSign: 'sente' }],
+    }))).toBe(false);
+  });
+
+  it('distinguishes zero-legal-move context from normal move results', () => {
+    expect(isCloudAnalysisResultV2(validV2Result({
+      candidates: [],
+      completedDepth: 0,
+      multipv: 0,
+      requestedMultiPv: 3,
+      effectiveMultiPv: 0,
+      rootLegalMoveCount: 0,
+      terminal: 'no_legal_moves',
+      terminalDetail: 'checkmate',
+    }))).toBe(true);
+    expect(isCloudAnalysisResultV2(validV2Result({
+      candidates: [],
+      completedDepth: 0,
+      multipv: 0,
+      requestedMultiPv: 3,
+      effectiveMultiPv: 0,
+      rootLegalMoveCount: 0,
+      terminal: 'no_legal_moves',
+    }))).toBe(false);
+  });
+
   it('rejects missing and invalid bearer credentials without forwarding', async () => {
     const driver = new FakeDriver();
     const missing = await handleRequest(
@@ -119,7 +246,7 @@ describe('staging worker route guards', () => {
     const result = await handleRequest(analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1 }), env, driver);
     const body: unknown = await result.json();
     expect(result.status).toBe(200);
-    expect(isCloudAnalysisResultV1(body)).toBe(true);
+    expect(isCloudAnalysisResultV2(body)).toBe(true);
     expect(driver.requests).toHaveLength(1);
     expect(driver.requests[0].headers.has('authorization')).toBe(false);
     expect(await driver.requests[0].json()).toEqual({ sfen: SFEN, movetime_ms: 250, multipv: 1 });
@@ -177,7 +304,7 @@ describe('staging worker route guards', () => {
     const body = await result.json() as Record<string, unknown>;
     expect(result.status).toBe(200);
     const { stats, ...contract } = body;
-    expect(isCloudAnalysisResultV1(contract)).toBe(true);
+    expect(isCloudAnalysisResultV2(contract)).toBe(true);
     expect(driver.requests).toHaveLength(1);
     expect(driver.requests[0].headers.has('authorization')).toBe(false);
     expect(await driver.requests[0].json()).toEqual({
@@ -222,6 +349,36 @@ describe('staging worker route guards', () => {
     driver.analyzeStatus = 503;
     const unavailable = await handleRequest(analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1 }), env, driver);
     expect(unavailable.status).toBe(503);
+  });
+
+  it('preserves a typed protocol error from the container', async () => {
+    const driver = new FakeDriver();
+    driver.analyzeStatus = 502;
+    driver.analyzeBody = { error: 'analysis_failed', reason: 'score_cp_out_of_engine_range' };
+    const result = await handleRequest(analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1 }), env, driver);
+    expect(result.status).toBe(502);
+    expect(await result.json()).toEqual({ error: 'analysis_failed', reason: 'score_cp_out_of_engine_range' });
+  });
+
+  it('rejects a v1 response and unsafe or out-of-range cp values', async () => {
+    const driver = new FakeDriver();
+    driver.analyzeBody = {
+      ...(driver.analyzeBody as Record<string, unknown>),
+      contractVersion: 1,
+    };
+    const legacy = await handleRequest(analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1 }), env, driver);
+    expect(legacy.status).toBe(500);
+    expect(await legacy.json()).toMatchObject({ reason: 'contract_validation_failed' });
+
+    for (const scoreCp of [1_000_001, Number.MAX_SAFE_INTEGER + 1]) {
+      driver.analyzeBody = {
+        ...(driver.analyzeBody as Record<string, unknown>),
+        contractVersion: ANALYSIS_CONTRACT_VERSION,
+        candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp }],
+      };
+      const invalid = await handleRequest(analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1 }), env, driver);
+      expect(invalid.status).toBe(500);
+    }
   });
 
   it('protects health and distinguishes not-ready from a healthy container', async () => {

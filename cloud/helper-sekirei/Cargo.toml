@@ -1,0 +1,22 @@
+[package]
+name = "meeshogi-helper-sekirei"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Rules-only helper for meeshogi cloud analysis"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "helper-sekirei"
+path = "src/main.rs"
+
+[dependencies]
+sekirei-core = { git = "https://github.com/kent-tokyo/sekirei.git", rev = "7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac" }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+panic = "abort"

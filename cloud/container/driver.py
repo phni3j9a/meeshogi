@@ -12,6 +12,7 @@ import signal
 import subprocess
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ PORT = int(os.environ.get("DRIVER_PORT", "8080"))
 ENGINE_PATH = Path(os.environ.get("ENGINE_PATH", "/opt/engine/engine"))
 WEIGHT_PATH = Path(os.environ.get("WEIGHT_PATH", "/opt/engine/nn.bin"))
 OPTIONS_PATH = Path(os.environ.get("ENGINE_OPTIONS_PATH", "/opt/engine/engine_options.txt"))
+HELPER_PATH = Path(os.environ.get("HELPER_PATH", "/opt/app/helper-sekirei"))
 MOVE_RE = re.compile(r"^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 OPTION_RE = re.compile(r"^option name (.+?) type ")
@@ -36,10 +38,32 @@ RELEVANT_CPU_FLAGS = {
     "sse4_1",
     "sse4_2",
 }
+ENGINE_CP_LIMIT = 35_281
+ENGINE_MATE_LIMIT = 100_000
+SEARCH_GRACE_MS = 5_000
+STOP_RESPONSE_GRACE_SECONDS = 1.0
+PROCESS_TERM_GRACE_SECONDS = 2.0
+PROCESS_KILL_GRACE_SECONDS = 2.0
+MAX_RESTART_ATTEMPTS = 3
+MAX_READINESS_ATTEMPTS = 3
+HELPER_TIMEOUT_SECONDS = 3.0
+USI_HANDSHAKE_TIMEOUT_SECONDS = 20.0
+ENGINE_READY_TIMEOUT_SECONDS = 120.0
+POSITION_READY_TIMEOUT_SECONDS = 30.0
 
 
 class DriverError(Exception):
-    pass
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+class ProtocolError(DriverError):
+    """An engine or helper response failed its declared protocol contract."""
+
+
+class EngineUnavailable(DriverError):
+    """The process or readiness handshake failed and recovery did not succeed."""
 
 
 def is_valid_sfen(value: Any) -> bool:
@@ -193,6 +217,7 @@ def _parse_info(line: str) -> dict[str, Any] | None:
                 return None
             info["score_type"] = score_type
             info["score"] = score
+            info["score_raw"] = tokens[index + 2]
             index += 3
             if index < len(tokens) and tokens[index] in {"lowerbound", "upperbound"}:
                 info["bound"] = True
@@ -209,6 +234,56 @@ def _parse_info(line: str) -> dict[str, Any] | None:
     return info
 
 
+def _run_helper(*arguments: str) -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            [str(HELPER_PATH), *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=HELPER_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ProtocolError("helper_unavailable") from error
+    if result.returncode != 0:
+        raise ProtocolError("helper_failed")
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise ProtocolError("helper_invalid_json") from error
+    if not isinstance(value, dict):
+        raise ProtocolError("helper_invalid_response")
+    return value
+
+
+def _legal_position(sfen: str) -> dict[str, Any]:
+    value = _run_helper("legal", "--sfen", sfen)
+    count = value.get("legalMoveCount")
+    moves = value.get("legalMoves")
+    in_check = value.get("inCheck")
+    declaration_win = value.get("declarationWin")
+    if (
+        type(count) is not int
+        or count < 0
+        or count > 512
+        or not isinstance(moves, list)
+        or len(moves) != count
+        or not all(isinstance(move, str) and MOVE_RE.fullmatch(move) for move in moves)
+        or len(set(moves)) != len(moves)
+        or type(in_check) is not bool
+        or type(declaration_win) is not bool
+    ):
+        raise ProtocolError("helper_invalid_legal_moves")
+    return {"legalMoveCount": count, "legalMoves": set(moves), "inCheck": in_check, "declarationWin": declaration_win}
+
+
+def _validate_pv(sfen: str, pv: list[str]) -> None:
+    value = _run_helper("pv-legal", "--sfen", sfen, "--moves", " ".join(pv))
+    if value.get("legal") is not True:
+        raise ProtocolError("illegal_pv")
+
+
 class EngineController:
     def __init__(self) -> None:
         self._output: queue.Queue[str | None] = queue.Queue()
@@ -221,33 +296,49 @@ class EngineController:
         self._engine_id = "unknown"
         self._engine_sha256 = ""
         self._weight_sha256 = ""
+        self._engine_options_sha256 = ""
+        self._epoch = ""
+        self._restart_count = 0
+        self._last_restart_reason: str | None = None
+        self._readiness_failures = 0
         self._error_code = "engine_start_failed"
         self._ready = False
         self._active = False
         self._search_started = False
         self._stop_requested = False
+        self._stop_requested_at = 0.0
         self._cpu_flags = _cpu_flags()
         self._default_threads = 1
         self._default_hash_mb = 256
-        try:
-            self._start()
-        except (DriverError, OSError, subprocess.SubprocessError):
-            self._ready = False
-            self.close()
+        for _ in range(MAX_READINESS_ATTEMPTS):
+            try:
+                self._start_once()
+                self._readiness_failures = 0
+                return
+            except (DriverError, OSError, subprocess.SubprocessError) as error:
+                self._readiness_failures += 1
+                self._error_code = error.reason if isinstance(error, DriverError) else "engine_start_failed"
+                self._terminate_engine()
 
-    def _start(self) -> None:
+    def _start_once(self) -> None:
         expected_engine = os.environ.get("EXPECTED_ENGINE_SHA256", "")
         expected_weight = os.environ.get("EXPECTED_WEIGHT_SHA256", "")
         if not HASH_RE.fullmatch(expected_engine) or not HASH_RE.fullmatch(expected_weight):
             raise DriverError("expected_digest_missing")
-        if not ENGINE_PATH.is_file() or not WEIGHT_PATH.is_file() or not OPTIONS_PATH.is_file():
+        if not ENGINE_PATH.is_file() or not WEIGHT_PATH.is_file() or not OPTIONS_PATH.is_file() or not HELPER_PATH.is_file():
             raise DriverError("private_artifact_missing")
         self._engine_sha256 = _sha256(ENGINE_PATH)
         self._weight_sha256 = _sha256(WEIGHT_PATH)
         if self._engine_sha256 != expected_engine or self._weight_sha256 != expected_weight:
             raise DriverError("private_artifact_digest_mismatch")
+        options_sha256 = _sha256(OPTIONS_PATH)
+        if self._engine_options_sha256 and options_sha256 != self._engine_options_sha256:
+            raise DriverError("engine_options_digest_mismatch")
+        self._engine_options_sha256 = options_sha256
         fv_scale = _parse_engine_options(OPTIONS_PATH)
 
+        self._output = queue.Queue()
+        self._epoch = str(uuid.uuid4())
         self._proc = subprocess.Popen(
             [str(ENGINE_PATH)],
             cwd=str(ENGINE_PATH.parent),
@@ -259,15 +350,22 @@ class EngineController:
             errors="replace",
             bufsize=1,
         )
-        self._reader = threading.Thread(target=self._read_stdout, daemon=True, name="usi-stdout")
+        output = self._output
+        proc = self._proc
+        self._reader = threading.Thread(
+            target=self._read_stdout,
+            args=(proc, output),
+            daemon=True,
+            name=f"usi-stdout-{proc.pid}",
+        )
         self._reader.start()
         self._send("usi")
-        usi_lines = self._read_until("usiok", timeout_seconds=20)
+        usi_lines = self._read_until("usiok", timeout_seconds=USI_HANDSHAKE_TIMEOUT_SECONDS)
         self._options = {match.group(1) for line in usi_lines if (match := OPTION_RE.match(line))}
         for line in usi_lines:
             if line.startswith("id name "):
                 self._engine_id = line.removeprefix("id name ").strip() or "unknown"
-        required = {"Threads", "USI_Hash", "MultiPV", "USI_Ponder", "EvalDir", "FV_SCALE"}
+        required = {"Threads", "USI_Hash", "MultiPV", "USI_Ponder", "EvalDir", "FV_SCALE", "GenerateAllLegalMoves"}
         if not required.issubset(self._options):
             raise DriverError("engine_options_unsupported")
         if "USI_OwnBook" not in self._options and "BookFile" not in self._options:
@@ -278,32 +376,38 @@ class EngineController:
         self._set_option("Threads", str(self._default_threads))
         self._set_option("USI_Hash", str(self._default_hash_mb))
         self._set_option("MultiPV", "1")
+        self._set_option("GenerateAllLegalMoves", "true")
         self._set_option("USI_Ponder", "false")
         if "USI_OwnBook" in self._options:
             self._set_option("USI_OwnBook", "false")
         if "BookFile" in self._options:
             self._set_option("BookFile", "no_book")
         self._send("isready")
-        self._read_until("readyok", timeout_seconds=120)
+        self._read_until("readyok", timeout_seconds=ENGINE_READY_TIMEOUT_SECONDS)
         if self._proc.poll() is not None:
             raise DriverError("engine_exited_during_start")
         self._ready = True
+        self._error_code = ""
 
-    def _read_stdout(self) -> None:
-        assert self._proc is not None and self._proc.stdout is not None
+    @staticmethod
+    def _read_stdout(proc: subprocess.Popen[str], output: queue.Queue[str | None]) -> None:
+        assert proc.stdout is not None
         try:
-            for raw_line in self._proc.stdout:
-                self._output.put(raw_line.rstrip("\r\n"))
+            for raw_line in proc.stdout:
+                output.put(raw_line.rstrip("\r\n"))
         finally:
-            self._output.put(None)
+            output.put(None)
 
     def _send(self, command: str) -> None:
         proc = self._proc
         if proc is None or proc.stdin is None or proc.poll() is not None:
             raise DriverError("engine_not_running")
-        with self._write_lock:
-            proc.stdin.write(command + "\n")
-            proc.stdin.flush()
+        try:
+            with self._write_lock:
+                proc.stdin.write(command + "\n")
+                proc.stdin.flush()
+        except (BrokenPipeError, OSError) as error:
+            raise DriverError("engine_write_failed") from error
 
     def _set_option(self, name: str, value: str) -> None:
         if name not in self._options:
@@ -334,6 +438,13 @@ class EngineController:
             "engineId": self._engine_id,
             "engineBinarySha256": self._engine_sha256[:12],
             "weightSha256": self._weight_sha256[:12],
+            "engineOptionsSha256": self._engine_options_sha256[:12],
+            "engineEpoch": self._epoch,
+            "processId": self._proc.pid if self._proc is not None else None,
+            "restartCount": self._restart_count,
+            "lastRestartReason": self._last_restart_reason,
+            "readinessFailures": self._readiness_failures,
+            "generateAllLegalMoves": True,
             "cpuFlags": sorted(self._cpu_flags),
             "avx2": "avx2" in self._cpu_flags,
             "stats": stats,
@@ -345,6 +456,7 @@ class EngineController:
             if not self._active:
                 return False
             self._stop_requested = True
+            self._stop_requested_at = time.monotonic()
             search_started = self._search_started
         if not search_started:
             return True
@@ -364,73 +476,114 @@ class EngineController:
         try:
             try:
                 return self._analyze_locked(request)
-            except DriverError:
+            except ProtocolError as error:
+                return 502, {"error": "analysis_failed", "reason": error.reason}
+            except DriverError as error:
+                self._error_code = error.reason
                 self._ready = False
-                self._error_code = "analysis_failure"
-                return 503, {"error": "container_not_ready"}
+                restarted = self._restart_engine(error.reason)
+                if restarted:
+                    return 503, {"error": "container_not_ready", "reason": error.reason}
+                return 503, {"error": "container_not_ready", "reason": "engine_restart_failed"}
         finally:
             with self._state_lock:
                 self._active = False
                 self._search_started = False
                 self._stop_requested = False
+                self._stop_requested_at = 0.0
             self._analysis_lock.release()
 
     def _analyze_locked(self, request: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         if not self.health()["ready"]:
-            return 503, {"error": "container_not_ready"}
+            return 503, {"error": "container_not_ready", "reason": self._error_code or "engine_not_ready"}
         sfen = request["sfen"]
         movetime_ms = request["movetime_ms"]
-        multipv = request["multipv"]
+        requested_multipv = request["multipv"]
         threads = request.get("threads", self._default_threads)
         hash_mb = request.get("hash_mb", self._default_hash_mb)
+        root = _legal_position(sfen)
+        root_legal_move_count = root["legalMoveCount"]
+        effective_multipv = min(requested_multipv, root_legal_move_count)
+        proc = self._proc
+        if proc is None:
+            raise EngineUnavailable("engine_not_running")
+        search_epoch = self._epoch
+        search_process_id = proc.pid
+        if effective_multipv == 0:
+            detail = "checkmate" if root["inCheck"] else "no_legal_moves"
+            return 200, self._result(
+                sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
+                0, 0, 0, "no_legal_moves", search_epoch, search_process_id, detail,
+            )
         self._set_option("Threads", str(threads))
         self._set_option("USI_Hash", str(hash_mb))
-        self._set_option("MultiPV", str(multipv))
+        self._set_option("MultiPV", str(effective_multipv))
+        self._set_option("GenerateAllLegalMoves", "true")
         self._send("usinewgame")
         self._send("isready")
-        self._read_until("readyok", timeout_seconds=30)
+        self._read_until("readyok", timeout_seconds=POSITION_READY_TIMEOUT_SECONDS)
         self._send("position sfen " + sfen)
         with self._state_lock:
             if self._stop_requested:
-                return 200, self._result(sfen, [], multipv, 0, 0, 0, "cancelled")
+                return 200, self._result(
+                    sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
+                    0, 0, 0, "cancelled", search_epoch, search_process_id,
+                )
             self._search_started = True
             self._send(f"go movetime {movetime_ms}")
 
         start = time.monotonic()
-        deadline = start + movetime_ms / 1000.0 + 8.0
-        iterations: dict[int, dict[int, dict[str, Any]]] = {}
+        deadline = start + (movetime_ms + SEARCH_GRACE_MS) / 1000.0
+        iterations: dict[int, dict[str, Any]] = {}
         max_nodes = 0
         reported_elapsed = 0
         bestmove: str | None = None
-        timed_out = False
         while bestmove is None:
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            with self._state_lock:
+                stop_requested = self._stop_requested
+                stop_at = self._stop_requested_at
+            stop_deadline = stop_at + STOP_RESPONSE_GRACE_SECONDS if stop_requested else deadline
+            current_deadline = min(deadline, stop_deadline)
+            remaining = current_deadline - now
             if remaining <= 0:
-                timed_out = True
-                try:
-                    self._send("stop")
-                except DriverError:
-                    pass
-                bestmove = self._wait_for_stop(2.0)
-                break
+                if stop_requested and stop_deadline < deadline:
+                    self._terminate_engine()
+                    self._restart_engine("cancel_stop_timeout")
+                    return 200, self._result(
+                        sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
+                        max_nodes, 0, int((time.monotonic() - start) * 1000), "cancelled",
+                        search_epoch, search_process_id,
+                    )
+                return self._timeout_result(
+                    sfen, requested_multipv, effective_multipv, root_legal_move_count,
+                    search_epoch, search_process_id, max_nodes, start,
+                )
             try:
                 line = self._output.get(timeout=remaining)
             except queue.Empty:
-                timed_out = True
-                try:
-                    self._send("stop")
-                except DriverError:
-                    pass
-                bestmove = self._wait_for_stop(2.0)
-                break
+                continue
             if line is None:
                 self._ready = False
-                return 503, {"error": "container_not_ready"}
+                self._restart_engine("engine_exit")
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                return 200, self._result(
+                    sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
+                    max_nodes, 0, elapsed_ms, "position_failed:engine_exit",
+                    search_epoch, search_process_id,
+                )
             if line.startswith("info "):
                 info = _parse_info(line)
-                if info is not None and info["multipv"] <= multipv:
-                    iteration = iterations.setdefault(info["depth"], {})
-                    iteration[info["multipv"]] = info
+                if info is not None and info["multipv"] <= effective_multipv:
+                    if info["score_type"] == "cp" and abs(info["score"]) > ENGINE_CP_LIMIT:
+                        raise ProtocolError("score_cp_out_of_engine_range")
+                    if info["score_type"] == "mate" and abs(info["score"]) > ENGINE_MATE_LIMIT:
+                        raise ProtocolError("score_mate_out_of_range")
+                    iteration = iterations.setdefault(info["depth"], {"ranks": {}, "duplicates": set()})
+                    ranks = iteration["ranks"]
+                    if info["multipv"] in ranks:
+                        iteration["duplicates"].add(info["multipv"])
+                    ranks[info["multipv"]] = info
                     max_nodes = max(max_nodes, info.get("nodes", 0))
                     reported_elapsed = max(reported_elapsed, info.get("time", 0))
             elif line.startswith("bestmove "):
@@ -438,29 +591,75 @@ class EngineController:
                 bestmove = parts[1] if len(parts) > 1 else ""
 
         elapsed_ms = max(0, int((time.monotonic() - start) * 1000))
-        candidates, completed_depth = self._last_complete_iteration(iterations, multipv, sfen)
+        candidates, completed_depth = self._last_complete_iteration(
+            iterations,
+            effective_multipv,
+            sfen,
+            root["legalMoves"],
+        )
         with self._state_lock:
-            cancelled = self._stop_requested and not timed_out
-        if timed_out:
-            if bestmove is None:
-                self._terminate_engine()
-            return 200, self._result(sfen, [], multipv, max_nodes, completed_depth, elapsed_ms, "timeout")
+            cancelled = self._stop_requested
         if cancelled:
-            return 200, self._result(sfen, [], multipv, max_nodes, completed_depth, elapsed_ms, "cancelled")
+            return 200, self._result(
+                sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
+                max_nodes, 0, elapsed_ms, "cancelled", search_epoch, search_process_id,
+            )
         if bestmove == "resign":
-            return 200, self._result(sfen, [], multipv, max_nodes, 0, elapsed_ms, "resign")
-        if bestmove in {"win", "none", "(none)", "0000"}:
-            return 200, self._result(sfen, [], multipv, max_nodes, 0, elapsed_ms, "mate0")
+            return 200, self._result(
+                sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
+                max_nodes, 0, elapsed_ms, "resign", search_epoch, search_process_id,
+            )
+        if bestmove == "win":
+            if not root["declarationWin"]:
+                raise ProtocolError("unverified_declaration_win")
+            return 200, self._result(
+                sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
+                max_nodes, 0, elapsed_ms, "win", search_epoch, search_process_id, "declaration_win",
+            )
+        if bestmove in {"none", "(none)", "0000"}:
+            raise ProtocolError("bestmove_none_with_legal_moves")
         if not bestmove or not MOVE_RE.fullmatch(bestmove):
-            return 200, self._result(sfen, [], multipv, max_nodes, 0, elapsed_ms, "error")
-        if not candidates:
-            return 200, self._result(sfen, [], multipv, max_nodes, 0, elapsed_ms, "incomplete")
+            raise ProtocolError("invalid_bestmove")
+        if not candidates or bestmove != candidates[0]["move"]:
+            if candidates:
+                raise ProtocolError("bestmove_disagrees_with_multipv_rank_one")
+            return 200, self._result(
+                sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
+                max_nodes, 0, max(elapsed_ms, reported_elapsed), "incomplete",
+                search_epoch, search_process_id,
+            )
 
-        if any(candidate.get("scoreMate") == 0 for candidate in candidates):
-            return 200, self._result(sfen, [], multipv, max_nodes, 0, elapsed_ms, "mate0")
+        terminal = "mate" if any("mateSign" in candidate for candidate in candidates) else "ok"
+        return 200, self._result(
+            sfen, candidates, requested_multipv, effective_multipv, root_legal_move_count,
+            max_nodes, completed_depth, max(elapsed_ms, reported_elapsed), terminal,
+            search_epoch, search_process_id,
+        )
 
-        terminal = "mate" if any("scoreMate" in candidate for candidate in candidates) else "ok"
-        return 200, self._result(sfen, candidates, multipv, max_nodes, completed_depth, max(elapsed_ms, reported_elapsed), terminal)
+    def _timeout_result(
+        self,
+        sfen: str,
+        requested_multipv: int,
+        effective_multipv: int,
+        root_legal_move_count: int,
+        search_epoch: str,
+        search_process_id: int,
+        nodes: int,
+        start: float,
+    ) -> tuple[int, dict[str, Any]]:
+        try:
+            self._send("stop")
+        except DriverError:
+            pass
+        self._wait_for_stop(STOP_RESPONSE_GRACE_SECONDS)
+        self._terminate_engine()
+        self._restart_engine("engine_timeout")
+        elapsed_ms = max(0, int((time.monotonic() - start) * 1000))
+        return 200, self._result(
+            sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
+            nodes, 0, elapsed_ms, "position_failed:engine_timeout",
+            search_epoch, search_process_id,
+        )
 
     def _wait_for_stop(self, timeout_seconds: float) -> str | None:
         deadline = time.monotonic() + timeout_seconds
@@ -478,39 +677,89 @@ class EngineController:
 
     def _terminate_engine(self) -> None:
         proc = self._proc
-        if proc is None or proc.poll() is not None:
-            self._ready = False
-            self._error_code = "engine_stopped"
-            return
-        proc.terminate()
-        try:
-            proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=2)
+        if proc is not None:
+            if proc.poll() is None:
+                try:
+                    proc.send_signal(signal.SIGTERM)
+                    proc.wait(timeout=PROCESS_TERM_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    proc.send_signal(signal.SIGKILL)
+                    proc.wait(timeout=PROCESS_KILL_GRACE_SECONDS)
+                except ProcessLookupError:
+                    proc.wait()
+            else:
+                proc.wait()
+            if self._reader is not None:
+                self._reader.join(timeout=1)
+            for stream in (proc.stdin, proc.stdout):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+        self._proc = None
+        self._reader = None
         self._ready = False
-        self._error_code = "engine_stopped"
+
+    def _restart_engine(self, reason: str) -> bool:
+        self._ready = False
+        self._last_restart_reason = reason
+        if self._proc is not None:
+            self._terminate_engine()
+        while self._restart_count < MAX_RESTART_ATTEMPTS:
+            self._restart_count += 1
+            try:
+                self._start_once()
+                return True
+            except (DriverError, OSError, subprocess.SubprocessError) as error:
+                self._readiness_failures += 1
+                self._error_code = error.reason if isinstance(error, DriverError) else "engine_restart_failed"
+                self._terminate_engine()
+        self._error_code = "engine_restart_failed"
+        return False
 
     @staticmethod
     def _last_complete_iteration(
-        iterations: dict[int, dict[int, dict[str, Any]]], multipv: int, sfen: str
+        iterations: dict[int, dict[str, Any]],
+        multipv: int,
+        sfen: str,
+        legal_moves: set[str],
     ) -> tuple[list[dict[str, Any]], int]:
         sente_to_move = sfen.split()[1] == "b"
         for depth in sorted(iterations, reverse=True):
-            current = iterations[depth]
-            if set(current) < set(range(1, multipv + 1)):
+            iteration = iterations[depth]
+            current = iteration["ranks"]
+            if iteration["duplicates"] or set(current) != set(range(1, multipv + 1)):
                 continue
             candidates: list[dict[str, Any]] = []
             valid = True
+            moves: set[str] = set()
             for rank in range(1, multipv + 1):
                 info = current[rank]
                 pv = info["pv"][:64]
-                if info["bound"] or not pv or not all(MOVE_RE.fullmatch(move) for move in pv):
+                if (
+                    info["bound"]
+                    or not pv
+                    or not all(MOVE_RE.fullmatch(move) for move in pv)
+                    or pv[0] not in legal_moves
+                    or pv[0] in moves
+                ):
                     valid = False
                     break
-                score = info["score"] if sente_to_move else -info["score"]
-                candidate: dict[str, Any] = {"move": pv[0], "pvUsi": pv}
-                candidate["scoreCp" if info["score_type"] == "cp" else "scoreMate"] = score
+                moves.add(pv[0])
+                _validate_pv(sfen, pv)
+                candidate: dict[str, Any] = {"move": pv[0], "pvUsi": pv, "depth": depth}
+                if info["score_type"] == "cp":
+                    score = info["score"] if sente_to_move else -info["score"]
+                    candidate["scoreCp"] = score
+                else:
+                    raw_score = info["score_raw"]
+                    sign = 0 if raw_score in {"0"} else (-1 if raw_score.startswith("-") else 1)
+                    if not sente_to_move:
+                        sign = -sign
+                    candidate["mateSign"] = "sente" if sign > 0 else "gote" if sign < 0 else "unknown"
+                    if info["score"] != 0:
+                        candidate["scoreMate"] = info["score"] if sente_to_move else -info["score"]
                 candidates.append(candidate)
             if valid:
                 return candidates, depth
@@ -520,23 +769,39 @@ class EngineController:
         self,
         sfen: str,
         candidates: list[dict[str, Any]],
-        multipv: int,
+        requested_multipv: int,
+        effective_multipv: int,
+        root_legal_move_count: int,
         nodes: int,
         depth: int,
         elapsed_ms: int,
         terminal: str,
+        epoch: str,
+        process_id: int,
+        terminal_detail: str | None = None,
     ) -> dict[str, Any]:
-        return {
+        process = self._proc
+        result = {
+            "contractVersion": 2,
             "engineId": self._engine_id,
             "sfen": sfen,
             "candidates": candidates,
             "actualNodes": nodes,
             "completedDepth": depth,
             "elapsedMs": elapsed_ms,
-            "multipv": multipv,
+            "multipv": effective_multipv,
+            "requestedMultiPv": requested_multipv,
+            "effectiveMultiPv": effective_multipv,
+            "rootLegalMoveCount": root_legal_move_count,
             "terminal": terminal,
-            "stats": _safe_process_stats(self._proc.pid) if self._proc is not None else {},
+            "engineEpoch": epoch,
+            "restartCount": self._restart_count,
+            "processId": process_id,
+            "stats": _safe_process_stats(process_id),
         }
+        if terminal_detail is not None:
+            result["terminalDetail"] = terminal_detail
+        return result
 
     def close(self) -> None:
         proc = self._proc
@@ -548,23 +813,15 @@ class EngineController:
                 self._analysis_lock.release()
             else:
                 self._terminate_engine()
-        if proc.poll() is None:
+        proc = self._proc
+        if proc is not None and proc.poll() is None:
             try:
                 self._send("quit")
                 proc.wait(timeout=3)
             except (DriverError, subprocess.TimeoutExpired):
-                proc.terminate()
-                try:
-                    proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=2)
-        if self._reader is not None:
-            self._reader.join(timeout=1)
-        for stream in (proc.stdin, proc.stdout):
-            if stream is not None:
-                stream.close()
-        self._ready = False
+                self._terminate_engine()
+        if self._proc is not None:
+            self._terminate_engine()
 
 
 def _validate_driver_request(value: Any) -> dict[str, Any] | None:

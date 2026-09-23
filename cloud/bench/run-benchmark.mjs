@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
@@ -101,6 +102,26 @@ async function parseJsonInput(value, name) {
   } catch (error) {
     throw new Error(`${name} is not valid JSON: ${error.message}`);
   }
+}
+
+async function parseFixturesInput(value) {
+  let bytes;
+  if (!value.trimStart().startsWith('{') && !value.trimStart().startsWith('[')) {
+    try {
+      bytes = await readFile(resolve(value));
+    } catch (error) {
+      throw new Error(`--fixtures must be JSON text or a readable file: ${error.message}`);
+    }
+  } else {
+    bytes = Buffer.from(value, 'utf8');
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(bytes.toString('utf8'));
+  } catch (error) {
+    throw new Error(`--fixtures is not valid JSON: ${error.message}`);
+  }
+  return { parsed, sha256: createHash('sha256').update(bytes).digest('hex') };
 }
 
 function validateIntegerArray(value, field, min, max, fallback) {
@@ -447,8 +468,8 @@ async function main() {
 
   const matrixInput = await parseJsonInput(options['--matrix'], '--matrix');
   const matrix = normalizeMatrix(matrixInput);
-  const fixtureInput = await parseJsonInput(options['--fixtures'], '--fixtures');
-  const fixtures = normalizeFixtures(fixtureInput);
+  const fixtureFile = await parseFixturesInput(options['--fixtures']);
+  const fixtures = normalizeFixtures(fixtureFile.parsed);
   const prices = normalizePrices(await parseJsonInput(options['--price-config'], '--price-config'));
   const warmCount = positiveInteger(options['--warm'] ?? 3, '--warm');
   const coldIdleSeconds = positiveInteger(options['--cold-idle-seconds'] ?? 45, '--cold-idle-seconds', { minimum: 30 });
@@ -464,7 +485,7 @@ async function main() {
   const coldObservations = [];
   let requestInFlight = false;
   let fatal = false;
-  let previousEngineCpuMs = null;
+  let previousEngineCpu = null;
 
   const endpoint = (path) => new URL(path, baseUrl.origin).toString();
   async function sendOne({ path, method, body, phase, fixture, combo, sampleIndex, attempt, retryClassification, coldSampleIndex }) {
@@ -515,12 +536,15 @@ async function main() {
     const cumulativeEngineCpuMs = Number.isSafeInteger(responseObject?.stats?.engineCpuMs)
       ? responseObject.stats.engineCpuMs
       : null;
+    const processIdentity = responseObject
+      ? `${responseObject.engineEpoch ?? ''}:${responseObject.processId ?? ''}`
+      : '';
     const engineCpuDeltaMs = cumulativeEngineCpuMs === null
       ? null
-      : previousEngineCpuMs === null || cumulativeEngineCpuMs < previousEngineCpuMs
+      : previousEngineCpu === null || processIdentity !== previousEngineCpu.identity || cumulativeEngineCpuMs < previousEngineCpu.value
         ? cumulativeEngineCpuMs
-        : cumulativeEngineCpuMs - previousEngineCpuMs;
-    if (cumulativeEngineCpuMs !== null) previousEngineCpuMs = cumulativeEngineCpuMs;
+        : cumulativeEngineCpuMs - previousEngineCpu.value;
+    if (cumulativeEngineCpuMs !== null) previousEngineCpu = { identity: processIdentity, value: cumulativeEngineCpuMs };
     const candidates = responseObject && Array.isArray(responseObject.candidates)
       ? responseObject.candidates.filter((candidate) => candidate && typeof candidate === 'object' && !Array.isArray(candidate))
       : [];
@@ -541,6 +565,9 @@ async function main() {
       responseHeaders,
       responseBody,
       error,
+      engineEpoch: responseObject?.engineEpoch ?? null,
+      restartCount: responseObject?.restartCount ?? null,
+      processId: responseObject?.processId ?? null,
       elapsedMs: responseObject?.elapsedMs ?? null,
       actualNodes: responseObject?.actualNodes ?? null,
       nps: Number.isFinite(responseObject?.actualNodes) && Number.isFinite(responseObject?.elapsedMs) && responseObject.elapsedMs > 0
@@ -684,6 +711,7 @@ async function main() {
     healthResponseHeaders: latestHealth?.headers ?? {},
     cpuFlags: latestHealth?.body?.cpuFlags ?? null,
     fixtureCount: fixtures.length,
+    fixturesSha256: fixtureFile.sha256,
     matrixCombos: matrix,
     warmRepetitions: warmCount,
     coldSamples: coldSampleCount,

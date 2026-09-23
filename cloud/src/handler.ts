@@ -1,8 +1,8 @@
 import {
   ANALYSIS_CONTRACT_VERSION,
-  isCloudAnalysisResultV1,
+  isCloudAnalysisResultV2,
   isStrictShogiSfen,
-  type CloudAnalysisResultV1,
+  type CloudAnalysisResultV2,
 } from '../../src/cloud/analysis-contract';
 
 const MAX_BODY_BYTES = 4096;
@@ -141,8 +141,54 @@ function driverRequest(path: string, method: string, body?: unknown): Request {
   });
 }
 
-function analysisFailure(status = 500): Response {
-  return json({ error: status === 503 ? 'container_not_ready' : 'analysis_failed' }, status);
+function analysisFailure(status = 500, reason?: unknown): Response {
+  const body: Record<string, unknown> = { error: status === 503 ? 'container_not_ready' : 'analysis_failed' };
+  if (typeof reason === 'string' && /^[a-z0-9_:-]{1,80}$/.test(reason)) body.reason = reason;
+  return json(body, status);
+}
+
+async function mapDriverFailure(response: Response): Promise<Response> {
+  if (response.status === 409) return json({ error: 'analysis_conflict' }, 409);
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    // Keep the normal error envelope if the container returned no JSON.
+  }
+  const reason = isRecord(body) ? body.reason : undefined;
+  if (response.status === 503) return analysisFailure(503, reason);
+  return analysisFailure(response.status === 502 ? 502 : 500, reason);
+}
+
+function v2Result(input: AnalyzeInput, payload: Record<string, unknown>, env: WorkerEnv): CloudAnalysisResultV2 | null {
+  if (payload.contractVersion !== ANALYSIS_CONTRACT_VERSION) return null;
+  if (payload.sfen !== input.sfen || payload.requestedMultiPv !== input.multipv) return null;
+  const profileVersion = Number(env.ANALYSIS_PROFILE_VERSION ?? '1');
+  const result: CloudAnalysisResultV2 = {
+    contractVersion: ANALYSIS_CONTRACT_VERSION,
+    analysisProfileId: env.ANALYSIS_PROFILE_ID ?? 'fixed-sfen-staging-v2',
+    profileVersion,
+    engineId: typeof payload.engineId === 'string' ? payload.engineId : '',
+    modelId: env.ANALYSIS_MODEL_ID ?? 'analysis-model-staging-v1',
+    sfen: input.sfen,
+    candidates: payload.candidates as CloudAnalysisResultV2['candidates'],
+    actualNodes: payload.actualNodes as number,
+    completedDepth: payload.completedDepth as number,
+    elapsedMs: payload.elapsedMs as number,
+    multipv: payload.effectiveMultiPv as number,
+    requestedMultiPv: payload.requestedMultiPv as number,
+    effectiveMultiPv: payload.effectiveMultiPv as number,
+    rootLegalMoveCount: payload.rootLegalMoveCount as number,
+    completedAt: new Date().toISOString(),
+    terminal: payload.terminal as CloudAnalysisResultV2['terminal'],
+    engineEpoch: payload.engineEpoch as string,
+    restartCount: payload.restartCount as number,
+    processId: payload.processId as number,
+    ...(payload.terminalDetail === undefined ? {} : { terminalDetail: payload.terminalDetail as CloudAnalysisResultV2['terminalDetail'] }),
+  };
+  if (result.requestedMultiPv !== input.multipv) return null;
+  if (!isCloudAnalysisResultV2(result)) return null;
+  return result;
 }
 
 export async function handleRequest(request: Request, env: WorkerEnv, driver: DriverClient): Promise<Response> {
@@ -201,29 +247,12 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
           ...(input.hashMb === undefined ? {} : { hash_mb: input.hashMb }),
         }),
       );
-      if (response.status === 409) return json({ error: 'analysis_conflict' }, 409);
-      if (response.status === 503) return analysisFailure(503);
-      if (!response.ok) return analysisFailure(500);
+      if (!response.ok) return mapDriverFailure(response);
 
       const payload: unknown = await response.json();
       if (!isRecord(payload)) return analysisFailure(500);
-      const profileVersion = Number(env.ANALYSIS_PROFILE_VERSION ?? '1');
-      const result: CloudAnalysisResultV1 = {
-        contractVersion: ANALYSIS_CONTRACT_VERSION,
-        analysisProfileId: env.ANALYSIS_PROFILE_ID ?? 'fixed-sfen-staging-v1',
-        profileVersion,
-        engineId: typeof payload.engineId === 'string' ? payload.engineId : '',
-        modelId: env.ANALYSIS_MODEL_ID ?? 'analysis-model-staging-v1',
-        sfen: input.sfen,
-        candidates: payload.candidates as CloudAnalysisResultV1['candidates'],
-        actualNodes: payload.actualNodes as number,
-        completedDepth: payload.completedDepth as number,
-        elapsedMs: payload.elapsedMs as number,
-        multipv: input.multipv,
-        completedAt: new Date().toISOString(),
-        terminal: payload.terminal as CloudAnalysisResultV1['terminal'],
-      };
-      if (!isCloudAnalysisResultV1(result)) return analysisFailure(500);
+      const result = v2Result(input, payload, env);
+      if (!result) return analysisFailure(500, 'contract_validation_failed');
 
       const stats: Record<string, number> = {};
       if (isRecord(payload.stats)) {
@@ -250,29 +279,12 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
         multipv: input.multipv,
       }),
     );
-    if (response.status === 409) return json({ error: 'analysis_conflict' }, 409);
-    if (response.status === 503) return analysisFailure(503);
-    if (!response.ok) return analysisFailure(500);
+    if (!response.ok) return mapDriverFailure(response);
 
     const payload: unknown = await response.json();
     if (!isRecord(payload)) return analysisFailure(500);
-    const profileVersion = Number(env.ANALYSIS_PROFILE_VERSION ?? '1');
-    const result: CloudAnalysisResultV1 = {
-      contractVersion: ANALYSIS_CONTRACT_VERSION,
-      analysisProfileId: env.ANALYSIS_PROFILE_ID ?? 'fixed-sfen-staging-v1',
-      profileVersion,
-      engineId: typeof payload.engineId === 'string' ? payload.engineId : '',
-      modelId: env.ANALYSIS_MODEL_ID ?? 'analysis-model-staging-v1',
-      sfen: input.sfen,
-      candidates: payload.candidates as CloudAnalysisResultV1['candidates'],
-      actualNodes: payload.actualNodes as number,
-      completedDepth: payload.completedDepth as number,
-      elapsedMs: payload.elapsedMs as number,
-      multipv: input.multipv,
-      completedAt: new Date().toISOString(),
-      terminal: payload.terminal as CloudAnalysisResultV1['terminal'],
-    };
-    if (!isCloudAnalysisResultV1(result)) return analysisFailure(500);
+    const result = v2Result(input, payload, env);
+    if (!result) return analysisFailure(500, 'contract_validation_failed');
     return json(result);
   } catch {
     return analysisFailure(503);

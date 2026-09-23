@@ -1,26 +1,34 @@
-export const ANALYSIS_CONTRACT_VERSION = 1 as const;
+export const ANALYSIS_CONTRACT_VERSION = 2 as const;
 
 export const ANALYSIS_TERMINAL_STATUSES = [
   'ok',
   'mate',
-  'mate0',
-  'resign',
-  'timeout',
-  'error',
-  'cancelled',
   'incomplete',
+  'position_failed:engine_timeout',
+  'position_failed:engine_exit',
+  'position_failed:engine_restart_failed',
+  'position_failed:protocol_error',
+  'win',
+  'resign',
+  'none',
+  'no_legal_moves',
+  'cancelled',
+  'failed',
 ] as const;
 
 export type AnalysisTerminalStatus = (typeof ANALYSIS_TERMINAL_STATUSES)[number];
-
+export type AnalysisMateSign = 'sente' | 'gote' | 'unknown';
 export type AnalysisCandidate = {
   move: string;
   pvUsi: string[];
+  depth: number;
   scoreCp?: number;
   scoreMate?: number;
+  /** Preserves the sign of USI `mate -0` and identifies an unknown distance. */
+  mateSign?: AnalysisMateSign;
 };
 
-export type CloudAnalysisResultV1 = {
+export type CloudAnalysisResultV2 = {
   contractVersion: typeof ANALYSIS_CONTRACT_VERSION;
   analysisProfileId: string;
   profileVersion: number;
@@ -31,9 +39,18 @@ export type CloudAnalysisResultV1 = {
   actualNodes: number;
   completedDepth: number;
   elapsedMs: number;
+  /** Retained as an alias for the number of returned candidates. */
   multipv: number;
+  requestedMultiPv: number;
+  effectiveMultiPv: number;
+  rootLegalMoveCount: number;
   completedAt: string;
   terminal: AnalysisTerminalStatus;
+  /** Process identity that produced this response, even if a restart followed. */
+  engineEpoch: string;
+  restartCount: number;
+  processId: number;
+  terminalDetail?: 'checkmate' | 'no_legal_moves' | 'declaration_win';
 };
 
 const USI_MOVE_RE = /^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$/;
@@ -49,10 +66,17 @@ const RESULT_KEYS = new Set([
   'completedDepth',
   'elapsedMs',
   'multipv',
+  'requestedMultiPv',
+  'effectiveMultiPv',
+  'rootLegalMoveCount',
   'completedAt',
   'terminal',
+  'engineEpoch',
+  'restartCount',
+  'processId',
+  'terminalDetail',
 ]);
-const CANDIDATE_KEYS = new Set(['move', 'pvUsi', 'scoreCp', 'scoreMate']);
+const CANDIDATE_KEYS = new Set(['move', 'pvUsi', 'depth', 'scoreCp', 'scoreMate', 'mateSign']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -98,42 +122,85 @@ function isShogiSfen(sfen: unknown): sfen is string {
   });
 }
 
-export function isCloudAnalysisResultV1(value: unknown): value is CloudAnalysisResultV1 {
+function isSafeIntegerInRange(value: unknown, minimum: number, maximum: number): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= minimum && (value as number) <= maximum;
+}
+
+function validTerminal(value: unknown): value is AnalysisTerminalStatus {
+  return (ANALYSIS_TERMINAL_STATUSES as readonly unknown[]).includes(value);
+}
+
+function candidateHasExactScore(candidate: Record<string, unknown>): boolean {
+  const hasCp = Object.hasOwn(candidate, 'scoreCp');
+  const hasMateDistance = Object.hasOwn(candidate, 'scoreMate');
+  const hasMateSign = Object.hasOwn(candidate, 'mateSign');
+  if (hasCp) {
+    return !hasMateDistance && !hasMateSign && isSafeIntegerInRange(candidate.scoreCp, -1_000_000, 1_000_000);
+  }
+  if (!hasMateSign) return false;
+  if (candidate.mateSign !== 'sente' && candidate.mateSign !== 'gote' && candidate.mateSign !== 'unknown') return false;
+  if (!hasMateDistance) return true;
+  if (!isSafeIntegerInRange(candidate.scoreMate, -100_000, 100_000) || candidate.scoreMate === 0) return false;
+  return candidate.mateSign === (candidate.scoreMate > 0 ? 'sente' : 'gote');
+}
+
+export function isCloudAnalysisResultV2(value: unknown): value is CloudAnalysisResultV2 {
   if (!isRecord(value) || !hasOnlyKeys(value, RESULT_KEYS)) return false;
   if (value.contractVersion !== ANALYSIS_CONTRACT_VERSION) return false;
   if (typeof value.analysisProfileId !== 'string' || value.analysisProfileId.length === 0) return false;
-  if (!Number.isSafeInteger(value.profileVersion) || (value.profileVersion as number) < 1) return false;
+  if (!isSafeIntegerInRange(value.profileVersion, 1, Number.MAX_SAFE_INTEGER)) return false;
   if (typeof value.engineId !== 'string' || value.engineId.length === 0) return false;
   if (typeof value.modelId !== 'string' || value.modelId.length === 0) return false;
   if (!isShogiSfen(value.sfen)) return false;
-  if (!Number.isSafeInteger(value.actualNodes) || (value.actualNodes as number) < 0) return false;
-  if (!Number.isSafeInteger(value.completedDepth) || (value.completedDepth as number) < 0) return false;
-  if (!Number.isSafeInteger(value.elapsedMs) || (value.elapsedMs as number) < 0) return false;
-  if (!Number.isSafeInteger(value.multipv) || (value.multipv as number) < 1 || (value.multipv as number) > 8) return false;
+  if (!isSafeIntegerInRange(value.actualNodes, 0, Number.MAX_SAFE_INTEGER)) return false;
+  if (!isSafeIntegerInRange(value.completedDepth, 0, Number.MAX_SAFE_INTEGER)) return false;
+  if (!isSafeIntegerInRange(value.elapsedMs, 0, Number.MAX_SAFE_INTEGER)) return false;
+  if (!isSafeIntegerInRange(value.requestedMultiPv, 1, 8)) return false;
+  if (!isSafeIntegerInRange(value.rootLegalMoveCount, 0, 512)) return false;
+  const expectedEffective = Math.min(value.requestedMultiPv, value.rootLegalMoveCount);
+  if (!isSafeIntegerInRange(value.effectiveMultiPv, 0, 8) || value.effectiveMultiPv !== expectedEffective) return false;
+  if (!isSafeIntegerInRange(value.multipv, 0, 8) || value.multipv !== value.effectiveMultiPv) return false;
   if (typeof value.completedAt !== 'string') return false;
   const completedAtMs = Date.parse(value.completedAt);
   if (!Number.isFinite(completedAtMs) || new Date(completedAtMs).toISOString() !== value.completedAt) return false;
-  if (!(ANALYSIS_TERMINAL_STATUSES as readonly unknown[]).includes(value.terminal)) return false;
+  if (!validTerminal(value.terminal)) return false;
+  if (typeof value.engineEpoch !== 'string' || value.engineEpoch.length === 0 || value.engineEpoch.length > 128) return false;
+  if (!isSafeIntegerInRange(value.restartCount, 0, Number.MAX_SAFE_INTEGER)) return false;
+  if (!isSafeIntegerInRange(value.processId, 1, Number.MAX_SAFE_INTEGER)) return false;
+  if (value.terminalDetail !== undefined && !['checkmate', 'no_legal_moves', 'declaration_win'].includes(value.terminalDetail as string)) {
+    return false;
+  }
   if (!Array.isArray(value.candidates) || value.candidates.length > 8) return false;
 
+  const candidateMoves = new Set<string>();
   let hasMateScore = false;
   for (const candidate of value.candidates) {
     if (!isRecord(candidate) || !hasOnlyKeys(candidate, CANDIDATE_KEYS)) return false;
     if (typeof candidate.move !== 'string' || !USI_MOVE_RE.test(candidate.move)) return false;
+    if (candidateMoves.has(candidate.move)) return false;
+    candidateMoves.add(candidate.move);
     if (!Array.isArray(candidate.pvUsi) || candidate.pvUsi.length < 1 || candidate.pvUsi.length > 64) return false;
     if (!candidate.pvUsi.every((move) => typeof move === 'string' && USI_MOVE_RE.test(move))) return false;
     if (candidate.pvUsi[0] !== candidate.move) return false;
-    const hasCp = Object.hasOwn(candidate, 'scoreCp');
-    const hasMate = Object.hasOwn(candidate, 'scoreMate');
-    if (hasCp === hasMate) return false;
-    if (hasCp && (!Number.isSafeInteger(candidate.scoreCp) || (candidate.scoreCp as number) < -32000 || (candidate.scoreCp as number) > 32000)) return false;
-    if (hasMate && (!Number.isSafeInteger(candidate.scoreMate) || Math.abs(candidate.scoreMate as number) > 100000)) return false;
-    hasMateScore ||= hasMate;
+    if (!isSafeIntegerInRange(candidate.depth, 1, Number.MAX_SAFE_INTEGER)) return false;
+    if (!candidateHasExactScore(candidate)) return false;
+    hasMateScore ||= Object.hasOwn(candidate, 'scoreMate') || Object.hasOwn(candidate, 'mateSign');
   }
 
-  if ((value.terminal === 'ok' || value.terminal === 'mate') && value.candidates.length === 0) return false;
-  if (value.terminal === 'mate' && !hasMateScore) return false;
-  if (value.terminal === 'ok' && hasMateScore) return false;
+  if (value.terminal === 'ok' || value.terminal === 'mate') {
+    if (value.effectiveMultiPv < 1 || value.candidates.length !== value.effectiveMultiPv) return false;
+    if (value.completedDepth < 1 || !value.candidates.every((candidate) => candidate.depth === value.completedDepth)) return false;
+    if (value.terminal === 'mate' && !hasMateScore) return false;
+    if (value.terminal === 'ok' && hasMateScore) return false;
+  } else if (value.candidates.length !== 0) {
+    return false;
+  }
+
+  if (value.terminal === 'no_legal_moves' || value.terminal === 'none') {
+    if (value.rootLegalMoveCount !== 0 || value.effectiveMultiPv !== 0) return false;
+    if (value.terminalDetail !== 'checkmate' && value.terminalDetail !== 'no_legal_moves') return false;
+  }
+  if (value.terminal === 'win' && value.terminalDetail !== 'declaration_win') return false;
   return true;
 }
 

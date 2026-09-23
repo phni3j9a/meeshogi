@@ -2,7 +2,7 @@
 
 ## Current status
 
-Issue #17 has passed the **fixed-SFEN gate on staging**: the `meeshogi-analysis-staging` Worker and `meeshogi-analysis-staging-analysiscontainer` have returned a 500 ms / MultiPV 2 analysis using the real engine, and the staging CPU reported AVX2. The serial benchmark on `standard-2` and `standard-3` is complete; see [Benchmark results](#benchmark-results-2026-09-23). D1, Queues, job profiles, app integration, and production resources remain intentionally absent.
+The first staging smoke succeeded with the real engine and AVX2 CPU, and an initial `standard-2` / `standard-3` matrix is recorded below. That matrix predates contract v2 and is reference data only. The W2 repair gate remains open until the new helper/driver image is deployed and the fixed-SFEN, timeout-restart, and corrected benchmark checks are repeated. D1, Queues, job profiles, app integration, and production resources remain intentionally absent.
 
 The cloud path is an evaluation stage. The app's on-device analysis remains in place until the fixed-SFEN gate, cloud benchmark, and both iOS and Android acceptance complete. Cloud connectivity is not a condition for local game management or analysis during migration.
 
@@ -11,18 +11,22 @@ The cloud path is an evaluation stage. The app's on-device analysis remains in p
 - `cloud/src/handler.ts` accepts authenticated `POST /v1/internal/analyze`, `POST /v1/internal/bench/analyze`, `GET /v1/internal/health`, and `POST /v1/internal/stop`. The Worker validates the strict SFEN shape, request bounds, and exact field set before forwarding. It does not forward the bearer token.
 - `/v1/internal/bench/analyze` is staging measurement instrumentation behind the admin bearer token. It stays under `/internal` and must never ship as an app-client endpoint or collide with the future public job API.
 - `AnalysisContainer` is a SQLite-backed Container Durable Object with one `standard-2` instance maximum and a 30-second idle sleep target. The config has one worker named `meeshogi-analysis-staging` and no production or named environment.
-- `cloud/container/driver.py` starts one engine process, verifies engine and weight SHA-256 values before launch, waits for USI readiness, and serializes analysis. It uses `usinewgame` between positions, accepts only bounded numeric controls, and chooses the deepest iteration with all requested MultiPV scores present and exact. Bound scores are not returned as completed candidates.
-- The response uses the versioned, pure TypeScript contract in `src/cloud/analysis-contract.ts`. `modelId` is the opaque public alias `analysis-model-staging-v1`; it does not contain the private model name.
+- `cloud/container/driver.py` verifies the engine and weight SHA-256 values on every fresh process, waits for USI readiness, and serializes analysis. Before search it gets the root legal-move count from `helper-sekirei`, sets `GenerateAllLegalMoves=true`, and searches with `effectiveMultiPv=min(requestedMultiPv, rootLegalMoveCount)`. A complete result needs that many distinct legal first moves, exact scores, and one shared completed depth. Bound scores, duplicate ranks/moves, and partial iterations are never presented as complete.
+- The response uses contract v2 from the pure TypeScript module in `src/cloud/analysis-contract.ts`. Stored centipawn scores are safe integers in ±1,000,000; this pinned engine adapter separately rejects cp values outside its observed ±35,281 range. Scores are neither clamped nor reinterpreted as mate. Mate sign is explicit, including `mate -0` and unknown distance. `modelId` remains the opaque alias `analysis-model-staging-v1`.
+- The driver reports a unique `engineEpoch`, `processId`, and `restartCount` in health and analysis responses. Search deadline is `movetime + 5,000 ms`; timeout sends `stop`, waits at most one second, reaps via SIGTERM then SIGKILL if needed, and starts a fresh, re-verified process. Restart and startup readiness attempts are bounded. Timeout returns `position_failed:engine_timeout`; `incomplete` means the search completed without a full initial iteration and is not a retry hint.
+- `cloud/helper-sekirei` is a rules-only Rust binary pinned to sekirei-core revision `7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac`. It generates the complete legal root move set, verifies declaration-win board conditions, replays PVs for legality, and supports a separately budgeted 1/3-ply mate proof. It does not load a model or engine.
 
-The driver reads `engine_options.txt` as data, not as shell or arbitrary USI commands. The reviewed file contains one setting, `FV_SCALE 40`; startup fails closed unless the file is exactly that allowlisted setting and the engine advertises `FV_SCALE`. It then sends `setoption name FV_SCALE value 40`. The driver also points the engine's `EvalDir` at the bundled `/opt/engine` directory, sets `Threads=1` and `USI_Hash=256`, disables ponder and the opening book, and changes `MultiPV` only within the request bound.
+The driver reads `engine_options.txt` as data, not as shell or arbitrary USI commands. The reviewed file contains one setting, `FV_SCALE 40`; startup fails closed unless the file is exactly that allowlisted setting and the engine advertises `FV_SCALE`. It then sends `setoption name FV_SCALE value 40`. The driver also points the engine's `EvalDir` at `/opt/engine`, sets `Threads=1`, `USI_Hash=256`, and `GenerateAllLegalMoves=true`, disables ponder and the opening book, and changes `MultiPV` only to the helper-derived effective count. The `GenerateAllLegalMoves` setting is part of profile identity.
 
-Health reports the USI engine identity, short binary and weight SHA-256 prefixes, CPU flags (including whether `avx2` is present), readiness, and best-effort process/cgroup statistics. Analysis responses from the benchmark route include process peak/current RSS, cumulative engine CPU time, and cgroup memory when readable. Missing statistics are omitted and never fail a request. Main's fixed-SFEN staging record confirms AVX2 support on the Cloudflare CPU.
+Health reports the USI engine identity, short binary, weight, and options SHA-256 prefixes, `engineEpoch`, `processId`, `restartCount`, `lastRestartReason`, CPU flags (including whether `avx2` is present), readiness, and best-effort process/cgroup statistics. Analysis responses carry the process epoch/PID that produced the result, even when a timeout then starts another process. Benchmark analysis also includes process peak/current RSS, cumulative engine CPU time, and cgroup memory when readable. Missing statistics are omitted and never fail a request.
+
+The terminal values distinguish `ok`, `mate`, `incomplete`, `position_failed:<reason>`, `win`, `resign`, `none` / `no_legal_moves`, `cancelled`, and `failed`. `bestmove win` is only returned as `win` after the helper verifies the board-state conditions for an entering-king declaration; SFEN does not include clock state. The board checks follow the [Japan Shogi Association's declaration conditions](https://www.shogi.or.jp/faq/rules/), excluding the clock condition that is not encoded in SFEN. A zero-legal-move result records whether the side to move is in check. `bestmove resign` and `bestmove none` never receive a synthetic score.
 
 ## Private artifact build and deploy
 
 The engine, `nn.bin`, and `engine_options.txt` are read from the authoritative `sekirei-weight` manifests. `scripts/prepare-private-context.sh` verifies the manifest references and all three artifact hashes, then copies only those three files into a mode-0700 temporary directory outside this repository. It prints a JSON object containing the temporary path and verified digests. A digest mismatch or unexpected options file stops the script. The context persists after success so Main can build from it; Main removes that temporary directory after its build attempt.
 
-The Docker build context must remain outside the checkout. To include the public driver source alongside the three private files, Main can compose a second mode-0700 temporary build context containing the three prepared files plus `cloud/container/driver.py`, then run the Docker build with `cloud/container/Dockerfile`. Pin `BASE_IMAGE` to an Ubuntu 24.04 digest in Main's build command and pass the expected engine / weight digests as build arguments. The Docker image runs as UID/GID 10001 and contains no API token.
+The Docker build context must remain outside the checkout. Main can compose a mode-0700 temporary context containing the three prepared private files, `cloud/container/driver.py`, and the public `cloud/helper-sekirei/` crate under `helper-src/`, then build with `cloud/container/Dockerfile`. A Rust builder stage compiles the helper for linux/amd64; the runtime stage remains Ubuntu 24.04 pinned by the `BASE_IMAGE` digest build argument. Pass the expected engine / weight digests as build arguments. The runtime image runs as UID/GID 10001 and contains no API token.
 
 Wrangler's container image build behavior must be checked by Main against the authorized staging build path before the first deploy. The checked-in config points at `./container/Dockerfile`; never stage private artifacts under the repository to satisfy a local build. If Wrangler cannot consume the external temporary context, Main must use an authorized external image-build / registry path and adjust only the staging image reference before deployment.
 
@@ -43,9 +47,9 @@ Wrangler's container image build behavior must be checked by Main against the au
 
 ## Tests and remaining gate
 
-`cloud/test/handler.test.ts` tests worker authentication, input rejection, error mapping, and result-contract validation, including benchmark bounds and unknown fields. `cloud/test/test_driver.py` uses a synthetic executable and synthetic weight bytes only; it covers complete-iteration selection, bound-score exclusion, mate and sente-score conversion, synthetic process/cgroup metrics, exclusive-search conflict, and invalid SFEN.
+`cloud/test/handler.test.ts` tests worker authentication, input rejection, typed error mapping, and contract-v2 validation, including cp limits, effective MultiPV, mate sign, terminal context, benchmark bounds, and rejection of v1. `cloud/test/test_driver.py` injects both a synthetic engine and helper and synthetic weight bytes; it covers partial/duplicate/depth/bound transcripts, effective MultiPV, cp range, mate signs, terminal values, engine death, timeout kill/restart, restart caps, and next-request recovery. `cargo test --manifest-path cloud/helper-sekirei/Cargo.toml --locked` checks all 12 fixture legal counts, 1- and 3-ply mate, budget exhaustion, check handling, and pawn-drop mate.
 
-Synthetic local tests do not independently verify the live deployment or invoice. The staging record reports the fixed-SFEN analysis and AVX2 gate passed; availability of `standard-3`, the two-size benchmark, and end-to-end costs remain to be measured.
+Synthetic tests and helper tests do not independently verify the live deployment or invoice. The earlier staging smoke and AVX2 response are recorded; this code update still needs a new image/deployment, fixed-SFEN check, and process-restart fault injection on staging. Old benchmark data remains available but is not post-fix acceptance evidence.
 
 ## Benchmark
 
@@ -90,18 +94,18 @@ Keep the token in the private file passed to `--token-file`; neither command out
 
 Each run writes four timestamped files under `--out`:
 
-- `raw-<timestamp>.jsonl`: one line per HTTP request, including request parameters, status/error, latency, retry classification, nodes/depth/terminal/candidates/scores/bounds/incomplete flag, and returned engine statistics. Bearer headers are never written.
+- `raw-<timestamp>.jsonl`: one line per HTTP request, including request parameters, status/error, latency, retry classification, nodes/depth/terminal/candidates/scores/bounds/incomplete flag, engine epoch, restart count, process ID, and returned engine statistics. Bearer headers are never written.
 - `summary-<timestamp>.csv`: warm observations by fixture and combo, with success, wall/engine time, NPS, nodes, depth, terminal counts, bound/incomplete counts, and candidate snapshots.
-- `env-<timestamp>.json`: worker version, configured image digest, instance type, health response, CPU flags, fixture/matrix settings, and runner environment.
+- `env-<timestamp>.json`: worker version, configured image digest, instance type, health response, CPU flags, fixture/matrix settings, SHA-256 of the exact fixture input bytes as `fixturesSha256`, and runner environment.
 - `cost-estimate-<timestamp>.md`: measured engine CPU and conservative resource-cost estimates by combo and cold sample, clearly separated from invoice amounts.
 
 The default prices are dated **2026-09-24**: active vCPU-s **$0.000020**, provisioned GiB-s **$0.0000025**, and provisioned disk GB-s **$0.00000007**. Override them with `--price-config <json-or-file>` using `activeVcpuSecondUsd`, `provisionedGiBSecondUsd`, `provisionedDiskGBSecondUsd`, and optional `instances.standard-2` / `instances.standard-3` specs. The writer treats engine CPU time as measured, active vCPU ceilings and provisioned GiB/GB-seconds as conservative estimates, and explicitly excludes Workers / DO / Queue / D1, egress, logging, monthly base charges, and included allowances where metered usage is unavailable. A request-wall estimate is not a Cloudflare invoice.
 
 The benchmark route is admin-only instrumentation and must never be exposed as part of the public app API. It is not the future asynchronous job API.
 
-## Benchmark results (2026-09-23)
+## Benchmark results (2026-09-23, pre-fix reference)
 
-Image `sha256:145d3983…` ran 1,992 recorded requests across `standard-2` and `standard-3` (raw JSONL under `cloud/bench/results/`). Warm figures are p50 wall latency; `term ok` / `incomplete` / `empty` count 200 responses whose terminal was `ok`, whose terminal was `incomplete`, or whose candidate list was empty.
+Image `sha256:145d3983…` ran 1,992 recorded requests across `standard-2` and `standard-3` (raw JSONL under `cloud/bench/results/`). This table predates contract v2, helper-derived root counts, and the restart path; it is retained as a pre-fix reference and must not be read as corrected acceptance results. Warm figures are p50 wall latency; `term ok` / `incomplete` / `empty` count 200 responses whose terminal was `ok`, whose terminal was `incomplete`, or whose candidate list was empty.
 
 ### `standard-2` (1 vCPU) vs `standard-3` (2 vCPU)
 
@@ -134,17 +138,19 @@ Image `sha256:145d3983…` ran 1,992 recorded requests across `standard-2` and `
 
 Cold-start readiness (`cold-health` to ready): `standard-2` p50 4.4 s / p95 6.2 s / max 18.5 s (n=30); `standard-3` p50 3.6 s / p95 7.4 s / max 11.1 s (n=12). Cold-analyze at 500 ms then completes in ~0.9-1.3 s.
 
-### Findings
+### Findings from the pre-fix reference data
 
 - Wall latency is `movetime + ~350-550 ms` overhead; at 100 ms the overhead dominates (~500 ms wall).
 - `threads=2` yields no NPS gain on 1 vCPU (578-659k) but doubles NPS on 2 vCPU (1.33-1.37M). Threads only pay on `standard-3`.
 - Depth grows ~1-2 plies per movetime doubling: d13-14@100ms → d17-20@1-2s → d20-24@5s.
-- `incomplete`/empty-candidate responses are frequent at ≤500 ms (strict complete-iteration rule cannot fill all MultiPV lines) and rare at ≥1000 ms (~3/36). At ≥1000 ms the residual empties are almost entirely `single-legal-move`, where legal moves (1) < requested MultiPV — a contract-semantics case, not an engine failure.
-- One fixture (`middlegame-150`, hand-heavy position) hangs the engine after its movetime elapses: it emits final `info` lines then never returns `bestmove`, and ignores `stop` (reproduced locally; driver times out, kills, and auto-restarts the engine — verified end-to-end). Deterministic at 5 s on `standard-2` in all four combos; intermittent on `standard-3` (also seen once at 1000 ms and 2000 ms). Other transient 500/503s were rare (~0.4% of requests) and recovered on retry.
+- The historical 15 HTTP 500s are attributed to the now-reproduced contract rejection of engine `score cp` values above ±32,000. A host replay of the recorded `middlegame-150` transcript returned ±35,281, within this build's adapter range; the old Worker validator rejected it. The saved requests returned at normal movetime completion timing, and the benchmark records no `terminal=timeout`, so those 500s are not evidence of an engine timeout.
+- Main separately observed a local `middlegame-150` search that emitted its last `info` around 5,001 ms and ignored `stop` for 25 seconds. That distinct hang path remains unconfirmed: it was not reproduced by the Director's host replay, and no pre-fix restart verification exists. The new synthetic tests exercise timeout→kill→fresh process→next request, but staging fault injection is still outstanding.
+- Earlier `incomplete` / empty-candidate counts include single-legal-move positions under the v1 contract, which treated requested MultiPV as the number to complete. They cannot be compared directly with v2's `effectiveMultiPv` semantics.
 - Per-run cost estimates are in each `cost-estimate-*.md`; they bound container vCPU/GiB/GB-seconds only and exclude Workers/DO/D1/Queues/egress/base charges.
 
-### Implications for profiles (pending Director decision)
+### Staging profile decisions
 
-- Free candidate: 1000 ms / MultiPV 2-3 / threads 1 on `standard-2` — ≥1s virtually eliminates incompletes; threads do not help on 1 vCPU; p95 wall ~2 s.
-- Precision candidate: 2000-5000 ms / MultiPV 2-3 / threads 2 on `standard-3` — doubles NPS, adds ~1-3 plies; rare position-dependent engine hangs mean jobs need bounded retry + acceptable-partial-result semantics.
-- `single-legal-move` needs a contract decision: candidates should return `min(requested, legalMoves)` rather than `incomplete` with an empty list.
+- `free-v1`: 1,000 ms, requested MultiPV 2, Threads 1, Hash 256 MiB, `standard-2` (1 vCPU / 6 GiB / 12 GB).
+- `precision-v1`: 2,000 ms, requested MultiPV 3, Threads 2, Hash 256 MiB, `standard-3` (2 vCPU / 8 GiB / 16 GB).
+- Both use the same engine/model, SFEN-only history, `usinewgame` TT reset per position, `FV_SCALE=40`, no book/Ponder, and `GenerateAllLegalMoves=true`. Effective MultiPV is derived from independent legal generation. These are staging calculation-budget choices, not a strength guarantee. Five seconds remains comparison-only, not an automatic fallback.
+- Re-run the selected profiles on the original fixture set after deploying the fix. Preserve failed requests and missing samples in the denominator; the pre-fix table does not satisfy that gate.
