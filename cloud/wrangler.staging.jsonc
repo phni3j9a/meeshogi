@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "meeshogi-analysis-staging",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-24",
+  "containers": [
+    {
+      "class_name": "AnalysisContainer",
+      "image": "./container/Dockerfile",
+      // Cloudflare Containers documents standard-2 as 1 vCPU, 6 GiB memory, and 12 GB disk.
+      // Main must verify account availability and the current limits reference before deployment.
+      "instance_type": "standard-2",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] }
+  ],
+  "vars": {
+    "ANALYSIS_PROFILE_ID": "fixed-sfen-staging-v1",
+    "ANALYSIS_PROFILE_VERSION": "1",
+    "ANALYSIS_MODEL_ID": "analysis-model-staging-v1"
+  }
+}
