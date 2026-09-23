@@ -18,9 +18,10 @@ appId: com.meeshogi.app
     end: 95%, 30%
 - scrollUntilVisible:
     element:
-      text: サービス
+      text: '.*サービス.*'
     direction: DOWN
-- tapOn: サービス
+- tapOn:
+    text: '.*サービス.*'
 - tapOn: 棋桜
 - scrollUntilVisible:
     element:

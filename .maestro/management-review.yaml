@@ -15,16 +15,18 @@ appId: com.meeshogi.app
 - tapOn: 対局情報を確認・修正
 - scrollUntilVisible:
     element:
-      text: 先手の戦型
+      text: '.*先手の戦型.*'
     direction: DOWN
-- tapOn: 先手の戦型
+- tapOn:
+    text: '.*先手の戦型.*'
 - tapOn: 居飛車
 - assertVisible: '.*居飛車（手動）.*'
 - scrollUntilVisible:
     element:
-      text: 後手の戦型
+      text: '.*後手の戦型.*'
     direction: DOWN
-- tapOn: 後手の戦型
+- tapOn:
+    text: '.*後手の戦型.*'
 - tapOn: 四間飛車
 - assertVisible: '.*四間飛車（手動）.*'
 - assertVisible: 対抗形
@@ -68,9 +70,10 @@ appId: com.meeshogi.app
 - assertVisible: '.*2局.*2勝 0敗.*'
 - scrollUntilVisible:
     element:
-      text: '先後：すべて'
+      text: '.*先後：すべて.*'
     direction: DOWN
-- tapOn: '先後：すべて'
+- tapOn:
+    text: '.*先後：すべて.*'
 - tapOn: 先手
 - scrollUntilVisible:
     element:

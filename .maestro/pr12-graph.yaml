@@ -1,0 +1,101 @@
+# PR #12 native acceptance — evaluation graph interactions on the refreshed
+# analysis screen. Preconditions: the KeroPona game analyzed at 標準 with
+# ply 41 missing (budget shortfall), theme as left by pr12-piece-sets
+# (light, 黄楊 restored).
+# Coordinates below are percentages of the iPhone 18 Pro simulator screen;
+# the plot x-range and vertical center were measured with `maestro
+# hierarchy` on the analysis screen (see artifacts/ios/pr12/hierarchy.json).
+appId: com.meeshogi.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: evaluation-chart
+    direction: DOWN
+- takeScreenshot: 90-graph-overview
+
+# Left-edge tap must land on ply 0.
+- tapOn:
+    point: 'LEFT_EDGE, CHART_Y'
+- assertVisible: '^0 / 80手'
+- takeScreenshot: 91-graph-tap-ply0
+
+# Right-edge tap must land on the final ply (80).
+- tapOn:
+    point: 'RIGHT_EDGE, CHART_Y'
+- assertVisible: '80 / 80手'
+- takeScreenshot: 92-graph-tap-ply80
+
+# Horizontal drag: the scrub badge/readout follows the finger (verified on
+# the recorded video frames) and the release selects the drop point once.
+- swipe:
+    start: 'DRAG_START, CHART_Y'
+    end: 'PLY40_X, CHART_Y'
+    duration: 2500
+- assertVisible: '40 / 80手'
+- takeScreenshot: 93-graph-drag-release-ply40
+
+# A vertical drag on the chart must be cancelled: the page scrolls and the
+# selection stays where the drag began.
+- swipe:
+    start: 'PLY40_X, CHART_Y'
+    end: 'PLY40_X, CHART_Y_DOWN'
+    duration: 700
+- assertVisible: '40 / 80手'
+- takeScreenshot: 94-graph-vertical-drag-cancelled
+
+# Missing data: ply 41 is the known budget-shortfall gap. Tapping it selects
+# the ply, shows the muted badge and the '—' evaluation, and must not show
+# candidates — a missing point is not a normal mate or a terminal result.
+- tapOn:
+    point: 'PLY41_X, CHART_Y'
+- assertVisible: '41 / 80手'
+- takeScreenshot: 95-graph-missing-ply41
+- assertVisible: '—'
+- assertNotVisible:
+    id: candidate-0
+
+# Mate score labels (±M) must not be confused with ordinary centipawns or a
+# terminal checkmate: the ply-80 resign evaluation and the ply-67 mate
+# threat keep their distinct labels on the chart readout (video) and badge.
+- tapOn:
+    point: 'PLY67_X, CHART_Y'
+- assertVisible: '67 / 80手'
+- takeScreenshot: 96-graph-mate-threat-ply67
+
+# Branch vs mainline separation: inside a candidate branch the mainline
+# chart is not rendered at all.
+- tapOn:
+    id: move-first
+- scrollUntilVisible:
+    element:
+      id: square-2g
+    direction: UP
+- tapOn:
+    id: square-2g
+- tapOn:
+    id: square-2f
+- assertVisible: 分岐検討
+- assertNotVisible:
+    id: evaluation-chart
+- takeScreenshot: 97-branch-no-chart
+- scrollUntilVisible:
+    element:
+      text: 本譜に戻る
+    direction: UP
+- tapOn: 本譜に戻る
+- assertVisible: '0 / 80手'
+- scrollUntilVisible:
+    element:
+      id: evaluation-chart
+    direction: DOWN
+- takeScreenshot: 98-graph-back-on-mainline
