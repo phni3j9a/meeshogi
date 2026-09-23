@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 bundle_id='com.meeshogi.testfiles'
 app_name='MeeshogiFixtures.app'
-arch=${IOS_SIM_ARCH:-x86_64}
+arch=${IOS_SIM_ARCH:-$(uname -m)}
 deployment_target=${IOS_SIM_DEPLOYMENT_TARGET:-16.4}
 
 usage() {
