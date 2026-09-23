@@ -28,7 +28,7 @@ run_flow() {
   local output="$run_dir/maestro/$name"
   mkdir -p "$output/test-output"
   trace "flow.start $name"
-  xcrun simctl io "$device" recordVideo "$run_dir/$name.mov" > "$run_dir/$name.record.log" 2>&1 &
+  xcrun simctl io "$device" recordVideo -f "$run_dir/$name.mov" > "$run_dir/$name.record.log" 2>&1 &
   record_pid=$!
   local status=0
   "${MAESTRO_BIN:-maestro}" --device "$device" test \

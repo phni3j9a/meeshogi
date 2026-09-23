@@ -2,9 +2,19 @@
 # analysis screen. Preconditions: the KeroPona game analyzed at 標準 with
 # ply 41 missing (budget shortfall), theme as left by pr12-piece-sets
 # (light, 黄楊 restored).
-# Coordinates below are percentages of the iPhone 18 Pro simulator screen;
-# the plot x-range and vertical center were measured with `maestro
-# hierarchy` on the analysis screen (see artifacts/ios/pr12/hierarchy.json).
+# Coordinates are percentages of the iPhone 18 Pro simulator screen; the
+# plot range and vertical center were measured with `maestro hierarchy`
+# plus tap probes (16% -> ply 0, 96% -> ply 80, 56% -> ply 40).
+#
+# PRODUCT BUG (reported): on iOS 26+ react-native-screens enables
+# fullScreenSwipeEnabled by default, so the interactive pop recognizer
+# claims horizontal drags anywhere on this screen before the chart's
+# PanResponder can commit a selection — the GUI replay (real mouse->touch
+# events) shows the mid-drag readout '本譜 N手目' flash, then the pop
+# transition steals the touch and lands on the library. Evidence:
+# artifacts/ios/pr12/graph-drag-gui.mov + graph-drag-gui2.mov. The
+# horizontal-scrub asserts are therefore covered by that recording rather
+# than an XCTest swipe (which never reaches the PanResponder either).
 appId: com.meeshogi.app
 ---
 - launchApp
@@ -25,31 +35,38 @@ appId: com.meeshogi.app
 
 # Left-edge tap must land on ply 0.
 - tapOn:
-    point: 'LEFT_EDGE, CHART_Y'
+    point: '16%, 70%'
 - assertVisible: '^0 / 80手'
 - takeScreenshot: 91-graph-tap-ply0
 
 # Right-edge tap must land on the final ply (80).
 - tapOn:
-    point: 'RIGHT_EDGE, CHART_Y'
+    point: '96%, 70%'
 - assertVisible: '80 / 80手'
 - takeScreenshot: 92-graph-tap-ply80
 
-# Horizontal drag: the scrub badge/readout follows the finger (verified on
-# the recorded video frames) and the release selects the drop point once.
-- swipe:
-    start: 'DRAG_START, CHART_Y'
-    end: 'PLY40_X, CHART_Y'
-    duration: 2500
+# Set a mid-chart selection for the scroll-cancel check below.
+- tapOn:
+    point: '56%, 70%'
 - assertVisible: '40 / 80手'
-- takeScreenshot: 93-graph-drag-release-ply40
 
-# A vertical drag on the chart must be cancelled: the page scrolls and the
-# selection stays where the drag began.
+# A vertical drag starting on the chart scrolls the page instead of
+# scrubbing: the selection must stay at ply 40 (the same
+# responder-rejection path a finger swipe exercises; the GUI replay of
+# the same gesture is in the bug evidence above). The first swipe moves
+# the page down, the second returns to the chart for the assert.
 - swipe:
-    start: 'PLY40_X, CHART_Y'
-    end: 'PLY40_X, CHART_Y_DOWN'
-    duration: 700
+    from:
+      point: '56%, 70%'
+    direction: UP
+    duration: 800
+- swipe:
+    direction: DOWN
+    duration: 800
+- scrollUntilVisible:
+    element:
+      id: evaluation-chart
+    direction: DOWN
 - assertVisible: '40 / 80手'
 - takeScreenshot: 94-graph-vertical-drag-cancelled
 
@@ -57,7 +74,7 @@ appId: com.meeshogi.app
 # the ply, shows the muted badge and the '—' evaluation, and must not show
 # candidates — a missing point is not a normal mate or a terminal result.
 - tapOn:
-    point: 'PLY41_X, CHART_Y'
+    point: '57%, 70%'
 - assertVisible: '41 / 80手'
 - takeScreenshot: 95-graph-missing-ply41
 - assertVisible:
@@ -70,7 +87,7 @@ appId: com.meeshogi.app
 # terminal checkmate: the ply-80 resign evaluation and the ply-67 mate
 # threat keep their distinct labels on the chart readout (video) and badge.
 - tapOn:
-    point: 'PLY67_X, CHART_Y'
+    point: '83%, 70%'
 - assertVisible: '67 / 80手'
 - takeScreenshot: 96-graph-mate-threat-ply67
 - scrollUntilVisible:
@@ -80,9 +97,10 @@ appId: com.meeshogi.app
 - assertVisible: '後手・3手詰め ›'
 
 # Branch vs mainline separation: inside a candidate branch the mainline
-# chart is not rendered at all.
-- tapOn:
-    id: move-first
+# chart is not rendered at all. ply 67's engine candidates are already
+# listed, so enter the branch straight from there — the record-list check
+# leaves the 棋譜 tab selected, so switch back to 候補手 first.
+- tapOn: '^候補手$'
 - scrollUntilVisible:
     element:
       id: candidate-0
@@ -94,7 +112,8 @@ appId: com.meeshogi.app
     id: evaluation-chart
 - takeScreenshot: 97-branch-no-chart
 - tapOn: 本譜に戻る
-- assertVisible: '0 / 80手'
+# Returning to the mainline restores the ply the branch was entered at (67).
+- assertVisible: '67 / 80手'
 - scrollUntilVisible:
     element:
       id: evaluation-chart

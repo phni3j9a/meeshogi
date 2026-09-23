@@ -31,11 +31,24 @@ appId: com.meeshogi.app
       id: evaluation-chart
     direction: DOWN
 - takeScreenshot: layout-02-chart
+# ply 0 has no candidates (標準 analysis covers 39/81 positions only), so
+# verify the first-candidate row at ply 67 where analysis exists.
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 800
+- assertVisible: '67 / 80手'
 - scrollUntilVisible:
     element:
       id: candidate-0
     direction: DOWN
-- assertVisible: '.*第一候補.*'
+# The candidate row's a11y label is the composite '候補1、<move>、評価値…',
+# not the visual '第一候補' caption.
+- assertVisible:
+    id: candidate-0
+- assertVisible: '.*候補1.*'
 - takeScreenshot: layout-03-candidate0
 - scrollUntilVisible:
     element:
@@ -47,13 +60,6 @@ appId: com.meeshogi.app
 - tapOn:
     id: analysis-tab-candidates
 # Mate modal chrome (close affordance) at this size.
-- tapOn:
-    id: move-last
-- tapOn:
-    id: move-prev
-    repeat: 13
-    delay: 800
-- assertVisible: '67 / 80手'
 - scrollUntilVisible:
     element:
       text: '後手・3手詰め ›'

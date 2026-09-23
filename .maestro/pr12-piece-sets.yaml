@@ -22,6 +22,7 @@ appId: com.meeshogi.app
 - takeScreenshot: 60-board-tsuge-dark
 
 # ==== 白木 (shiraki) ====
+- tapOn: '^戻る$|^Back$'
 - tapOn: '設定.*'
 - extendedWaitUntil:
     visible:
@@ -62,6 +63,11 @@ appId: com.meeshogi.app
 - tapOn: ライト
 - tapOn:
     id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
 - extendedWaitUntil:
     visible:
       id: board-flip
@@ -88,6 +94,7 @@ appId: com.meeshogi.app
 - takeScreenshot: 65-mate-sequence-shiraki-light
 - tapOn: 詰め手順を閉じる
 - assertVisible: '67 / 80手'
+- tapOn: '^戻る$|^Back$'
 - tapOn: '設定.*'
 - scrollUntilVisible:
     element:
@@ -98,6 +105,11 @@ appId: com.meeshogi.app
 - tapOn: ダーク
 - tapOn:
     id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
 - takeScreenshot: 66-board-shiraki-dark
 - tapOn:
     id: board-flip
@@ -106,6 +118,7 @@ appId: com.meeshogi.app
     id: board-flip
 
 # ==== 桜木 (sakura) ====
+- tapOn: '^戻る$|^Back$'
 - tapOn: '設定.*'
 - extendedWaitUntil:
     visible:
@@ -144,6 +157,11 @@ appId: com.meeshogi.app
 - tapOn: ライト
 - tapOn:
     id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
 - extendedWaitUntil:
     visible:
       id: board-flip
@@ -164,6 +182,7 @@ appId: com.meeshogi.app
 - takeScreenshot: 71-mate-sequence-sakura-light
 - tapOn: 詰め手順を閉じる
 - assertVisible: '67 / 80手'
+- tapOn: '^戻る$|^Back$'
 - tapOn: '設定.*'
 - scrollUntilVisible:
     element:
@@ -174,6 +193,11 @@ appId: com.meeshogi.app
 - tapOn: ダーク
 - tapOn:
     id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
 - takeScreenshot: 72-board-sakura-dark
 - tapOn:
     id: board-flip
@@ -182,6 +206,7 @@ appId: com.meeshogi.app
     id: board-flip
 
 # ==== 青磁 (seiji) — the set kept for the persistence check ====
+- tapOn: '^戻る$|^Back$'
 - tapOn: '設定.*'
 - extendedWaitUntil:
     visible:
@@ -223,6 +248,11 @@ appId: com.meeshogi.app
 - tapOn: ライト
 - tapOn:
     id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
 - extendedWaitUntil:
     visible:
       id: board-flip
@@ -243,6 +273,7 @@ appId: com.meeshogi.app
 - takeScreenshot: 77-mate-sequence-seiji-light
 - tapOn: 詰め手順を閉じる
 - assertVisible: '67 / 80手'
+- tapOn: '^戻る$|^Back$'
 - tapOn: '設定.*'
 - scrollUntilVisible:
     element:
@@ -253,6 +284,11 @@ appId: com.meeshogi.app
 - tapOn: ダーク
 - tapOn:
     id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
 - takeScreenshot: 78-board-seiji-dark
 - tapOn:
     id: board-flip
@@ -282,6 +318,7 @@ appId: com.meeshogi.app
 - takeScreenshot: 80-board-seiji-after-relaunch-dark
 # Persistence is proven through the settings row (backed by the SQLite
 # settings payload); the picker shot keeps the visual 選択中 evidence.
+- tapOn: '^戻る$|^Back$'
 - tapOn: '設定.*'
 - extendedWaitUntil:
     visible:
@@ -331,6 +368,11 @@ appId: com.meeshogi.app
 - tapOn: ライト
 - tapOn:
     id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
 - extendedWaitUntil:
     visible:
       id: board-flip
