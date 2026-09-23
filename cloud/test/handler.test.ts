@@ -426,6 +426,110 @@ describe('staging worker route guards', () => {
     expect(driver.requests[0].headers.has('authorization')).toBe(false);
   });
 
+  it('routes analyze and bench requests to the profile-selected driver, defaulting to free', async () => {
+    const free = new FakeDriver();
+    const precision = new FakeDriver();
+    const resolver = (profile: 'free-v1' | 'precision-v1'): DriverClient =>
+      profile === 'precision-v1' ? precision : free;
+
+    const defaultResult = await handleRequest(
+      analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1 }),
+      env,
+      resolver,
+    );
+    expect(defaultResult.status).toBe(200);
+    expect(free.requests).toHaveLength(1);
+    expect(precision.requests).toHaveLength(0);
+
+    const precisionResult = await handleRequest(
+      analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1, profile: 'precision-v1' }),
+      env,
+      resolver,
+    );
+    expect(precisionResult.status).toBe(200);
+    expect(free.requests).toHaveLength(1);
+    expect(precision.requests).toHaveLength(1);
+
+    const benchResult = await handleRequest(
+      benchRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1, threads: 2, hashMb: 256, profile: 'precision-v1' }),
+      env,
+      resolver,
+    );
+    expect(benchResult.status).toBe(200);
+    expect(free.requests).toHaveLength(1);
+    expect(precision.requests).toHaveLength(2);
+  });
+
+  it('rejects an unknown internal profile before contacting a driver', async () => {
+    const free = new FakeDriver();
+    const precision = new FakeDriver();
+    const resolver = (profile: 'free-v1' | 'precision-v1'): DriverClient =>
+      profile === 'precision-v1' ? precision : free;
+
+    for (const result of [
+      await handleRequest(analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1, profile: 'turbo-v9' }), env, resolver),
+      await handleRequest(benchRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1, profile: 'turbo-v9' }), env, resolver),
+      await handleRequest(
+        new Request('https://worker.test/v1/internal/health?profile=turbo-v9', { headers: authHeaders() }),
+        env,
+        resolver,
+      ),
+      await handleRequest(
+        new Request('https://worker.test/v1/internal/stop', {
+          method: 'POST',
+          headers: { ...authHeaders(), 'content-type': 'application/json' },
+          body: JSON.stringify({ profile: 'turbo-v9' }),
+        }),
+        env,
+        resolver,
+      ),
+    ]) {
+      expect(result.status).toBe(400);
+    }
+    expect(free.requests).toHaveLength(0);
+    expect(precision.requests).toHaveLength(0);
+  });
+
+  it('routes health and stop to the selected profile', async () => {
+    const free = new FakeDriver();
+    const precision = new FakeDriver();
+    const resolver = (profile: 'free-v1' | 'precision-v1'): DriverClient =>
+      profile === 'precision-v1' ? precision : free;
+
+    const precisionHealth = await handleRequest(
+      new Request('https://worker.test/v1/internal/health?profile=precision-v1', { headers: authHeaders() }),
+      env,
+      resolver,
+    );
+    expect(precisionHealth.status).toBe(200);
+    expect(precision.requests).toHaveLength(1);
+    expect(free.requests).toHaveLength(0);
+
+    const defaultStop = await handleRequest(
+      new Request('https://worker.test/v1/internal/stop', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      env,
+      resolver,
+    );
+    expect(defaultStop.status).toBe(200);
+    expect(free.requests).toHaveLength(1);
+
+    const precisionStop = await handleRequest(
+      new Request('https://worker.test/v1/internal/stop', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'content-type': 'application/json' },
+        body: JSON.stringify({ profile: 'precision-v1' }),
+      }),
+      env,
+      resolver,
+    );
+    expect(precisionStop.status).toBe(200);
+    expect(precision.requests).toHaveLength(2);
+  });
+
   it('returns 404 for unrelated routes', async () => {
     const result = await handleRequest(
       new Request('https://worker.test/'),

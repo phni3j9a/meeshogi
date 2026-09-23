@@ -200,6 +200,16 @@ elif command == "pv-legal":
     if os.environ.get("DRIVER_FAKE_PV_LEGAL") == "false":
         valid = False
     print(json.dumps({"legal": bool(valid)}))
+elif command == "mate-proof":
+    budget = int(option("--budget"))
+    plies = int(option("--plies"))
+    print(json.dumps({
+        "result": "proven",
+        "plies": plies,
+        "nodesUsed": min(7, budget),
+        "budget": budget,
+        "budgetVersion": "sekirei-proof-ops-v1",
+    }))
 else:
     raise SystemExit(2)
 '''
@@ -573,6 +583,44 @@ class DriverTests(unittest.TestCase):
 
     def test_invalid_sfen_is_rejected_before_engine_request(self) -> None:
         self.assertIsNone(driver._validate_driver_request({"sfen": "startpos", "movetime_ms": 250, "multipv": 1}))
+
+    def test_bounded_mate_proof_request_calls_the_helper(self) -> None:
+        controller = self.make_controller()
+        request = {"sfen": START_SFEN, "plies": 3, "budget": 10_000}
+        self.assertEqual(driver._validate_proof_request(request), request)
+        status, proof = controller.prove(request)
+        self.assertEqual(status, 200)
+        self.assertEqual(proof["result"], "proven")
+        self.assertEqual(proof["plies"], 3)
+        self.assertEqual(proof["nodesUsed"], 7)
+        self.assertEqual(proof["budgetVersion"], "sekirei-proof-ops-v1")
+        for invalid in (
+            {"sfen": "startpos", "plies": 3, "budget": 10_000},
+            {"sfen": START_SFEN, "plies": 9, "budget": 10_000},
+            {"sfen": START_SFEN, "plies": 3, "budget": 10_000_001},
+            {"sfen": START_SFEN, "plies": True, "budget": 10_000},
+        ):
+            self.assertIsNone(driver._validate_proof_request(invalid))
+
+    def test_sigstop_fault_hook_is_one_shot_and_timeout_recovers_the_child(self) -> None:
+        with self.scenario("iteration", MEESHOGI_TEST_SIGSTOP_ENGINE="1"), \
+            patch.object(driver, "SEARCH_GRACE_MS", 10), \
+            patch.object(driver, "STOP_RESPONSE_GRACE_SECONDS", 0.01), \
+            patch.object(driver, "PROCESS_TERM_GRACE_SECONDS", 0.05), \
+            patch.object(driver, "PROCESS_KILL_GRACE_SECONDS", 0.5):
+            controller = self.make_controller()
+            started = time.monotonic()
+            status, interrupted = controller.analyze(self.request())
+            elapsed = time.monotonic() - started
+            self.assertEqual(status, 200)
+            self.assertEqual(interrupted["terminal"], "position_failed:engine_timeout")
+            self.assertLess(elapsed, 3)
+            self.assertEqual(controller.health()["ready"], True)
+
+            recovered_status, recovered = controller.analyze(self.request())
+            self.assertEqual(recovered_status, 200)
+            self.assertEqual(recovered["terminal"], "ok")
+            self.assertEqual(controller.health()["restartCount"], 1)
 
     def test_concurrent_analysis_returns_409(self) -> None:
         with self.scenario("slow"):

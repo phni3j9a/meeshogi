@@ -1,56 +1,44 @@
+import { Position } from 'tsshogi';
 import { ANALYSIS_CONTRACT_VERSION, isCloudAnalysisResultV3, isStrictShogiSfen, type CloudAnalysisResultV3 } from '../../src/cloud/analysis-contract';
 import { analyzeWithServerProfile, type DriverClient, type WorkerEnv } from './handler';
 import { JobCoordinator } from './job-coordinator';
 import {
-  ANALYSIS_PROFILES,
-  decodeResultCursor,
-  encodeResultCursor,
-  estimateContainerCostUsd,
-  profileFor,
-  type AdmissionInput,
-  type AnalysisProfile,
-  type CostSnapshot,
-  type ClaimedPosition,
-  type JobChunk,
-  type JobEnvironment,
-  type JobIdentity,
-  type JobStatus,
+  ANALYSIS_PROFILES, classifyTerminal, decodeResultCursor, encodeResultCursor, estimateContainerCostUsd,
+  executionIdentityComponents, profileFor, type AdmissionInput, type AnalysisProfile, type AnalysisProfileId,
+  type AnalysisTerminal, type ClaimedPosition, type CostSnapshot, type JobChunk, type JobEnvironment,
+  type JobIdentity, type JobStatus,
 } from './job-types';
 
 const JOB_PATH = '/v1/jobs';
+const PROFILES_PATH = '/v1/analysis-profiles';
 const KILL_PATH = '/v1/internal/kill';
+const FAULT_PATH = '/v1/internal/fault/arm';
+const CLEAR_BLOCK_PATH = '/v1/internal/profiles/';
 const GLOBAL_COORDINATOR_NAME = 'staging-global';
 const MAX_REQUEST_BYTES = 150_000;
 const MAX_RESULTS_PAGE = 100;
-const FAILURE_TERMINALS = new Set([
-  'position_failed:engine_timeout',
-  'position_failed:engine_exit',
-  'position_failed:engine_restart_failed',
-  'position_failed:protocol_error',
-]);
+const CANCEL_GRACE_MS = 5_000;
+const CANCEL_POLL_MS = 50;
+const PROOF_BUDGET = 10_000;
+const PROOF_PLIES = 3;
+const MAX_JOB_POSITIONS = 513;
 
+export type ProfileDriverRouter = (profile: AnalysisProfileId) => DriverClient;
 type Principal = { id: string; token_sha256: string; precision_enabled: number; revoked: number };
 type JobRow = {
-  id: string;
-  status: JobStatus;
-  profile_id: string;
-  profile_version: number;
-  engine_id: string;
-  model_id: string;
-  instance_type: string;
-  label: string | null;
-  position_count: number;
-  epoch: number;
-  cancel_requested: number;
-  committed_count: number;
-  failed_count: number;
-  stop_reason: string | null;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
+  id: string; owner_id: string; status: JobStatus; profile_id: string; profile_version: number; engine_id: string;
+  model_id: string; instance_type: string; label: string | null; position_count: number; epoch: number;
+  cancel_requested: number; committed_count: number; failed_count: number; stop_reason: string | null;
+  created_at: string; started_at: string | null; completed_at: string | null; execution_identity_hash: string;
+  cost_estimate_usd: number; engine_binary_digest_label: string; vcpu: number;
 };
-type JobPayload = { idempotencyKey: string; profile: AnalysisProfile; positions: string[]; label: string | null };
-type EngineFailure = { code: string; redeliver: boolean };
+type JobPayload = {
+  idempotencyKey: string; profile: AnalysisProfile; initialSfen: string; moves: string[];
+  positions: string[]; label: string | null;
+};
+type JobPayloadParse = { ok: true; payload: JobPayload } | { ok: false; error: 'invalid_request' | 'illegal_move'; moveIndex?: number };
+type EngineFailure = { code: string; transient: boolean; fatalProtocol: boolean };
+type ProofEnvelope = { revision: string; result: string; cost: number; plies: number; budget: number } | null;
 
 function json(body: unknown, status = 200, extraHeaders: HeadersInit = {}): Response {
   const headers = new Headers(extraHeaders);
@@ -58,48 +46,55 @@ function json(body: unknown, status = 200, extraHeaders: HeadersInit = {}): Resp
   headers.set('cache-control', 'no-store');
   return new Response(JSON.stringify(body), { status, headers });
 }
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-
 function hasExactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   const keys = Object.keys(value).sort();
   const expected = [...allowed].sort();
   return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
 }
 
-export function parseJobPayload(value: unknown): JobPayload | null {
-  if (!isRecord(value) || !hasExactKeys(value, ['idempotency_key', 'profile', 'positions', ...(Object.hasOwn(value, 'label') ? ['label'] : [])])) {
-    return null;
+export function replayJobPayload(value: unknown): JobPayloadParse {
+  if (!isRecord(value) || !hasExactKeys(value, ['idempotency_key', 'profile', 'initialSfen', 'moves', ...(Object.hasOwn(value, 'label') ? ['label'] : [])])) {
+    return { ok: false, error: 'invalid_request' };
   }
-  if (typeof value.idempotency_key !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(value.idempotency_key)) return null;
+  if (typeof value.idempotency_key !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(value.idempotency_key)) return { ok: false, error: 'invalid_request' };
   const profile = profileFor(value.profile);
-  if (!profile) return null;
-  if (!Array.isArray(value.positions) || value.positions.length < 1 || value.positions.length > 512) return null;
-  if (!value.positions.every((sfen) => isStrictShogiSfen(sfen))) return null;
+  if (!profile || !isStrictShogiSfen(value.initialSfen)) return { ok: false, error: 'invalid_request' };
+  if (!Array.isArray(value.moves) || value.moves.length > 512 || !value.moves.every((move) => typeof move === 'string' && move.length <= 8)) {
+    return { ok: false, error: 'invalid_request' };
+  }
   let label: string | null = null;
   if (Object.hasOwn(value, 'label')) {
     if (typeof value.label !== 'string' || value.label.length < 1 || value.label.length > 80 || value.label.trim() !== value.label || /[\u0000-\u001f\u007f]/.test(value.label)) {
-      return null;
+      return { ok: false, error: 'invalid_request' };
     }
     label = value.label;
   }
-  return { idempotencyKey: value.idempotency_key, profile, positions: value.positions, label };
+  const position = Position.newBySFEN(value.initialSfen);
+  if (!position) return { ok: false, error: 'invalid_request' };
+  const initialSfen = position.sfen;
+  const positions = [initialSfen];
+  const moves = value.moves as string[];
+  for (let index = 0; index < moves.length; index += 1) {
+    const move = position.createMoveByUSI(moves[index]);
+    if (!move || !position.isValidMove(move) || !position.doMove(move)) return { ok: false, error: 'illegal_move', moveIndex: index };
+    positions.push(position.sfen);
+  }
+  return { ok: true, payload: { idempotencyKey: value.idempotency_key, profile, initialSfen, moves: [...moves], positions, label } };
+}
+export function parseJobPayload(value: unknown): JobPayload | null {
+  const parsed = replayJobPayload(value);
+  return parsed.ok ? parsed.payload : null;
 }
 
-function adminSecret(env: JobEnvironment): string | undefined {
-  return env.ANALYSIS_ADMIN_TOKEN ?? env.STAGING_ADMIN_TOKEN;
-}
-
+function adminSecret(env: JobEnvironment): string | undefined { return env.ANALYSIS_ADMIN_TOKEN ?? env.STAGING_ADMIN_TOKEN; }
 function fixedTimeHexEqual(left: string, right: string): boolean {
   let difference = left.length ^ right.length;
-  for (let index = 0; index < 64; index += 1) {
-    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
-  }
+  for (let index = 0; index < 64; index += 1) difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
   return difference === 0;
 }
-
 async function authenticate(request: Request, db: D1Database): Promise<Principal | null> {
   const authorization = request.headers.get('authorization');
   if (!authorization || authorization.length > 520) return null;
@@ -111,15 +106,10 @@ async function authenticate(request: Request, db: D1Database): Promise<Principal
   let found: Principal | null = null;
   let matches = 0;
   for (const principal of results) {
-    if (fixedTimeHexEqual(digestHex, principal.token_sha256.toLowerCase())) {
-      found = principal;
-      matches += 1;
-    }
+    if (fixedTimeHexEqual(digestHex, principal.token_sha256.toLowerCase())) { found = principal; matches += 1; }
   }
-  if (matches !== 1 || !found || found.revoked === 1) return null;
-  return found;
+  return matches === 1 && found && found.revoked !== 1 ? found : null;
 }
-
 function constantTimeAdminMatch(provided: string, expected: string): boolean {
   const encoder = new TextEncoder();
   const left = encoder.encode(provided);
@@ -129,26 +119,12 @@ function constantTimeAdminMatch(provided: string, expected: string): boolean {
   for (let index = 0; index < length; index += 1) difference |= (left[index] ?? 0) ^ (right[index] ?? 0);
   return difference === 0;
 }
-
 function hasAdminAuth(request: Request, env: JobEnvironment): boolean {
   const expected = adminSecret(env);
   const authorization = request.headers.get('authorization');
   const match = authorization && authorization.length <= 520 ? /^Bearer ([^\s]+)$/i.exec(authorization) : null;
   return Boolean(expected && match && constantTimeAdminMatch(match[1], expected));
 }
-
-async function readJson(request: Request, limit: number): Promise<unknown | null> {
-  const contentLength = request.headers.get('content-length');
-  if (contentLength !== null && (!/^\d+$/.test(contentLength) || Number(contentLength) > limit)) return null;
-  const text = await readBoundedText(request, limit);
-  if (text === null) return null;
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
-}
-
 async function readBoundedText(request: Request, limit: number): Promise<string | null> {
   const reader = request.body?.getReader();
   if (!reader) return '';
@@ -158,262 +134,224 @@ async function readBoundedText(request: Request, limit: number): Promise<string 
     const { done, value } = await reader.read();
     if (done) break;
     totalBytes += value.byteLength;
-    if (totalBytes > limit) {
-      await reader.cancel().catch(() => undefined);
-      return null;
-    }
+    if (totalBytes > limit) { await reader.cancel().catch(() => undefined); return null; }
     chunks.push(value);
   }
   const bytes = new Uint8Array(totalBytes);
   let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return new TextDecoder().decode(bytes);
 }
-
+async function readJson(request: Request, limit: number): Promise<unknown | null> {
+  const contentLength = request.headers.get('content-length');
+  if (contentLength !== null && (!/^\d+$/.test(contentLength) || Number(contentLength) > limit)) return null;
+  const text = await readBoundedText(request, limit);
+  if (text === null) return null;
+  try { return JSON.parse(text) as unknown; } catch { return null; }
+}
 function sha256Hex(value: string): Promise<string> {
   return crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)).then((digest) =>
     [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join(''),
   );
 }
-
-function jobIdentity(env: JobEnvironment, profile: AnalysisProfile): JobIdentity | null {
+async function jobIdentity(env: JobEnvironment, profile: AnalysisProfile): Promise<JobIdentity | null> {
   const engineId = env.ANALYSIS_ENGINE_ID;
   const modelId = env.ANALYSIS_MODEL_ID;
-  const instanceType = env.ANALYSIS_INSTANCE_TYPE;
-  if (!engineId || !modelId || (instanceType !== 'standard-2' && instanceType !== 'standard-3')) return null;
-  return { profileId: profile.id, profileVersion: profile.version, engineId, modelId, instanceType };
+  const engineBinaryDigestLabel = env.ANALYSIS_ENGINE_BINARY_DIGEST_LABEL;
+  if (!engineId || !modelId || !engineBinaryDigestLabel) return null;
+  const components = executionIdentityComponents(profile, engineId, modelId, engineBinaryDigestLabel);
+  return {
+    profileId: profile.id, profileVersion: profile.version, engineId, engineBinaryDigestLabel, modelId,
+    instanceType: profile.instanceType, vcpu: profile.vcpu,
+    executionIdentityHash: await sha256Hex(JSON.stringify(components)),
+    executionIdentityComponents: components,
+  };
 }
-
 function operationStub(env: JobEnvironment): DurableObjectStub<JobCoordinator> {
   return env.JOB_COORDINATOR.getByName(GLOBAL_COORDINATOR_NAME);
 }
-
-function coordinatorFailure(): Response {
-  return json({ error: 'coordinator_unavailable' }, 503);
+function coordinatorFailure(): Response { return json({ error: 'coordinator_unavailable' }, 503); }
+function retryResponse(retryAfter: number): Response {
+  return json({ error: 'rate_limit' }, 429, { 'retry-after': String(Math.max(1, retryAfter)) });
 }
-
 function routeIdentity(path: string): { jobId: string; action: 'status' | 'results' | 'cancel' } | null {
   const match = /^\/v1\/jobs\/([0-9a-f-]{36})(?:\/(results|cancel))?$/.exec(path);
   if (!match) return null;
   return { jobId: match[1], action: match[2] === 'results' ? 'results' : match[2] === 'cancel' ? 'cancel' : 'status' };
 }
-
 export function isJobApiPath(path: string): boolean {
-  return path === JOB_PATH || path.startsWith(`${JOB_PATH}/`) || path === KILL_PATH;
+  return path === JOB_PATH || path.startsWith(JOB_PATH + '/') || path === PROFILES_PATH ||
+    path === KILL_PATH || path === FAULT_PATH || path.startsWith(CLEAR_BLOCK_PATH);
 }
 
-export async function handleJobsRequest(request: Request, env: JobEnvironment): Promise<Response> {
+export async function handleJobsRequest(request: Request, env: JobEnvironment, drivers: ProfileDriverRouter): Promise<Response> {
   const url = new URL(request.url);
-  if (url.pathname === KILL_PATH) return handleKillRequest(request, env);
+  if (url.pathname === KILL_PATH || url.pathname === FAULT_PATH || url.pathname.startsWith(CLEAR_BLOCK_PATH)) return handleAdminRequest(request, env);
   if (url.pathname === JOB_PATH) return request.method === 'POST' ? createJob(request, env) : json({ error: 'not_found' }, 404);
+  if (url.pathname === PROFILES_PATH) return request.method === 'GET' ? getProfiles(request, env) : json({ error: 'not_found' }, 404);
   const route = routeIdentity(url.pathname);
   if (!route) return json({ error: 'not_found' }, 404);
   if ((route.action === 'status' || route.action === 'results') && request.method !== 'GET') return json({ error: 'not_found' }, 404);
   if (route.action === 'cancel' && request.method !== 'POST') return json({ error: 'not_found' }, 404);
-
   let principal: Principal | null;
-  try {
-    principal = await authenticate(request, env.DB);
-  } catch {
-    return coordinatorFailure();
-  }
+  try { principal = await authenticate(request, env.DB); } catch { return coordinatorFailure(); }
   if (!principal) return json({ error: 'unauthorized' }, 401);
-
-  const owned = await env.DB.prepare('SELECT id FROM jobs WHERE id = ? AND owner_id = ?')
-    .bind(route.jobId, principal.id).first<{ id: string }>();
+  const owned = await env.DB.prepare('SELECT id FROM jobs WHERE id = ? AND owner_id = ?').bind(route.jobId, principal.id).first<{ id: string }>();
   if (!owned) return json({ error: 'not_found' }, 404);
-
-  let allowed: boolean;
-  try {
-    allowed = await operationStub(env).recordOwnerOperation(principal.id, Date.now());
-  } catch {
-    return coordinatorFailure();
-  }
-  if (!allowed) return json({ error: 'rate_limit' }, 429);
-
-  if (route.action === 'cancel') return cancelJob(request, env, principal.id, route.jobId);
+  let rate;
+  try { rate = await operationStub(env).recordOwnerOperation(principal.id, route.action === 'cancel' ? 'cancel' : 'get', Date.now()); }
+  catch { return coordinatorFailure(); }
+  if (!rate.allowed) return retryResponse(rate.retryAfter);
+  if (route.action === 'cancel') return cancelJob(request, env, principal.id, route.jobId, drivers);
   if (route.action === 'results') return getJobResults(request, env, route.jobId);
   return getJobSummary(env, route.jobId);
 }
 
+async function getProfiles(request: Request, env: JobEnvironment): Promise<Response> {
+  let principal: Principal | null;
+  try { principal = await authenticate(request, env.DB); } catch { return coordinatorFailure(); }
+  if (!principal) return json({ error: 'unauthorized' }, 401);
+  const rate = await operationStub(env).recordOwnerOperation(principal.id, 'get', Date.now());
+  if (!rate.allowed) return retryResponse(rate.retryAfter);
+  const profiles = await Promise.all(Object.values(ANALYSIS_PROFILES).map(async (profile) => {
+    const identity = await jobIdentity(env, profile);
+    return {
+      id: profile.id, version: profile.version,
+      executionIdentityHash: identity?.executionIdentityHash ?? null,
+      identityComponents: identity?.executionIdentityComponents ?? null,
+      entitled: profile.id === 'free-v1' || principal.precision_enabled === 1,
+      admissionBlocked: await operationStub(env).isProfileBlocked(profile.id),
+    };
+  }));
+  return json({ profiles });
+}
+
 async function createJob(request: Request, env: JobEnvironment): Promise<Response> {
   let principal: Principal | null;
-  try {
-    principal = await authenticate(request, env.DB);
-  } catch {
-    return coordinatorFailure();
-  }
+  try { principal = await authenticate(request, env.DB); } catch { return coordinatorFailure(); }
   if (!principal) return json({ error: 'unauthorized' }, 401);
-
-  const raw = await readJson(request, MAX_REQUEST_BYTES);
-  const payload = parseJobPayload(raw);
-  if (!payload) return json({ error: 'invalid_request' }, 400);
-  if (payload.profile.id === 'precision-v1' && principal.precision_enabled !== 1) {
-    return json({ error: 'precision_not_enabled' }, 403);
-  }
-  const identity = jobIdentity(env, payload.profile);
+  const parsed = replayJobPayload(await readJson(request, MAX_REQUEST_BYTES));
+  if (!parsed.ok) return parsed.error === 'illegal_move'
+    ? json({ error: parsed.error, moveIndex: parsed.moveIndex }, 400)
+    : json({ error: parsed.error }, 400);
+  const payload = parsed.payload;
+  if (payload.profile.id === 'precision-v1' && principal.precision_enabled !== 1) return json({ error: 'precision_not_enabled' }, 403);
+  if (payload.positions.length > MAX_JOB_POSITIONS) return json({ error: 'invalid_request' }, 400);
+  const identity = await jobIdentity(env, payload.profile);
   if (!identity) return json({ error: 'service_not_configured' }, 503);
-  const canonicalPayload = JSON.stringify({ profile: payload.profile.id, positions: payload.positions, label: payload.label });
+  const canonicalPayload = JSON.stringify({ initialSfen: payload.initialSfen, moves: payload.moves, profile: payload.profile.id });
   const admission: AdmissionInput = {
-    ownerId: principal.id,
-    idempotencyKey: payload.idempotencyKey,
-    payloadSha256: await sha256Hex(canonicalPayload),
-    profile: payload.profile.id,
-    positions: payload.positions,
-    label: payload.label,
-    identity,
-    now: Date.now(),
+    ownerId: principal.id, idempotencyKey: payload.idempotencyKey, payloadSha256: await sha256Hex(canonicalPayload),
+    profile: payload.profile.id, positions: payload.positions, label: payload.label, identity, now: Date.now(),
   };
-
   let outcome: Awaited<ReturnType<DurableObjectStub<JobCoordinator>['admit']>>;
+  try { outcome = await operationStub(env).admit(admission); } catch { return coordinatorFailure(); }
+  if (!outcome.ok) return outcome.status === 429
+    ? json({ error: outcome.error }, 429, { 'retry-after': String(Math.max(1, outcome.retryAfter ?? 60)) })
+    : json({ error: outcome.error }, outcome.status);
+  if (outcome.value.enqueuePending) return json({ error: 'queue_unavailable', jobId: outcome.value.jobId }, 503);
+  let snapshot: CostSnapshot;
+  let persisted: { status: JobStatus; profile_id: string; profile_version: number; position_count: number; execution_identity_hash: string; cost_estimate_usd: number } | null;
   try {
-    outcome = await operationStub(env).admit(admission);
-  } catch {
-    return coordinatorFailure();
-  }
-  if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
-  if (outcome.value.enqueuePending) {
-    return json({ error: 'queue_unavailable', jobId: outcome.value.jobId }, 503);
-  }
-  let cost: CostSnapshot;
-  let persisted: { status: JobStatus; profile_id: string; profile_version: number; position_count: number } | null;
-  let jobCost: { total: number | null } | null;
-  try {
-    cost = await operationStub(env).costSnapshot(Date.now());
-    persisted = await env.DB.prepare(
-      'SELECT status, profile_id, profile_version, position_count FROM jobs WHERE id = ?',
-    ).bind(outcome.value.jobId).first();
-    jobCost = await env.DB.prepare('SELECT SUM(amount_usd) AS total FROM cost_ledger WHERE job_id = ?')
+    snapshot = await operationStub(env).costSnapshot(Date.now());
+    persisted = await env.DB.prepare('SELECT status, profile_id, profile_version, position_count, execution_identity_hash, cost_estimate_usd FROM jobs WHERE id = ?')
       .bind(outcome.value.jobId).first();
-  } catch {
-    return coordinatorFailure();
-  }
+  } catch { return coordinatorFailure(); }
   if (!persisted) return coordinatorFailure();
   const status = outcome.value.duplicate ? 200 : 202;
   return json({
-    jobId: outcome.value.jobId,
-    status: persisted.status,
-    duplicate: outcome.value.duplicate,
+    jobId: outcome.value.jobId, status: persisted.status, duplicate: outcome.value.duplicate,
     profile: { id: persisted.profile_id, version: persisted.profile_version },
-    positionCount: persisted.position_count,
-    estimatedCostUsd: Number(jobCost?.total ?? 0),
-    costWarning: cost.costWarning,
-  }, status, outcome.value.duplicate ? {} : { location: `${JOB_PATH}/${outcome.value.jobId}` });
+    executionIdentityHash: persisted.execution_identity_hash, positionCount: persisted.position_count,
+    estimatedCostUsd: persisted.cost_estimate_usd, costWarning: snapshot.costWarning,
+  }, status, outcome.value.duplicate ? {} : { location: JOB_PATH + '/' + outcome.value.jobId });
 }
 
 async function getJobSummary(env: JobEnvironment, jobId: string): Promise<Response> {
   const job = await env.DB.prepare('SELECT * FROM jobs WHERE id = ?').bind(jobId).first<JobRow>();
   if (!job) return json({ error: 'not_found' }, 404);
-  const counts = await env.DB.prepare(`
-    SELECT
-      SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-      SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
-      SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
-      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-      SUM(CASE WHEN status = 'done' AND cached = 1 THEN 1 ELSE 0 END) AS cached
-    FROM positions WHERE job_id = ?
-  `).bind(jobId).first<{
-    pending: number | null; running: number | null; done: number | null; failed: number | null; cached: number | null;
-  }>();
-  const jobCost = await env.DB.prepare('SELECT SUM(amount_usd) AS total FROM cost_ledger WHERE job_id = ?')
-    .bind(jobId).first<{ total: number | null }>();
+  const counts = await env.DB.prepare(
+    "SELECT SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending, SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running, " +
+    "SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS processed, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed, " +
+    "SUM(CASE WHEN status = 'done' AND engine_terminal IN ('ok', 'mate') THEN 1 ELSE 0 END) AS succeeded, " +
+    "SUM(CASE WHEN error_detail = 'incomplete' OR engine_terminal = 'resign' THEN 1 ELSE 0 END) AS incomplete_or_missing, " +
+    "SUM(CASE WHEN status = 'failed' AND COALESCE(error_detail, '') <> 'incomplete' THEN 1 ELSE 0 END) AS failed_non_incomplete, " +
+    "SUM(CASE WHEN status = 'done' AND engine_terminal IN ('no_legal_moves', 'none', 'win') THEN 1 ELSE 0 END) AS terminal, " +
+    "SUM(CASE WHEN status = 'done' AND cached = 1 THEN 1 ELSE 0 END) AS cached FROM positions WHERE job_id = ?",
+  ).bind(jobId).first<Record<string, number | null>>();
   const cost = await operationStub(env).costSnapshot(Date.now());
-  const cachedPositionCount = Number(counts?.cached ?? 0);
+  const engineCost = await getJobEngineCost(env, jobId);
   const profile = profileFor(job.profile_id);
-  const instanceType = job.instance_type === 'standard-2' || job.instance_type === 'standard-3'
-    ? job.instance_type
-    : null;
+  const instanceType = job.instance_type === 'standard-2' || job.instance_type === 'standard-3' ? job.instance_type : null;
+  const cachedPositionCount = Number(counts?.cached ?? 0);
   const estimatedCacheSavingsUsd = profile && instanceType
-    ? cachedPositionCount * estimateContainerCostUsd(
-      profile.movetimeMs, 1, instanceType, profile.movetimeMs,
-    )
+    ? cachedPositionCount * estimateContainerCostUsd(profile.movetimeMs, 1, instanceType, profile.movetimeMs)
     : 0;
   return json({
-    jobId: job.id,
-    status: job.status,
+    jobId: job.id, status: job.status,
     counts: {
-      pending: Number(counts?.pending ?? 0),
-      running: Number(counts?.running ?? 0),
-      done: Number(counts?.done ?? 0),
-      failed: Number(counts?.failed ?? 0),
+      pending: Number(counts?.pending ?? 0), running: Number(counts?.running ?? 0), processed: Number(counts?.processed ?? 0),
+      succeeded: Number(counts?.succeeded ?? 0), incompleteOrMissing: Number(counts?.incomplete_or_missing ?? 0),
+      failed: Number(counts?.failed_non_incomplete ?? 0), terminal: Number(counts?.terminal ?? 0),
     },
-    committedCount: job.committed_count,
-    cancelRequested: job.cancel_requested === 1,
-    stopReason: job.stop_reason,
-    profile: {
-      id: job.profile_id,
-      version: job.profile_version,
-      engineId: job.engine_id,
-      modelId: job.model_id,
-      instanceType: job.instance_type,
-    },
-    positionCount: job.position_count,
+    committedCount: job.committed_count, cancelRequested: job.cancel_requested === 1, stopReason: job.stop_reason,
+    profile: { id: job.profile_id, version: job.profile_version, engineId: job.engine_id, modelId: job.model_id, instanceType: job.instance_type, vcpu: job.vcpu },
+    executionIdentityHash: job.execution_identity_hash, positionCount: job.position_count,
     cacheStats: { cachedPositionCount, estimatedSavingsUsd: estimatedCacheSavingsUsd },
-    createdAt: job.created_at,
-    startedAt: job.started_at,
-    completedAt: job.completed_at,
-    estimatedCostUsd: Number(jobCost?.total ?? 0),
-    costWarning: cost.costWarning,
+    createdAt: job.created_at, startedAt: job.started_at, completedAt: job.completed_at,
+    engineCostUsd: engineCost, estimatedCostUsd: job.cost_estimate_usd, costWarning: cost.costWarning,
   });
 }
 
 async function getJobResults(request: Request, env: JobEnvironment, jobId: string): Promise<Response> {
   const url = new URL(request.url);
-  let after: number;
-  try {
-    after = decodeResultCursor(url.searchParams.get('cursor'));
-  } catch {
-    return json({ error: 'invalid_cursor' }, 400);
-  }
+  let afterSeq: number;
+  try { afterSeq = decodeResultCursor(url.searchParams.get('cursor')); } catch { return json({ error: 'invalid_cursor' }, 400); }
   const limitRaw = url.searchParams.get('limit');
   const limit = limitRaw === null ? 50 : Number(limitRaw);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RESULTS_PAGE) return json({ error: 'invalid_limit' }, 400);
-  const { results } = await env.DB.prepare(`
-    SELECT position_index, status, attempts, result_json, stats_json, cached, error_detail,
-      profile_id, profile_version, engine_id, model_id
-    FROM positions WHERE job_id = ? AND position_index > ? AND status IN ('done', 'failed')
-    ORDER BY position_index LIMIT ?
-  `).bind(jobId, after, limit + 1).all<{
-    position_index: number; status: 'done' | 'failed'; attempts: number; result_json: string | null;
-    stats_json: string | null; cached: number; error_detail: string | null; profile_id: string;
-    profile_version: number; engine_id: string; model_id: string;
+  const { results } = await env.DB.prepare(
+    "SELECT position_index, result_seq, status, attempts, delivery_count, result_json, stats_json, proof_json, cached, error_detail, " +
+    "profile_id, profile_version, engine_id, model_id, execution_identity_hash FROM positions " +
+    "WHERE job_id = ? AND result_seq > ? AND status IN ('done', 'failed') ORDER BY result_seq LIMIT ?",
+  ).bind(jobId, afterSeq, limit + 1).all<{
+    position_index: number; result_seq: number; status: 'done' | 'failed'; attempts: number; delivery_count: number;
+    result_json: string | null; stats_json: string | null; proof_json: string | null; cached: number; error_detail: string | null;
+    profile_id: string; profile_version: number; engine_id: string; model_id: string; execution_identity_hash: string;
   }>();
   const hasMore = results.length > limit;
   const page = results.slice(0, limit);
-  const lastIndex = page.at(-1)?.position_index;
+  const nextSeq = page.length ? Math.max(...page.map((row) => row.result_seq)) : afterSeq;
+  page.sort((left, right) => left.position_index - right.position_index);
+  const identity = await env.DB.prepare('SELECT execution_identity_hash FROM jobs WHERE id = ?').bind(jobId).first<{ execution_identity_hash: string }>();
+  const cost = await operationStub(env).costSnapshot(Date.now());
   return json({
-    jobId,
+    jobId, executionIdentityHash: identity?.execution_identity_hash ?? '',
     results: page.map((row) => ({
-      positionIndex: row.position_index,
-      status: row.status,
-      attempts: row.attempts,
+      positionIndex: row.position_index, resultSeq: row.result_seq, status: row.status,
+      attempts: row.attempts, deliveryCount: row.delivery_count,
       result: row.result_json ? JSON.parse(row.result_json) as CloudAnalysisResultV3 : null,
+      proof: row.proof_json ? JSON.parse(row.proof_json) as ProofEnvelope : null,
       stats: row.stats_json ? JSON.parse(row.stats_json) as Record<string, number> : null,
-      cached: row.cached === 1,
-      error: row.error_detail,
+      cached: row.cached === 1, error: row.error_detail, executionIdentityHash: row.execution_identity_hash,
       profile: { id: row.profile_id, version: row.profile_version, engineId: row.engine_id, modelId: row.model_id },
     })),
-    nextCursor: hasMore && lastIndex !== undefined ? encodeResultCursor(lastIndex) : null,
-    limit,
-    estimatedCostUsd: await getJobCost(env, jobId),
-    costWarning: (await operationStub(env).costSnapshot(Date.now())).costWarning,
+    hasMore, resumeCursor: encodeResultCursor(nextSeq), nextCursor: hasMore ? encodeResultCursor(nextSeq) : null,
+    limit, estimatedCostUsd: await getJobEstimate(env, jobId), costWarning: cost.costWarning,
   });
 }
-
-async function getJobCost(env: JobEnvironment, jobId: string): Promise<number> {
-  const row = await env.DB.prepare('SELECT SUM(amount_usd) AS total FROM cost_ledger WHERE job_id = ?')
-    .bind(jobId).first<{ total: number | null }>();
+async function getJobEngineCost(env: JobEnvironment, jobId: string): Promise<number> {
+  const row = await env.DB.prepare('SELECT SUM(amount_usd) AS total FROM cost_attempt_ledger WHERE job_id = ?').bind(jobId).first<{ total: number | null }>();
   return Number(row?.total ?? 0);
 }
+async function getJobEstimate(env: JobEnvironment, jobId: string): Promise<number> {
+  const row = await env.DB.prepare('SELECT cost_estimate_usd FROM jobs WHERE id = ?').bind(jobId).first<{ cost_estimate_usd: number }>();
+  return Number(row?.cost_estimate_usd ?? 0);
+}
 
-async function cancelJob(request: Request, env: JobEnvironment, ownerId: string, jobId: string): Promise<Response> {
+async function cancelJob(request: Request, env: JobEnvironment, ownerId: string, jobId: string, drivers: ProfileDriverRouter): Promise<Response> {
   const contentLength = request.headers.get('content-length');
-  if (contentLength !== null && (!/^\d+$/.test(contentLength) || Number(contentLength) > 512)) {
-    return json({ error: 'invalid_request' }, 400);
-  }
+  if (contentLength !== null && (!/^\d+$/.test(contentLength) || Number(contentLength) > 512)) return json({ error: 'invalid_request' }, 400);
   const rawText = await readBoundedText(request, 512);
   if (rawText === null) return json({ error: 'invalid_request' }, 400);
   if (rawText.trim() !== '') {
@@ -421,64 +359,95 @@ async function cancelJob(request: Request, env: JobEnvironment, ownerId: string,
     try { value = JSON.parse(rawText) as unknown; } catch { return json({ error: 'invalid_request' }, 400); }
     if (!isRecord(value) || Object.keys(value).length !== 0) return json({ error: 'invalid_request' }, 400);
   }
-  const result = await operationStub(env).requestCancel(ownerId, jobId, Date.now());
-  if (!result.found) return json({ error: 'not_found' }, 404);
-  const job = await env.DB.prepare('SELECT status FROM jobs WHERE id = ?').bind(jobId).first<{ status: JobStatus }>();
-  const [estimatedCostUsd, cost] = await Promise.all([
-    getJobCost(env, jobId),
-    operationStub(env).costSnapshot(Date.now()),
-  ]);
+  const coordinator = operationStub(env);
+  const outcome = await coordinator.requestCancel(ownerId, jobId, Date.now());
+  if (!outcome.found) return json({ error: 'not_found' }, 404);
+  if (outcome.inFlight && outcome.jobId !== undefined && outcome.epoch !== undefined) {
+    const driver = drivers(outcome.inFlight.profileId);
+    try {
+      const stopped = await driver.fetch(new Request('http://container/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }));
+      if (!stopped.ok) throw new Error('stop_request_failed');
+    } catch { /* Keep the exact lease fenced; the grace path below destroys its profile container. */ }
+    const deadline = Date.now() + CANCEL_GRACE_MS;
+    while (Date.now() < deadline) {
+      if (await coordinator.cancellationSettled(jobId, outcome.epoch, Date.now())) break;
+      await new Promise((resolve) => setTimeout(resolve, CANCEL_POLL_MS));
+    }
+    if (!(await coordinator.cancellationSettled(jobId, outcome.epoch, Date.now()))) {
+      const slot = await coordinator.getSlot(Date.now());
+      if (slot?.jobId === jobId && slot.epoch === outcome.epoch && slot.leaseId === outcome.inFlight.leaseId && driver.destroy) {
+        try {
+          await driver.destroy();
+          await coordinator.confirmContainerDestroyed(slot, Date.now());
+        } catch { /* Keep the global slot held until recovery proves process death. */ }
+      }
+      await coordinator.cancellationSettled(jobId, outcome.epoch, Date.now());
+    }
+  }
+  const job = await env.DB.prepare('SELECT status, execution_identity_hash FROM jobs WHERE id = ?').bind(jobId)
+    .first<{ status: JobStatus; execution_identity_hash: string }>();
   return json({
-    jobId,
-    status: job?.status ?? 'cancelled',
-    cancelRequested: result.cancelRequested,
-    estimatedCostUsd,
-    costWarning: cost.costWarning,
+    jobId, status: job?.status ?? outcome.status ?? 'cancelled',
+    cancelRequested: job?.status === 'cancelling' || job?.status === 'cancelled',
+    executionIdentityHash: job?.execution_identity_hash ?? '',
+    estimatedCostUsd: await getJobEstimate(env, jobId),
+    costWarning: (await coordinator.costSnapshot(Date.now())).costWarning,
   });
 }
 
-async function handleKillRequest(request: Request, env: JobEnvironment): Promise<Response> {
-  const expected = adminSecret(env);
-  if (!expected) return json({ error: 'service_not_configured' }, 503);
+async function handleAdminRequest(request: Request, env: JobEnvironment): Promise<Response> {
+  if (!adminSecret(env)) return json({ error: 'service_not_configured' }, 503);
   if (!hasAdminAuth(request, env)) return json({ error: 'unauthorized' }, 401);
-  let mode: 'admission' | 'all' | null;
-  if (request.method === 'DELETE') {
-    mode = null;
-  } else if (request.method === 'POST') {
+  const coordinator = operationStub(env);
+  const path = new URL(request.url).pathname;
+  if (path === KILL_PATH) {
+    let mode: 'admission' | 'all' | null;
+    if (request.method === 'DELETE') mode = null;
+    else if (request.method === 'POST') {
+      const value = await readJson(request, 512);
+      if (!isRecord(value) || !hasExactKeys(value, ['mode']) || (value.mode !== 'admission' && value.mode !== 'all')) return json({ error: 'invalid_request' }, 400);
+      mode = value.mode;
+    } else return json({ error: 'not_found' }, 404);
+    try { await coordinator.setKillMode(mode, Date.now()); return json({ mode }); } catch { return coordinatorFailure(); }
+  }
+  if (path === FAULT_PATH) {
+    if (request.method !== 'POST' || env.ANALYSIS_FAULT_FIXTURES_ENABLED !== '1') return json({ error: 'not_found' }, 404);
     const value = await readJson(request, 512);
-    if (!isRecord(value) || !hasExactKeys(value, ['mode']) || (value.mode !== 'admission' && value.mode !== 'all')) {
+    if (!isRecord(value) || (value.kind !== 'destroy' && value.kind !== 'throw') || typeof value.job_id !== 'string' || !/^[0-9a-f-]{36}$/.test(value.job_id)) {
       return json({ error: 'invalid_request' }, 400);
     }
-    mode = value.mode;
-  } else {
-    return json({ error: 'not_found' }, 404);
+    if (value.kind === 'destroy' && !hasExactKeys(value, ['kind', 'job_id'])) return json({ error: 'invalid_request' }, 400);
+    if (value.kind === 'throw' && (!hasExactKeys(value, ['kind', 'job_id', 'times']) || !Number.isSafeInteger(value.times) || (value.times as number) < 1 || (value.times as number) > 4)) {
+      return json({ error: 'invalid_request' }, 400);
+    }
+    const arm = { kind: value.kind, jobId: value.job_id, remaining: value.kind === 'destroy' ? 1 : value.times as number } as const;
+    await coordinator.armFault(arm, Date.now());
+    return json({ armed: true, kind: arm.kind, jobId: arm.jobId, remaining: arm.remaining }, 201);
   }
-  try {
-    await operationStub(env).setKillMode(mode, Date.now());
-    return json({ mode });
-  } catch {
-    return coordinatorFailure();
+  const clearMatch = /^\/v1\/internal\/profiles\/(free-v1|precision-v1)\/clear-block$/.exec(path);
+  if (clearMatch) {
+    if (request.method !== 'POST') return json({ error: 'not_found' }, 404);
+    const value = await readJson(request, 512);
+    if (value !== null && (!isRecord(value) || Object.keys(value).length !== 0)) return json({ error: 'invalid_request' }, 400);
+    await coordinator.clearProfileBlock(clearMatch[1], Date.now());
+    return json({ profile: clearMatch[1], admissionBlocked: false });
   }
+  return json({ error: 'not_found' }, 404);
 }
 
 function engineFailure(responseStatus: number, payload: unknown): EngineFailure {
   const record = isRecord(payload) ? payload : {};
   const reason = typeof record.reason === 'string' ? record.reason.toLowerCase() : '';
   const terminal = typeof record.terminal === 'string' ? record.terminal : '';
-  if (terminal === 'position_failed:engine_timeout' || reason.includes('timeout')) {
-    return { code: 'position_failed:engine_timeout', redeliver: false };
+  if (terminal === 'position_failed:engine_timeout' || reason.includes('timeout')) return { code: 'position_failed:engine_timeout', transient: true, fatalProtocol: false };
+  if (terminal === 'position_failed:engine_exit' || terminal === 'position_failed:engine_restart_failed' || reason.includes('restart_failed') || reason.includes('engine_exit')) {
+    return { code: terminal || 'position_failed:engine_exit', transient: true, fatalProtocol: false };
   }
-  if (terminal === 'position_failed:protocol_error' || responseStatus === 502 || reason.includes('protocol') || reason.includes('contract') || reason.includes('score_')) {
-    return { code: 'position_failed:protocol_error', redeliver: false };
+  if (responseStatus === 409 || responseStatus === 503 || reason.includes('container_unreachable') || reason.includes('container_not_ready')) {
+    return { code: terminal === 'position_failed:engine_restart_failed' ? terminal : 'position_failed:engine_exit', transient: true, fatalProtocol: false };
   }
-  if (responseStatus === 503 && !reason) return { code: 'container_unreachable', redeliver: true };
-  if (terminal === 'position_failed:engine_restart_failed' || reason.includes('restart_failed')) {
-    return { code: 'position_failed:engine_exit', redeliver: false };
-  }
-  if (responseStatus === 409) return { code: 'container_busy', redeliver: true };
-  return { code: 'position_failed:engine_exit', redeliver: false };
+  return { code: 'position_failed:protocol_error', transient: false, fatalProtocol: true };
 }
-
 function resultWithJobIdentity(value: unknown, identity: JobIdentity, sfen: string, requestedMultiPv: number): {
   result: CloudAnalysisResultV3; statsJson: string | null;
 } | null {
@@ -487,144 +456,224 @@ function resultWithJobIdentity(value: unknown, identity: JobIdentity, sfen: stri
   if (
     result.sfen !== sfen || result.requestedMultiPv !== requestedMultiPv || result.engineId !== identity.engineId ||
     result.analysisProfileId !== identity.profileId || result.profileVersion !== identity.profileVersion ||
-    result.modelId !== identity.modelId
+    result.modelId !== identity.modelId || result.contractVersion !== ANALYSIS_CONTRACT_VERSION || !isCloudAnalysisResultV3(result)
   ) return null;
-  if (result.contractVersion !== ANALYSIS_CONTRACT_VERSION || !isCloudAnalysisResultV3(result)) return null;
-  const statsJson = isRecord(stats) ? JSON.stringify(stats) : null;
-  return { result, statsJson };
+  return { result, statsJson: isRecord(stats) ? JSON.stringify(stats) : null };
+}
+async function proveMate(driver: DriverClient, sfen: string): Promise<ProofEnvelope> {
+  try {
+    const response = await driver.fetch(new Request('http://container/prove', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sfen, plies: PROOF_PLIES, budget: PROOF_BUDGET }),
+    }));
+    if (!response.ok) return null;
+    const value: unknown = await response.json();
+    if (!isRecord(value) || typeof value.result !== 'string' || typeof value.nodesUsed !== 'number' || !Number.isSafeInteger(value.nodesUsed) || value.nodesUsed < 0) return null;
+    return { revision: 'sekirei-proof-ops-v1', result: value.result, cost: value.nodesUsed, plies: PROOF_PLIES, budget: PROOF_BUDGET };
+  } catch { return null; }
+}
+async function recordFailureCost(position: ClaimedPosition, profile: AnalysisProfile, env: JobEnvironment, attempt: number): Promise<void> {
+  const amount = estimateContainerCostUsd(profile.movetimeMs + 5_500, 1, position.identity.instanceType, profile.movetimeMs, true);
+  await operationStub(env).recordAttemptCost(position, attempt, amount, null, Date.now());
 }
 
-async function processClaimedPosition(
-  position: ClaimedPosition,
-  env: JobEnvironment,
-  driver: DriverClient,
-): Promise<'done' | 'skipped' | 'redeliver'> {
-  const profile = ANALYSIS_PROFILES[position.identity.profileId];
-  const cache = await operationStub(env).findCached(position.identity, position.sfen);
+async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironment, driver: DriverClient): Promise<'done' | 'skipped' | 'redeliver' | 'busy' | 'cancelled'> {
+  const coordinator = operationStub(env);
+  const profile = ANALYSIS_PROFILES[initial.identity.profileId];
+  const cache = await coordinator.findCached(initial.identity, initial.sfen);
   if (cache) {
     let cached: unknown;
     try { cached = JSON.parse(cache.resultJson) as unknown; } catch { cached = null; }
-    if (
-      isCloudAnalysisResultV3(cached) && cached.sfen === position.sfen &&
-      cached.analysisProfileId === position.identity.profileId && cached.profileVersion === position.identity.profileVersion &&
-      cached.engineId === position.identity.engineId && cached.modelId === position.identity.modelId &&
-      cached.requestedMultiPv === profile.requestedMultiPv
-    ) {
-      const applied = await operationStub(env).commitPosition(
-        position, JSON.stringify(cached), cache.statsJson, true, 0, cached.elapsedMs, Date.now(),
-      );
-      if (!applied) return 'skipped';
-      return 'done';
+    const normalized = resultWithJobIdentity(cached, initial.identity, initial.sfen, profile.requestedMultiPv);
+    if (normalized && (normalized.result.terminal === 'ok' || normalized.result.terminal === 'mate')) {
+      const seq = await coordinator.commitPosition(initial, JSON.stringify(normalized.result), cache.statsJson, cache.proofJson, true, true, 0, normalized.result.elapsedMs, Date.now());
+      return seq === null ? 'skipped' : 'done';
     }
   }
-
-  let current = position;
-  while (true) {
-    const attempts = await operationStub(env).markDispatched(current.jobId, current.index, current.leaseId, Date.now());
-    if (attempts === null) {
-      await operationStub(env).failPosition(current, 'engine_retry_exhausted', Date.now());
-      return 'done';
-    }
-    current = { ...current, attempts };
-    let response: Response;
-    try {
-      response = await analyzeWithServerProfile({
-        sfen: current.sfen,
-        movetimeMs: profile.movetimeMs,
-        multipv: profile.requestedMultiPv,
-        threads: profile.threads,
-        hashMb: profile.hashMb,
-      }, {
-        ...(env as WorkerEnv),
-        ANALYSIS_PROFILE_ID: current.identity.profileId,
-        ANALYSIS_PROFILE_VERSION: String(current.identity.profileVersion),
-        ANALYSIS_MODEL_ID: current.identity.modelId,
-      }, driver);
-    } catch {
-      await operationStub(env).releaseForRetry(current.jobId, current.index, current.leaseId, 'container_unreachable', Date.now());
-      return 'redeliver';
-    }
-    let value: unknown;
-    try { value = await response.json() as unknown; } catch { value = null; }
-    if (!response.ok) {
-      const failure = engineFailure(response.status, value);
-      if (failure.redeliver) {
-        await operationStub(env).releaseForRetry(current.jobId, current.index, current.leaseId, failure.code, Date.now());
-        return 'redeliver';
-      }
-      if (attempts < 2) {
-        await operationStub(env).releaseForRetry(current.jobId, current.index, current.leaseId, failure.code, Date.now());
-        const next = await operationStub(env).acquirePosition(
-          current.jobId, current.index, current.epoch, crypto.randomUUID(), Date.now(),
-        );
-        if (next.kind !== 'claimed') return 'skipped';
-        current = next.value;
-        continue;
-      }
-      await operationStub(env).failPosition(current, failure.code, Date.now());
-      return 'done';
-    }
-
-    const normalized = resultWithJobIdentity(value, current.identity, current.sfen, profile.requestedMultiPv);
-    const failureTerminal = isRecord(value) && isRecord(value.result) ? value.result.terminal : isRecord(value) ? value.terminal : undefined;
-    const contractFailure = !normalized;
-    const positionFailure = typeof failureTerminal === 'string' && FAILURE_TERMINALS.has(failureTerminal);
-    if (contractFailure || positionFailure) {
-      const failure = positionFailure
-        ? engineFailure(200, { terminal: failureTerminal })
-        : { code: 'position_failed:protocol_error', redeliver: false };
-      if (attempts < 2) {
-        await operationStub(env).releaseForRetry(current.jobId, current.index, current.leaseId, failure.code, Date.now());
-        const next = await operationStub(env).acquirePosition(
-          current.jobId, current.index, current.epoch, crypto.randomUUID(), Date.now(),
-        );
-        if (next.kind !== 'claimed') return 'skipped';
-        current = next.value;
-        continue;
-      }
-      await operationStub(env).failPosition(current, failure.code, Date.now());
-      return 'done';
-    }
-
-    const result = normalized.result;
-    const amountUsd = estimateContainerCostUsd(
-      result.elapsedMs, attempts, current.identity.instanceType, profile.movetimeMs,
-    );
-    try {
-      const committed = await operationStub(env).commitPosition(
-        current, JSON.stringify(result), normalized.statsJson, false, amountUsd, result.elapsedMs, Date.now(),
-      );
-      return committed ? 'done' : 'skipped';
-    } catch {
-      await operationStub(env).releaseForRetry(current.jobId, current.index, current.leaseId, 'commit_retry', Date.now());
-      return 'redeliver';
-    }
+  const attempt = await coordinator.markDispatched(initial, Date.now());
+  if (attempt === null) {
+    const job = await env.DB.prepare('SELECT status FROM jobs WHERE id = ?').bind(initial.jobId).first<{ status: string }>();
+    return job?.status === 'cancelling' ? 'cancelled' : 'redeliver';
   }
+  const current = { ...initial, attempts: attempt };
+  if (await coordinator.consumeFault(current.jobId, 'destroy', Date.now())) {
+    try {
+      if (!driver.destroy) throw new Error('container_destroy_unavailable');
+      await driver.destroy();
+    } catch {
+      await recordFailureCost(current, profile, env, attempt);
+      await coordinator.releaseForRetry(current, 'position_failed:engine_exit', Date.now());
+      return 'redeliver';
+    }
+    await recordFailureCost(current, profile, env, attempt);
+    await coordinator.releaseForRetry(current, 'position_failed:engine_exit', Date.now());
+    return 'redeliver';
+  }
+
+  let response: Response;
+  try {
+    response = await analyzeWithServerProfile({
+      sfen: current.sfen, movetimeMs: profile.movetimeMs, multipv: profile.requestedMultiPv,
+      threads: profile.threads, hashMb: profile.hashMb,
+    }, {
+      ...(env as WorkerEnv), ANALYSIS_PROFILE_ID: current.identity.profileId,
+      ANALYSIS_PROFILE_VERSION: String(current.identity.profileVersion), ANALYSIS_MODEL_ID: current.identity.modelId,
+    }, driver);
+  } catch {
+    await recordFailureCost(current, profile, env, attempt);
+    if (attempt < 2) {
+      await coordinator.releaseForRetry(current, 'position_failed:engine_exit', Date.now());
+      return 'redeliver';
+    }
+    await coordinator.failPosition(current, 'position_failed:engine_exit', Date.now());
+    return 'done';
+  }
+  let value: unknown;
+  try { value = await response.json() as unknown; } catch { value = null; }
+  if (!response.ok) {
+    const failure = engineFailure(response.status, value);
+    await recordFailureCost(current, profile, env, attempt);
+    if (failure.transient && attempt < 2) {
+      await coordinator.releaseForRetry(current, failure.code, Date.now());
+      return 'redeliver';
+    }
+    await coordinator.failPosition(current, failure.code, Date.now(), { fatalProtocol: failure.fatalProtocol });
+    return 'done';
+  }
+  const normalized = resultWithJobIdentity(value, current.identity, current.sfen, profile.requestedMultiPv);
+  if (!normalized) {
+    await recordFailureCost(current, profile, env, attempt);
+    await coordinator.failPosition(current, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
+    return 'done';
+  }
+  const result = normalized.result;
+  if (result.terminal === 'cancelled') {
+    const job = await env.DB.prepare('SELECT status FROM jobs WHERE id = ? AND epoch = ?')
+      .bind(current.jobId, current.epoch).first<{ status: string }>();
+    if (job?.status === 'cancelling') {
+      await coordinator.releaseForRetry(current, 'cancelled', Date.now());
+      await coordinator.cancellationSettled(current.jobId, current.epoch, Date.now());
+    } else {
+      await coordinator.failPosition(current, 'cancelled', Date.now(), { resultJson: JSON.stringify(result), statsJson: normalized.statsJson });
+    }
+    return 'cancelled';
+  }
+  const terminal = result.terminal as AnalysisTerminal;
+  const disposition = classifyTerminal(terminal);
+  const amount = estimateContainerCostUsd(result.elapsedMs, current.attempts, current.identity.instanceType, profile.movetimeMs);
+  await coordinator.recordAttemptCost(current, attempt, estimateContainerCostUsd(result.elapsedMs, 1, current.identity.instanceType, profile.movetimeMs), result.elapsedMs, Date.now());
+  if (terminal === 'incomplete') {
+    await coordinator.failPosition(current, 'incomplete', Date.now(), { resultJson: JSON.stringify(result), statsJson: normalized.statsJson });
+    return 'done';
+  }
+  if (terminal.startsWith('position_failed:') || terminal === 'failed') {
+    const transient = terminal === 'position_failed:engine_timeout' || terminal === 'position_failed:engine_exit' ||
+      terminal === 'position_failed:engine_restart_failed';
+    const fatalProtocol = !transient;
+    if (transient && attempt < 2) {
+      await coordinator.releaseForRetry(current, terminal, Date.now());
+      return 'redeliver';
+    }
+    await coordinator.failPosition(current, terminal, Date.now(), {
+      fatalProtocol, resultJson: JSON.stringify(result), statsJson: normalized.statsJson,
+    });
+    return 'done';
+  }
+  const proof = terminal === 'mate' ? await proveMate(driver, current.sfen) : null;
+  const seq = await coordinator.commitPosition(
+    current, JSON.stringify(result), normalized.statsJson, proof ? JSON.stringify(proof) : null,
+    disposition.cacheEligible, false, amount, result.elapsedMs, Date.now(),
+  );
+  return seq === null ? 'skipped' : 'done';
 }
 
-async function processChunk(message: JobChunk, env: JobEnvironment, driver: DriverClient): Promise<void> {
-  if (
-    !isRecord(message) || typeof message.job_id !== 'string' || !Number.isSafeInteger(message.epoch) ||
-    !Number.isSafeInteger(message.start_idx) || !Number.isSafeInteger(message.end_idx) ||
-    message.start_idx < 0 || message.end_idx <= message.start_idx || message.end_idx > 512 ||
-    message.end_idx - message.start_idx > 8
-  ) throw new TypeError('invalid_queue_message');
+function validChunk(value: unknown): value is JobChunk {
+  return isRecord(value) && Object.keys(value).length === 4 &&
+    typeof value.job_id === 'string' && /^[0-9a-f-]{36}$/.test(value.job_id) &&
+    typeof value.epoch === 'number' && typeof value.start_idx === 'number' && typeof value.end_idx === 'number' &&
+    Number.isSafeInteger(value.epoch) && Number.isSafeInteger(value.start_idx) && Number.isSafeInteger(value.end_idx) &&
+    value.start_idx >= 0 && value.end_idx > value.start_idx && value.end_idx <= MAX_JOB_POSITIONS && value.end_idx - value.start_idx <= 8;
+}
+async function processChunk(message: JobChunk, env: JobEnvironment, drivers: ProfileDriverRouter): Promise<'ack' | 'retry'> {
+  if (!validChunk(message)) throw new TypeError('invalid_queue_message');
+  const coordinator = operationStub(env);
+  if (await coordinator.consumeFault(message.job_id, 'throw', Date.now())) throw new Error('armed_pre_claim_failure');
   for (let index = message.start_idx; index < message.end_idx; index += 1) {
-    const claim = await operationStub(env).acquirePosition(message.job_id, index, message.epoch, crypto.randomUUID(), Date.now());
+    const claim = await coordinator.acquirePosition(message.job_id, index, message.epoch, crypto.randomUUID(), Date.now());
+    if (claim.kind === 'busy' || claim.kind === 'quarantine_required') {
+      await coordinator.deferBusyDelivery(message.job_id, message.epoch, message.start_idx, Date.now());
+      return 'ack';
+    }
     if (claim.kind !== 'claimed') continue;
-    const result = await processClaimedPosition(claim.value, env, driver);
-    if (result === 'redeliver') throw new Error('job_chunk_retry');
+    const result = await processClaimedPosition(claim.value, env, drivers(claim.value.identity.profileId));
+    if (result === 'redeliver' || result === 'busy') return 'retry';
+    if (result === 'cancelled') return 'ack';
   }
-  await operationStub(env).finishJob(message.job_id, message.epoch, Date.now());
+  await coordinator.finishChunk(message.job_id, message.epoch, Date.now());
+  return 'ack';
 }
-
-export async function handleJobsQueue(batch: MessageBatch<JobChunk>, env: JobEnvironment, driver: DriverClient): Promise<void> {
+async function handleDeadLetter(batch: MessageBatch<JobChunk>, env: JobEnvironment, drivers: ProfileDriverRouter): Promise<void> {
+  const coordinator = operationStub(env);
+  for (const message of batch.messages) {
+    const chunk = message.body;
+    if (!validChunk(chunk)) { message.ack(); continue; }
+    const begun = await coordinator.beginDeadLetter(chunk.job_id, chunk.epoch, Date.now());
+    if (!begun.current) { message.ack(); continue; }
+    if (begun.slot) {
+      const driver = drivers(begun.slot.profileId);
+      try {
+        if (!driver.destroy) throw new Error('container_destroy_unavailable');
+        await driver.destroy();
+        await coordinator.confirmContainerDestroyed(begun.slot, Date.now());
+      } catch {
+        message.retry({ delaySeconds: 60 });
+        continue;
+      }
+    }
+    await coordinator.finishDeadLetter(chunk.job_id, chunk.epoch, 'dead_lettered', Date.now());
+    message.ack();
+  }
+}
+export async function handleJobsQueue(batch: MessageBatch<JobChunk>, env: JobEnvironment, drivers: ProfileDriverRouter): Promise<void> {
+  if (batch.queue.endsWith('-dlq')) { await handleDeadLetter(batch, env, drivers); return; }
+  if (!batch.queue.includes('-jobs')) { for (const message of batch.messages) message.ack(); return; }
+  const coordinator = operationStub(env);
   for (const message of batch.messages) {
     try {
-      await processChunk(message.body, env, driver);
-      message.ack();
+      const result = await processChunk(message.body, env, drivers);
+      if (result === 'retry') message.retry({ delaySeconds: 1 });
+      else message.ack();
     } catch {
-      message.retry();
+      const chunk = message.body;
+      if (validChunk(chunk)) {
+        const slot = await coordinator.getSlot(Date.now());
+        if (slot?.jobId === chunk.job_id && slot.epoch === chunk.epoch) {
+          const driver = drivers(slot.profileId);
+          try {
+            if (!driver.destroy) throw new Error('container_destroy_unavailable');
+            await driver.destroy();
+            await coordinator.confirmContainerDestroyed(slot, Date.now());
+          } catch {
+            message.retry({ delaySeconds: 60 });
+            continue;
+          }
+        }
+      }
+      message.retry({ delaySeconds: 1 });
     }
   }
+}
+export async function handleJobsScheduled(env: JobEnvironment, drivers: ProfileDriverRouter): Promise<void> {
+  const coordinator = operationStub(env);
+  let recovery = await coordinator.recover(Date.now());
+  if (recovery.expiredSlot) {
+    const driver = drivers(recovery.expiredSlot.profileId);
+    try {
+      if (!driver.destroy) throw new Error('container_destroy_unavailable');
+      await driver.destroy();
+      await coordinator.confirmContainerDestroyed(recovery.expiredSlot, Date.now());
+    } catch { /* Expiry never releases the slot without confirmed process death. */ }
+  }
+  await coordinator.recover(Date.now());
+  await coordinator.cleanup(Date.now());
 }

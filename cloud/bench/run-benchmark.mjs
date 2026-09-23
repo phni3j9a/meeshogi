@@ -476,6 +476,10 @@ async function main() {
   const coldSampleCount = positiveInteger(options['--cold-samples'] ?? 3, '--cold-samples', { minimum: 3 });
   const instanceType = options['--instance-type'] ?? 'standard-2';
   if (!Object.hasOwn(INSTANCE_SPECS, instanceType)) throw new Error('--instance-type must be standard-2 or standard-3');
+  // Dual-container deployment: the admin bench selects the fixed container binding
+  // via the server-side profile name. standard-3 work runs on the precision
+  // binding; standard-2 on the free binding.
+  const benchProfile = instanceType === 'standard-3' ? 'precision-v1' : 'free-v1';
   const outDir = resolve(options['--out']);
   await mkdir(outDir, { recursive: true });
 
@@ -635,7 +639,7 @@ async function main() {
     let last = null;
     while (Date.now() < deadline) {
       last = await sendOne({
-        path: '/v1/internal/health',
+        path: `/v1/internal/health?profile=${benchProfile}`,
         method: 'GET',
         phase: 'cold-health',
         attempt: 1,
@@ -671,6 +675,7 @@ async function main() {
       const requestBody = {
         sfen: coldFixture.sfen,
         ...COLD_ANALYZE_COMBO,
+        profile: benchProfile,
         label: `cold-${index}-${coldFixture.id}`,
       };
       const analysis = await requestWith409Retry({
@@ -706,6 +711,7 @@ async function main() {
     workerVersion: workerVersion.version,
     workerVersionSource: workerVersion.source,
     instanceType,
+    benchProfile,
     imageDigest,
     health: latestHealth?.body ?? null,
     healthResponseHeaders: latestHealth?.headers ?? {},
@@ -727,7 +733,7 @@ async function main() {
         for (let sampleIndex = 1; sampleIndex <= warmCount; sampleIndex += 1) {
           if (fatal) break;
           const label = `${fixture.id}:${comboLabel(combo)}:warm${sampleIndex}`;
-          const requestBody = { sfen: fixture.sfen, ...combo, label };
+          const requestBody = { sfen: fixture.sfen, ...combo, profile: benchProfile, label };
           const outcome = await requestWith409Retry({
             path: '/v1/internal/bench/analyze',
             method: 'POST',

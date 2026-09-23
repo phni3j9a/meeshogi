@@ -20,19 +20,24 @@ export type WorkerEnv = {
   ANALYSIS_PROFILE_VERSION?: string;
   ANALYSIS_MODEL_ID?: string;
   ANALYSIS_ENGINE_ID?: string;
-  ANALYSIS_INSTANCE_TYPE?: string;
+  ANALYSIS_ENGINE_BINARY_DIGEST_LABEL?: string;
 };
 
 export type DriverClient = {
   fetch(request: Request): Promise<Response>;
+  /** Available for the private Container DO bindings, not ordinary HTTP services. */
+  destroy?(): Promise<void>;
 };
 
-type AnalyzeInput = { sfen: string; movetimeMs: number; multipv: number };
+type InternalProfile = 'free-v1' | 'precision-v1';
+type AnalyzeInput = { sfen: string; movetimeMs: number; multipv: number; profile?: InternalProfile };
 type BenchAnalyzeInput = AnalyzeInput & {
   threads?: number;
   hashMb?: number;
   label?: string;
 };
+
+export type DriverResolver = (profile: InternalProfile) => DriverClient;
 
 export type ServerProfileAnalyzeInput = AnalyzeInput & { threads?: number; hashMb?: number };
 
@@ -81,11 +86,20 @@ async function parseAnalyzeInput(request: Request): Promise<AnalyzeInput | null>
   } catch {
     return null;
   }
-  if (!isRecord(parsed) || !hasExactKeys(parsed, ['sfen', 'movetimeMs', 'multipv'])) return null;
+  if (!isRecord(parsed)) return null;
+  const keys = Object.keys(parsed);
+  if (!['sfen', 'movetimeMs', 'multipv'].every((key) => keys.includes(key)) || keys.some((key) => !['sfen', 'movetimeMs', 'multipv', 'profile'].includes(key))) return null;
   if (!isStrictShogiSfen(parsed.sfen)) return null;
   if (!Number.isSafeInteger(parsed.movetimeMs) || (parsed.movetimeMs as number) < 50 || (parsed.movetimeMs as number) > 30_000) return null;
   if (!Number.isSafeInteger(parsed.multipv) || (parsed.multipv as number) < 1 || (parsed.multipv as number) > 8) return null;
-  return { sfen: parsed.sfen, movetimeMs: parsed.movetimeMs as number, multipv: parsed.multipv as number };
+  const profile = parseInternalProfile(parsed.profile);
+  if (profile === null) return null;
+  return { sfen: parsed.sfen, movetimeMs: parsed.movetimeMs as number, multipv: parsed.multipv as number, ...(profile === undefined ? {} : { profile }) };
+}
+
+function parseInternalProfile(value: unknown): InternalProfile | null | undefined {
+  if (value === undefined) return undefined;
+  return value === 'free-v1' || value === 'precision-v1' ? value : null;
 }
 
 async function parseBenchAnalyzeInput(request: Request): Promise<BenchAnalyzeInput | null> {
@@ -103,7 +117,7 @@ async function parseBenchAnalyzeInput(request: Request): Promise<BenchAnalyzeInp
   if (!isRecord(parsed)) return null;
   const keys = Object.keys(parsed);
   const requiredKeys = ['sfen', 'movetimeMs', 'multipv'];
-  const allowedKeys = [...requiredKeys, 'threads', 'hashMb', 'label'];
+  const allowedKeys = [...requiredKeys, 'threads', 'hashMb', 'label', 'profile'];
   if (!requiredKeys.every((key) => keys.includes(key)) || keys.some((key) => !allowedKeys.includes(key))) return null;
   if (!isStrictShogiSfen(parsed.sfen)) return null;
   if (!Number.isSafeInteger(parsed.movetimeMs) || (parsed.movetimeMs as number) < 50 || (parsed.movetimeMs as number) > 30_000) return null;
@@ -114,27 +128,34 @@ async function parseBenchAnalyzeInput(request: Request): Promise<BenchAnalyzeInp
     parsed.label !== undefined &&
     (typeof parsed.label !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(parsed.label))
   ) return null;
+  const profile = parseInternalProfile(parsed.profile);
+  if (profile === null) return null;
 
   return {
     sfen: parsed.sfen,
     movetimeMs: parsed.movetimeMs as number,
     multipv: parsed.multipv as number,
+    ...(profile === undefined ? {} : { profile }),
     ...(parsed.threads === undefined ? {} : { threads: parsed.threads as number }),
     ...(parsed.hashMb === undefined ? {} : { hashMb: parsed.hashMb as number }),
     ...(parsed.label === undefined ? {} : { label: parsed.label }),
   };
 }
 
-async function hasEmptyJsonObject(request: Request): Promise<boolean> {
+async function parseStopBody(request: Request): Promise<InternalProfile | null> {
   const declaredLength = request.headers.get('content-length');
-  if (declaredLength !== null && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > 512)) return false;
+  if (declaredLength !== null && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > 512)) return null;
   const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > 512) return false;
+  if (new TextEncoder().encode(text).byteLength > 512) return null;
   try {
     const parsed: unknown = JSON.parse(text);
-    return isRecord(parsed) && Object.keys(parsed).length === 0;
+    if (!isRecord(parsed)) return null;
+    const keys = Object.keys(parsed);
+    if (keys.length === 0) return 'free-v1';
+    if (keys.length === 1 && keys[0] === 'profile') return parseInternalProfile(parsed.profile) ?? null;
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -210,7 +231,7 @@ export async function analyzeWithServerProfile(
 function v3Result(input: AnalyzeInput, payload: Record<string, unknown>, env: WorkerEnv): CloudAnalysisResultV3 | null {
   if (payload.contractVersion !== ANALYSIS_CONTRACT_VERSION) return null;
   if (payload.sfen !== input.sfen || payload.requestedMultiPv !== input.multipv) return null;
-  const profileVersion = Number(env.ANALYSIS_PROFILE_VERSION ?? '1');
+  const profileVersion = Number(env.ANALYSIS_PROFILE_VERSION ?? '2');
   const result: CloudAnalysisResultV3 = {
     contractVersion: ANALYSIS_CONTRACT_VERSION,
     analysisProfileId: env.ANALYSIS_PROFILE_ID ?? 'fixed-sfen-staging-v2',
@@ -239,7 +260,11 @@ function v3Result(input: AnalyzeInput, payload: Record<string, unknown>, env: Wo
   return result;
 }
 
-export async function handleRequest(request: Request, env: WorkerEnv, driver: DriverClient): Promise<Response> {
+function resolveDriver(driverOrResolver: DriverClient | DriverResolver, profile: InternalProfile | undefined): DriverClient {
+  return typeof driverOrResolver === 'function' ? driverOrResolver(profile ?? 'free-v1') : driverOrResolver;
+}
+
+export async function handleRequest(request: Request, env: WorkerEnv, driverOrResolver: DriverClient | DriverResolver): Promise<Response> {
   const url = new URL(request.url);
   if (
     url.pathname !== INTERNAL_ANALYZE_PATH &&
@@ -256,6 +281,9 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
 
   if (url.pathname === INTERNAL_HEALTH_PATH) {
     if (request.method !== 'GET') return json({ error: 'not_found' }, 404);
+    const profile = parseInternalProfile(url.searchParams.get('profile') ?? undefined);
+    if (profile === null) return json({ error: 'invalid_request' }, 400);
+    const driver = resolveDriver(driverOrResolver, profile);
     try {
       const response = await driver.fetch(driverRequest('/health', 'GET'));
       const body: unknown = await response.json();
@@ -268,7 +296,9 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
 
   if (url.pathname === INTERNAL_STOP_PATH) {
     if (request.method !== 'POST') return json({ error: 'not_found' }, 404);
-    if (!(await hasEmptyJsonObject(request))) return json({ error: 'invalid_request' }, 400);
+    const profile = await parseStopBody(request);
+    if (profile === null) return json({ error: 'invalid_request' }, 400);
+    const driver = resolveDriver(driverOrResolver, profile);
     try {
       const response = await driver.fetch(driverRequest('/stop', 'POST', {}));
       if (!response.ok) return analysisFailure(response.status === 503 ? 503 : 500);
@@ -284,12 +314,13 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
     if (request.method !== 'POST') return json({ error: 'not_found' }, 404);
     const input = await parseBenchAnalyzeInput(request);
     if (!input) return json({ error: 'invalid_request' }, 400);
-    return analyzeWithServerProfile(input, env, driver);
+    return analyzeWithServerProfile(input, env, resolveDriver(driverOrResolver, input.profile));
   }
 
   if (request.method !== 'POST') return json({ error: 'not_found' }, 404);
   const input = await parseAnalyzeInput(request);
   if (!input) return json({ error: 'invalid_request' }, 400);
+  const driver = resolveDriver(driverOrResolver, input.profile);
 
   try {
     const response = await driver.fetch(

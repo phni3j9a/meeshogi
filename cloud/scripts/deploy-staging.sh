@@ -23,9 +23,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${CONFIG_NAME}" in
-  wrangler.staging.jsonc|wrangler.staging-2vcpu.jsonc) ;;
+  wrangler.staging.jsonc) ;;
   *)
-    printf '%s\n' "Refusing deploy: --config must name wrangler.staging.jsonc or wrangler.staging-2vcpu.jsonc." >&2
+    printf '%s\n' "Refusing deploy: --config must name wrangler.staging.jsonc." >&2
     exit 2
     ;;
 esac
@@ -63,13 +63,14 @@ if config.get("env") or "env" in config:
     raise SystemExit("Refusing deploy: environment overrides are not permitted in the staging-only config.")
 if name != "meeshogi-analysis-staging":
     raise SystemExit("Refusing deploy: unexpected staging worker name.")
-expected_instance_type = "standard-3" if config_name == "wrangler.staging-2vcpu.jsonc" else "standard-2"
-if any(item.get("instance_type") != expected_instance_type for item in config.get("containers", [])):
-    raise SystemExit("Refusing deploy: instance type does not match the selected staging config.")
-if not config.get("containers") or not all(
-    str(item.get("class_name", "")).endswith("Container") for item in config["containers"]
-):
-    raise SystemExit("Refusing deploy: staging container configuration is missing or invalid.")
+containers = config.get("containers", [])
+expected_pairs = {"AnalysisContainer": "standard-2", "AnalysisContainerPrecision": "standard-3"}
+actual_pairs = {item.get("class_name"): item.get("instance_type") for item in containers}
+if actual_pairs != expected_pairs or any(item.get("max_instances") != 1 for item in containers):
+    raise SystemExit(
+        "Refusing deploy: staging must bind AnalysisContainer=standard-2 and "
+        "AnalysisContainerPrecision=standard-3, each with max_instances 1."
+    )
 PY
 
 cd "${CLOUD_DIR}"

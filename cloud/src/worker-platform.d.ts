@@ -70,6 +70,12 @@ interface DurableObjectState {
   blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T>;
 }
 
+interface ScheduledController {
+  cron: string;
+  scheduledTime: number;
+  noRetry(): void;
+}
+
 interface Message<T = unknown> {
   body: T;
   ack(): void;
@@ -109,13 +115,15 @@ declare namespace Cloudflare {
     DB: D1Database;
     JOB_QUEUE: Queue<import('./job-types').JobChunk>;
     JOB_COORDINATOR: DurableObjectNamespace<import('./job-coordinator').JobCoordinator>;
-    ANALYSIS_CONTAINER: DurableObjectNamespace<unknown>;
+    ANALYSIS_CONTAINER: DurableObjectNamespace<import('./index').AnalysisContainer>;
+    ANALYSIS_CONTAINER_PRECISION: DurableObjectNamespace<import('./index').AnalysisContainerPrecision>;
     ANALYSIS_ENGINE?: Fetcher;
+    ANALYSIS_ENGINE_PRECISION?: Fetcher;
     ANALYSIS_ADMIN_TOKEN?: string;
     STAGING_ADMIN_TOKEN?: string;
     ANALYSIS_ENGINE_ID: string;
     ANALYSIS_MODEL_ID: string;
-    ANALYSIS_INSTANCE_TYPE: 'standard-2' | 'standard-3';
+    ANALYSIS_ENGINE_BINARY_DIGEST_LABEL: string;
     TEST_MIGRATIONS?: string[];
   }
 }

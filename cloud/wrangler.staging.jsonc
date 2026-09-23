@@ -10,21 +10,27 @@
       "class_name": "AnalysisContainer",
       // Private digest-pinned image, built from an external 0700 context; engine/weight are never committed.
       "image": "registry.cloudflare.com/0c28583a22fe4051144d6efdb783d3b0/meeshogi-analysis-staging@sha256:84599cdf775dea33fcd62860eda67fc2ab8bf047ce9fb2012fcddd9e86b4c6cc",
-      // Select the instance size only for the serial benchmark; see docs/CLOUD.md for documented specs.
-      // Main must verify account availability and current limits before deployment.
       "instance_type": "standard-2",
+      "max_instances": 1
+    },
+    {
+      "class_name": "AnalysisContainerPrecision",
+      "image": "registry.cloudflare.com/0c28583a22fe4051144d6efdb783d3b0/meeshogi-analysis-staging@sha256:84599cdf775dea33fcd62860eda67fc2ab8bf047ce9fb2012fcddd9e86b4c6cc",
+      "instance_type": "standard-3",
       "max_instances": 1
     }
   ],
   "durable_objects": {
     "bindings": [
       { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" },
+      { "name": "ANALYSIS_CONTAINER_PRECISION", "class_name": "AnalysisContainerPrecision" },
       { "name": "JOB_COORDINATOR", "class_name": "JobCoordinator" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] },
-    { "tag": "v2", "new_sqlite_classes": ["JobCoordinator"] }
+    { "tag": "v2", "new_sqlite_classes": ["JobCoordinator"] },
+    { "tag": "v3", "new_sqlite_classes": ["AnalysisContainerPrecision"] }
   ],
   "d1_databases": [
     {
@@ -45,14 +51,19 @@
         "max_retries": 3,
         "dead_letter_queue": "meeshogi-analysis-staging-dlq",
         "max_concurrency": 1
+      },
+      {
+        "queue": "meeshogi-analysis-staging-dlq",
+        "max_batch_size": 1,
+        "max_retries": 1,
+        "max_concurrency": 1
       }
     ]
   },
   "vars": {
-    "ANALYSIS_PROFILE_ID": "fixed-sfen-staging-v1",
-    "ANALYSIS_PROFILE_VERSION": "1",
     "ANALYSIS_MODEL_ID": "analysis-model-staging-v1",
     "ANALYSIS_ENGINE_ID": "YaneuraOu NNUE 9.70git 64AVX2",
-    "ANALYSIS_INSTANCE_TYPE": "standard-2"
-  }
+    "ANALYSIS_ENGINE_BINARY_DIGEST_LABEL": "sha256:0cb27c8302f6eb357cd360372defe172401519c06fb4bf28eb2bf72ee0f39d80"
+  },
+  "triggers": { "crons": ["* * * * *"] }
 }

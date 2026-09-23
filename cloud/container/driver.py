@@ -47,6 +47,7 @@ PROCESS_KILL_GRACE_SECONDS = 2.0
 MAX_RESTART_ATTEMPTS = 3
 MAX_READINESS_ATTEMPTS = 3
 HELPER_TIMEOUT_SECONDS = 3.0
+MAX_PROOF_BUDGET = 10_000
 USI_HANDSHAKE_TIMEOUT_SECONDS = 20.0
 ENGINE_READY_TIMEOUT_SECONDS = 120.0
 POSITION_READY_TIMEOUT_SECONDS = 30.0
@@ -307,6 +308,7 @@ class EngineController:
         self._search_started = False
         self._stop_requested = False
         self._stop_requested_at = 0.0
+        self._sigstop_fault_injected = False
         self._cpu_flags = _cpu_flags()
         self._default_threads = 1
         self._default_hash_mb = 256
@@ -466,6 +468,26 @@ class EngineController:
             return False
         return True
 
+    def prove(self, request: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        try:
+            value = _run_helper(
+                "mate-proof", "--sfen", request["sfen"],
+                "--plies", str(request["plies"]), "--budget", str(request["budget"]),
+            )
+        except ProtocolError as error:
+            return 502, {"error": "proof_failed", "reason": error.reason}
+        proof_plies = value.get("plies")
+        if (
+            value.get("result") not in {"proven", "not-mate", "budget-exceeded", "in-check-invalid"}
+            or not (proof_plies is None or (type(proof_plies) is int and proof_plies in {1, 3}))
+            or type(value.get("nodesUsed")) is not int
+            or not 0 <= value["nodesUsed"] <= request["budget"]
+            or value.get("budget") != request["budget"]
+            or value.get("budgetVersion") != "sekirei-proof-ops-v1"
+        ):
+            return 502, {"error": "proof_failed", "reason": "helper_invalid_proof"}
+        return 200, value
+
     def analyze(self, request: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         if not self._analysis_lock.acquire(blocking=False):
             return 409, {"error": "analysis_conflict"}
@@ -531,6 +553,12 @@ class EngineController:
                 )
             self._search_started = True
             self._send(f"go movetime {movetime_ms}")
+            if os.environ.get("MEESHOGI_TEST_SIGSTOP_ENGINE") == "1" and not self._sigstop_fault_injected:
+                self._sigstop_fault_injected = True
+                try:
+                    proc.send_signal(signal.SIGSTOP)
+                except ProcessLookupError:
+                    pass
 
         start = time.monotonic()
         deadline = start + (movetime_ms + SEARCH_GRACE_MS) / 1000.0
@@ -861,6 +889,18 @@ def _validate_driver_request(value: Any) -> dict[str, Any] | None:
     return {"sfen": value["sfen"], "movetime_ms": movetime, "multipv": multipv, "threads": threads, "hash_mb": hash_mb}
 
 
+def _validate_proof_request(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or set(value) != {"sfen", "plies", "budget"}:
+        return None
+    if not is_valid_sfen(value["sfen"]):
+        return None
+    if type(value["plies"]) is not int or value["plies"] not in {1, 3}:
+        return None
+    if type(value["budget"]) is not int or not 1 <= value["budget"] <= MAX_PROOF_BUDGET:
+        return None
+    return {"sfen": value["sfen"], "plies": value["plies"], "budget": value["budget"]}
+
+
 class DriverHandler(BaseHTTPRequestHandler):
     controller: EngineController
     server_version = "meeshogi-analysis-staging"
@@ -883,6 +923,23 @@ class DriverHandler(BaseHTTPRequestHandler):
         self._send_json(200 if health["ready"] else 503, health)
 
     def do_POST(self) -> None:
+        if self.path == "/prove":
+            length = self._content_length()
+            if length is None or length > 4096:
+                self._send_json(400, {"error": "invalid_request"})
+                return
+            try:
+                value = json.loads(self.rfile.read(length))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                self._send_json(400, {"error": "invalid_request"})
+                return
+            request = _validate_proof_request(value)
+            if request is None:
+                self._send_json(400, {"error": "invalid_request"})
+                return
+            status, payload = self.controller.prove(request)
+            self._send_json(status, payload)
+            return
         if self.path == "/stop":
             length = self._content_length()
             if length is None or length > 1024:

@@ -6,12 +6,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" },
+      { "name": "ANALYSIS_CONTAINER_PRECISION", "class_name": "AnalysisContainerPrecision" },
       { "name": "JOB_COORDINATOR", "class_name": "JobCoordinator" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] },
-    { "tag": "v2", "new_sqlite_classes": ["JobCoordinator"] }
+    { "tag": "v2", "new_sqlite_classes": ["JobCoordinator"] },
+    { "tag": "v3", "new_sqlite_classes": ["AnalysisContainerPrecision"] }
   ],
   "d1_databases": [
     {
@@ -32,12 +34,20 @@
         "max_retries": 3,
         "dead_letter_queue": "meeshogi-analysis-local-test-dlq",
         "max_concurrency": 1
+      },
+      {
+        "queue": "meeshogi-analysis-local-test-dlq",
+        "max_batch_size": 1,
+        "max_retries": 1,
+        "max_concurrency": 1
       }
     ]
   },
   "vars": {
     "ANALYSIS_MODEL_ID": "local-test-model",
     "ANALYSIS_ENGINE_ID": "YaneuraOu NNUE 9.70git 64AVX2",
-    "ANALYSIS_INSTANCE_TYPE": "standard-2"
+    "ANALYSIS_ENGINE_BINARY_DIGEST_LABEL": "sha256:test-engine-digest-label",
+    "ANALYSIS_ADMIN_TOKEN": "local-analysis-admin-token",
+    "ANALYSIS_FAULT_FIXTURES_ENABLED": "1"
   }
 }
