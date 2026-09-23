@@ -8,7 +8,8 @@ appId: com.meeshogi.app
     id: library-search-input
 - inputText: '2099'
 - assertVisible: 棋譜が見つかりません
-- hideKeyboard
+# See player-names.yaml: neutral-tap keyboard dismissal instead of hideKeyboard.
+- tapOn: 棋譜が見つかりません
 - takeScreenshot: 48-search-empty
 - tapOn: 検索を閉じる
 - assertVisible: '.*最近の対局.*2局.*'

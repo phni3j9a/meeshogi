@@ -16,7 +16,9 @@ appId: com.meeshogi.app
     optional: true
 - assertVisible: '.*asitaka_y.*'
 - takeScreenshot: 08-player-names
-- hideKeyboard
+# Dismiss the software keyboard by tapping the non-interactive heading.
+# Maestro's hideKeyboard has no standard dismiss action on this iOS runtime.
+- tapOn: 棋譜で使う名前
 - tapOn:
     id: names-save
 - tapOn: 保存して反映
