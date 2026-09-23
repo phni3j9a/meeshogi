@@ -26,6 +26,7 @@ const DEFAULT_PRICES = {
 };
 const GAP_MS = 250;
 const RETRY_409_GAP_MS = 1000;
+const RETRY_5XX_GAP_MS = 5000;
 const HEALTH_POLL_MS = 1000;
 const HEALTH_TIMEOUT_MS = 15 * 60 * 1000;
 const CONTAINER_SLEEP_AFTER_SECONDS = 30;
@@ -567,14 +568,14 @@ async function main() {
   }
 
   async function requestWith409Retry(request) {
-    let sawConflict = false;
+    let retryReason = null;
     let final = null;
     const attemptRecords = [];
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const response = await sendOne({
         ...request,
         attempt,
-        retryClassification: sawConflict ? 'retry-of-409' : 'not-retried',
+        retryClassification: retryReason ?? 'not-retried',
       });
       final = response;
       attemptRecords.push(response.record);
@@ -582,10 +583,18 @@ async function main() {
         response.record.retryClassification = 'retry-once-after-409';
         response.record.retryDelayMs = RETRY_409_GAP_MS;
         await sleep(RETRY_409_GAP_MS);
-        sawConflict = true;
+        retryReason = 'retry-of-409';
+        continue;
+      }
+      if (response.status >= 500 && attempt === 1) {
+        response.record.retryClassification = `retry-once-after-${response.status}`;
+        response.record.retryDelayMs = RETRY_5XX_GAP_MS;
+        await sleep(RETRY_5XX_GAP_MS);
+        retryReason = `retry-of-${response.status}`;
         continue;
       }
       if (response.status === 409) response.record.retryClassification = '409-retry-exhausted';
+      if (response.status >= 500) response.record.retryClassification = `${response.status}-retry-exhausted`;
       break;
     }
     if (final?.status === 401 || final?.status === 404) fatal = true;

@@ -2,7 +2,7 @@
 
 ## Current status
 
-Issue #17 has passed the **fixed-SFEN gate on staging**: the `meeshogi-analysis-staging` Worker and `meeshogi-analysis-staging-analysiscontainer` have returned a 500 ms / MultiPV 2 analysis using the real engine, and the staging CPU reported AVX2. The next gate is the serial benchmark on `standard-2` and `standard-3`. D1, Queues, job profiles, app integration, and production resources remain intentionally absent.
+Issue #17 has passed the **fixed-SFEN gate on staging**: the `meeshogi-analysis-staging` Worker and `meeshogi-analysis-staging-analysiscontainer` have returned a 500 ms / MultiPV 2 analysis using the real engine, and the staging CPU reported AVX2. The serial benchmark on `standard-2` and `standard-3` is complete; see [Benchmark results](#benchmark-results-2026-09-23). D1, Queues, job profiles, app integration, and production resources remain intentionally absent.
 
 The cloud path is an evaluation stage. The app's on-device analysis remains in place until the fixed-SFEN gate, cloud benchmark, and both iOS and Android acceptance complete. Cloud connectivity is not a condition for local game management or analysis during migration.
 
@@ -49,7 +49,7 @@ Synthetic local tests do not independently verify the live deployment or invoice
 
 ## Benchmark
 
-The benchmark compares the same digest-pinned private image on one `standard-2` instance (1 vCPU / 6 GiB / 12 GB) and one `standard-3` instance (2 vCPU / 8 GiB / 16 GB). `max_instances` stays at 1. The runner serializes every request, waits between calls, retries a single 409 once after a gap, and stops with a non-zero exit code if an error remains. It begins with three cold samples separated by 45 seconds of idle, then runs the warm matrix. Each deployment should be supervised by Main; do not run the two instance configs at the same time.
+The benchmark compares the same digest-pinned private image on one `standard-2` instance (1 vCPU / 6 GiB / 12 GB) and one `standard-3` instance (2 vCPU / 8 GiB / 16 GB). `max_instances` stays at 1. The runner serializes every request, waits between calls, retries a single 409 once after a gap, retries one 5xx once after a 5-second gap, and stops with a non-zero exit code if an error remains. It begins with three cold samples separated by 45 seconds of idle, then runs the warm matrix. Each deployment should be supervised by Main; do not run the two instance configs at the same time.
 
 The committed fixtures are synthetic legal positions generated from `startpos` by `cloud/scripts/gen-fixtures.mjs` using the root `tsshogi` dependency. Regenerate and review them with:
 
@@ -98,3 +98,53 @@ Each run writes four timestamped files under `--out`:
 The default prices are dated **2026-09-24**: active vCPU-s **$0.000020**, provisioned GiB-s **$0.0000025**, and provisioned disk GB-s **$0.00000007**. Override them with `--price-config <json-or-file>` using `activeVcpuSecondUsd`, `provisionedGiBSecondUsd`, `provisionedDiskGBSecondUsd`, and optional `instances.standard-2` / `instances.standard-3` specs. The writer treats engine CPU time as measured, active vCPU ceilings and provisioned GiB/GB-seconds as conservative estimates, and explicitly excludes Workers / DO / Queue / D1, egress, logging, monthly base charges, and included allowances where metered usage is unavailable. A request-wall estimate is not a Cloudflare invoice.
 
 The benchmark route is admin-only instrumentation and must never be exposed as part of the public app API. It is not the future asynchronous job API.
+
+## Benchmark results (2026-09-23)
+
+Image `sha256:145d3983…` ran 1,992 recorded requests across `standard-2` and `standard-3` (raw JSONL under `cloud/bench/results/`). Warm figures are p50 wall latency; `term ok` / `incomplete` / `empty` count 200 responses whose terminal was `ok`, whose terminal was `incomplete`, or whose candidate list was empty.
+
+### `standard-2` (1 vCPU) vs `standard-3` (2 vCPU)
+
+| movetime | mpv | thr | s2 wall p50/p95 ms | s2 nps | s2 depth | s2 ok/inc/empty | s3 wall p50/p95 ms | s3 nps | s3 depth | s3 ok/inc/empty |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 100 | 2 | 1 | 492/1053 | 588k | 13 | 14/16/16 | 480/748 | 673k | 14 | 15/15/15 |
+| 100 | 2 | 2 | 624/1095 | 646k | 13 | 18/13/13 | 501/854 | 1.33M | 14 | 16/14/14 |
+| 100 | 3 | 1 | 570/842 | 622k | 0 | 8/28/28 | 463/613 | 685k | 0 | 13/22/22 |
+| 100 | 3 | 2 | 613/966 | 636k | 0 | 12/23/23 | 513/697 | 1.37M | 12 | 14/17/17 |
+| 250 | 2 | 1 | 639/1140 | 620k | 16 | 20/10/10 | 632/713 | 657k | 16 | 21/10/10 |
+| 250 | 2 | 2 | 764/1130 | 625k | 14 | 20/10/10 | 653/778 | 1.33M | 15 | 16/14/14 |
+| 250 | 3 | 1 | 708/943 | 600k | 14 | 18/17/17 | 625/779 | 706k | 14 | 17/16/16 |
+| 250 | 3 | 2 | 745/1123 | 651k | 0 | 13/21/21 | 654/783 | 1.35M | 0 | 11/21/21 |
+| 500 | 2 | 1 | 891/1072 | 634k | 17 | 25/15/15 | 881/1329 | 672k | 17 | 17/13/13 |
+| 500 | 2 | 2 | 943/1475 | 618k | 15 | 22/8/8 | 906/1149 | 1.33M | 17 | 24/6/6 |
+| 500 | 3 | 1 | 898/1279 | 609k | 16 | 19/11/11 | 861/962 | 690k | 16 | 19/11/11 |
+| 500 | 3 | 2 | 1024/1379 | 603k | 15 | 23/7/7 | 897/1218 | 1.33M | 16 | 22/8/8 |
+| 1000 | 2 | 1 | 1479/1917 | 593k | 18 | 43/3/3 | 1364/1860 | 660k | 18 | 27/3/3 |
+| 1000 | 2 | 2 | 1526/2266 | 578k | 17 | 26/4/4 | 1390/1485 | 1.33M | 18 | 26/4/4 |
+| 1000 | 3 | 1 | 1398/1768 | 617k | 17 | 26/4/4 | 1360/1778 | 705k | 17 | 27/3/3 |
+| 1000 | 3 | 2 | 1520/1966 | 600k | 16 | 26/4/4 | 1381/1612 | 1.37M | 17 | 26/4/4 |
+| 2000 | 2 | 1 | 2470/3006 | 617k | 20 | 27/3/3 | 2366/2525 | 696k | 20 | 27/3/3 |
+| 2000 | 2 | 2 | 2501/2793 | 604k | 18 | 27/3/3 | 2386/2484 | 1.36M | 19 | 52/4/4 |
+| 2000 | 3 | 1 | 2474/2850 | 595k | 19 | 27/3/3 | 2365/2389 | 669k | 19 | 27/3/3 |
+| 2000 | 3 | 2 | 2439/3098 | 623k | 17 | 26/4/4 | 2389/2495 | 1.36M | 19 | 27/3/3 |
+| 5000 | 2 | 1 | 5460/5931 | 619k | 23 | 110/3/3 | 5365/5458 | 659k | 24 | 27/3/3 |
+| 5000 | 2 | 2 | 5495/5722 | 616k | 20 | 51/3/3 | 5386/5508 | 1.37M | 22 | 27/3/3 |
+| 5000 | 3 | 1 | 5367/5902 | 659k | 23 | 27/3/3 | 5374/5718 | 699k | 22 | 27/3/3 |
+| 5000 | 3 | 2 | 5488/5776 | 639k | 20 | 27/3/3 | 5406/5564 | 1.35M | 21 | 29/3/3 |
+
+Cold-start readiness (`cold-health` to ready): `standard-2` p50 4.4 s / p95 6.2 s / max 18.5 s (n=30); `standard-3` p50 3.6 s / p95 7.4 s / max 11.1 s (n=12). Cold-analyze at 500 ms then completes in ~0.9-1.3 s.
+
+### Findings
+
+- Wall latency is `movetime + ~350-550 ms` overhead; at 100 ms the overhead dominates (~500 ms wall).
+- `threads=2` yields no NPS gain on 1 vCPU (578-659k) but doubles NPS on 2 vCPU (1.33-1.37M). Threads only pay on `standard-3`.
+- Depth grows ~1-2 plies per movetime doubling: d13-14@100ms → d17-20@1-2s → d20-24@5s.
+- `incomplete`/empty-candidate responses are frequent at ≤500 ms (strict complete-iteration rule cannot fill all MultiPV lines) and rare at ≥1000 ms (~3/36). At ≥1000 ms the residual empties are almost entirely `single-legal-move`, where legal moves (1) < requested MultiPV — a contract-semantics case, not an engine failure.
+- One fixture (`middlegame-150`, hand-heavy position) hangs the engine after its movetime elapses: it emits final `info` lines then never returns `bestmove`, and ignores `stop` (reproduced locally; driver times out, kills, and auto-restarts the engine — verified end-to-end). Deterministic at 5 s on `standard-2` in all four combos; intermittent on `standard-3` (also seen once at 1000 ms and 2000 ms). Other transient 500/503s were rare (~0.4% of requests) and recovered on retry.
+- Per-run cost estimates are in each `cost-estimate-*.md`; they bound container vCPU/GiB/GB-seconds only and exclude Workers/DO/D1/Queues/egress/base charges.
+
+### Implications for profiles (pending Director decision)
+
+- Free candidate: 1000 ms / MultiPV 2-3 / threads 1 on `standard-2` — ≥1s virtually eliminates incompletes; threads do not help on 1 vCPU; p95 wall ~2 s.
+- Precision candidate: 2000-5000 ms / MultiPV 2-3 / threads 2 on `standard-3` — doubles NPS, adds ~1-3 plies; rare position-dependent engine hangs mean jobs need bounded retry + acceptable-partial-result semantics.
+- `single-legal-move` needs a contract decision: candidates should return `min(requested, legalMoves)` rather than `incomplete` with an empty list.
