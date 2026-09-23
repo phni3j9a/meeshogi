@@ -1,8 +1,8 @@
 import {
   ANALYSIS_CONTRACT_VERSION,
-  isCloudAnalysisResultV2,
+  isCloudAnalysisResultV3,
   isStrictShogiSfen,
-  type CloudAnalysisResultV2,
+  type CloudAnalysisResultV3,
 } from '../../src/cloud/analysis-contract';
 
 const MAX_BODY_BYTES = 4096;
@@ -160,18 +160,18 @@ async function mapDriverFailure(response: Response): Promise<Response> {
   return analysisFailure(response.status === 502 ? 502 : 500, reason);
 }
 
-function v2Result(input: AnalyzeInput, payload: Record<string, unknown>, env: WorkerEnv): CloudAnalysisResultV2 | null {
+function v3Result(input: AnalyzeInput, payload: Record<string, unknown>, env: WorkerEnv): CloudAnalysisResultV3 | null {
   if (payload.contractVersion !== ANALYSIS_CONTRACT_VERSION) return null;
   if (payload.sfen !== input.sfen || payload.requestedMultiPv !== input.multipv) return null;
   const profileVersion = Number(env.ANALYSIS_PROFILE_VERSION ?? '1');
-  const result: CloudAnalysisResultV2 = {
+  const result: CloudAnalysisResultV3 = {
     contractVersion: ANALYSIS_CONTRACT_VERSION,
     analysisProfileId: env.ANALYSIS_PROFILE_ID ?? 'fixed-sfen-staging-v2',
     profileVersion,
     engineId: typeof payload.engineId === 'string' ? payload.engineId : '',
     modelId: env.ANALYSIS_MODEL_ID ?? 'analysis-model-staging-v1',
     sfen: input.sfen,
-    candidates: payload.candidates as CloudAnalysisResultV2['candidates'],
+    candidates: payload.candidates as CloudAnalysisResultV3['candidates'],
     actualNodes: payload.actualNodes as number,
     completedDepth: payload.completedDepth as number,
     elapsedMs: payload.elapsedMs as number,
@@ -180,14 +180,15 @@ function v2Result(input: AnalyzeInput, payload: Record<string, unknown>, env: Wo
     effectiveMultiPv: payload.effectiveMultiPv as number,
     rootLegalMoveCount: payload.rootLegalMoveCount as number,
     completedAt: new Date().toISOString(),
-    terminal: payload.terminal as CloudAnalysisResultV2['terminal'],
+    terminal: payload.terminal as CloudAnalysisResultV3['terminal'],
     engineEpoch: payload.engineEpoch as string,
     restartCount: payload.restartCount as number,
     processId: payload.processId as number,
-    ...(payload.terminalDetail === undefined ? {} : { terminalDetail: payload.terminalDetail as CloudAnalysisResultV2['terminalDetail'] }),
+    ...(payload.terminalDetail === undefined ? {} : { terminalDetail: payload.terminalDetail as CloudAnalysisResultV3['terminalDetail'] }),
+    ...(payload.engineBestmove === undefined ? {} : { engineBestmove: payload.engineBestmove as string }),
   };
   if (result.requestedMultiPv !== input.multipv) return null;
-  if (!isCloudAnalysisResultV2(result)) return null;
+  if (!isCloudAnalysisResultV3(result)) return null;
   return result;
 }
 
@@ -251,7 +252,7 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
 
       const payload: unknown = await response.json();
       if (!isRecord(payload)) return analysisFailure(500);
-      const result = v2Result(input, payload, env);
+      const result = v3Result(input, payload, env);
       if (!result) return analysisFailure(500, 'contract_validation_failed');
 
       const stats: Record<string, number> = {};
@@ -283,7 +284,7 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
 
     const payload: unknown = await response.json();
     if (!isRecord(payload)) return analysisFailure(500);
-    const result = v2Result(input, payload, env);
+    const result = v3Result(input, payload, env);
     if (!result) return analysisFailure(500, 'contract_validation_failed');
     return json(result);
   } catch {

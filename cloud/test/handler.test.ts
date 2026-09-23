@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ANALYSIS_CONTRACT_VERSION, isCloudAnalysisResultV2 } from '../../src/cloud/analysis-contract';
+import { ANALYSIS_CONTRACT_VERSION, isCloudAnalysisResultV3 } from '../../src/cloud/analysis-contract';
 import { handleRequest, type DriverClient, type WorkerEnv } from '../src/handler';
 
 const SFEN = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1';
@@ -35,6 +35,7 @@ class FakeDriver implements DriverClient {
     engineEpoch: 'epoch-1',
     restartCount: 0,
     processId: 1234,
+    engineBestmove: '7g7f',
     stats: {
       enginePeakRssKiB: 4096,
       engineRssKiB: 3072,
@@ -103,15 +104,16 @@ function benchRequest(body: unknown, token = TOKEN): Request {
   });
 }
 
-function validV2Result(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function validV3Result(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    contractVersion: 2,
+    contractVersion: 3,
     analysisProfileId: 'free-v1',
     profileVersion: 1,
     engineId: 'Fake USI Engine',
     modelId: 'opaque-model@digest',
     sfen: SFEN,
     candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 35281 }],
+    engineBestmove: '7g7f',
     actualNodes: 500,
     completedDepth: 4,
     elapsedMs: 1000,
@@ -131,22 +133,22 @@ function validV2Result(overrides: Record<string, unknown> = {}): Record<string, 
 describe('staging worker route guards', () => {
   it('accepts finite cp magnitudes through the shared save-validator bound', () => {
     for (const scoreCp of [-1_000_000, -35_281, 32_000, 35_281, 1_000_000]) {
-      expect(isCloudAnalysisResultV2(validV2Result({
+      expect(isCloudAnalysisResultV3(validV3Result({
         candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp }],
       }))).toBe(true);
     }
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({
       candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 1_000_001 }],
     }))).toBe(false);
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({
       candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: Number.MAX_SAFE_INTEGER + 1 }],
     }))).toBe(false);
   });
 
   it('requires effective MultiPV to match legal count and exact distinct completed candidates', () => {
-    expect(isCloudAnalysisResultV2(validV2Result({ effectiveMultiPv: 2, multipv: 2 }))).toBe(false);
-    expect(isCloudAnalysisResultV2(validV2Result({ rootLegalMoveCount: 3 }))).toBe(false);
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({ effectiveMultiPv: 2, multipv: 2 }))).toBe(false);
+    expect(isCloudAnalysisResultV3(validV3Result({ rootLegalMoveCount: 3 }))).toBe(false);
+    expect(isCloudAnalysisResultV3(validV3Result({
       candidates: [
         { move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 1 },
         { move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 2 },
@@ -156,31 +158,31 @@ describe('staging worker route guards', () => {
       rootLegalMoveCount: 3,
       multipv: 2,
     }))).toBe(false);
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({
       candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 3, scoreCp: 1 }],
     }))).toBe(false);
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({
       candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: 1, lowerbound: true }],
     }))).toBe(false);
   });
 
   it('preserves zero-distance mate sign explicitly and rejects a bare numeric zero', () => {
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({
       terminal: 'mate',
       candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, mateSign: 'gote' }],
     }))).toBe(true);
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({
       terminal: 'mate',
       candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreMate: 0, mateSign: 'gote' }],
     }))).toBe(false);
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({
       terminal: 'mate',
       candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreMate: -3, mateSign: 'sente' }],
     }))).toBe(false);
   });
 
   it('distinguishes zero-legal-move context from normal move results', () => {
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({
       candidates: [],
       completedDepth: 0,
       multipv: 0,
@@ -189,8 +191,9 @@ describe('staging worker route guards', () => {
       rootLegalMoveCount: 0,
       terminal: 'no_legal_moves',
       terminalDetail: 'checkmate',
+      engineBestmove: undefined,
     }))).toBe(true);
-    expect(isCloudAnalysisResultV2(validV2Result({
+    expect(isCloudAnalysisResultV3(validV3Result({
       candidates: [],
       completedDepth: 0,
       multipv: 0,
@@ -246,7 +249,7 @@ describe('staging worker route guards', () => {
     const result = await handleRequest(analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1 }), env, driver);
     const body: unknown = await result.json();
     expect(result.status).toBe(200);
-    expect(isCloudAnalysisResultV2(body)).toBe(true);
+    expect(isCloudAnalysisResultV3(body)).toBe(true);
     expect(driver.requests).toHaveLength(1);
     expect(driver.requests[0].headers.has('authorization')).toBe(false);
     expect(await driver.requests[0].json()).toEqual({ sfen: SFEN, movetime_ms: 250, multipv: 1 });
@@ -304,7 +307,7 @@ describe('staging worker route guards', () => {
     const body = await result.json() as Record<string, unknown>;
     expect(result.status).toBe(200);
     const { stats, ...contract } = body;
-    expect(isCloudAnalysisResultV2(contract)).toBe(true);
+    expect(isCloudAnalysisResultV3(contract)).toBe(true);
     expect(driver.requests).toHaveLength(1);
     expect(driver.requests[0].headers.has('authorization')).toBe(false);
     expect(await driver.requests[0].json()).toEqual({

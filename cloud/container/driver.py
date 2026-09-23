@@ -534,7 +534,8 @@ class EngineController:
 
         start = time.monotonic()
         deadline = start + (movetime_ms + SEARCH_GRACE_MS) / 1000.0
-        iterations: dict[int, dict[str, Any]] = {}
+        blocks: list[list[dict[str, Any]]] = []
+        current_block: list[dict[str, Any]] = []
         max_nodes = 0
         reported_elapsed = 0
         bestmove: str | None = None
@@ -579,20 +580,24 @@ class EngineController:
                         raise ProtocolError("score_cp_out_of_engine_range")
                     if info["score_type"] == "mate" and abs(info["score"]) > ENGINE_MATE_LIMIT:
                         raise ProtocolError("score_mate_out_of_range")
-                    iteration = iterations.setdefault(info["depth"], {"ranks": {}, "duplicates": set()})
-                    ranks = iteration["ranks"]
-                    if info["multipv"] in ranks:
-                        iteration["duplicates"].add(info["multipv"])
-                    ranks[info["multipv"]] = info
+                    if current_block and (
+                        info["multipv"] <= current_block[-1]["multipv"]
+                        or info["depth"] != current_block[0]["depth"]
+                    ):
+                        blocks.append(current_block)
+                        current_block = []
+                    current_block.append(info)
                     max_nodes = max(max_nodes, info.get("nodes", 0))
                     reported_elapsed = max(reported_elapsed, info.get("time", 0))
             elif line.startswith("bestmove "):
                 parts = line.split()
                 bestmove = parts[1] if len(parts) > 1 else ""
 
+        if current_block:
+            blocks.append(current_block)
         elapsed_ms = max(0, int((time.monotonic() - start) * 1000))
-        candidates, completed_depth = self._last_complete_iteration(
-            iterations,
+        candidates, completed_depth = self._select_candidates(
+            blocks,
             effective_multipv,
             sfen,
             root["legalMoves"],
@@ -620,20 +625,20 @@ class EngineController:
             raise ProtocolError("bestmove_none_with_legal_moves")
         if not bestmove or not MOVE_RE.fullmatch(bestmove):
             raise ProtocolError("invalid_bestmove")
-        if not candidates or bestmove != candidates[0]["move"]:
-            if candidates:
-                raise ProtocolError("bestmove_disagrees_with_multipv_rank_one")
+        if bestmove not in root["legalMoves"]:
+            raise ProtocolError("illegal_bestmove")
+        if not candidates:
             return 200, self._result(
                 sfen, [], requested_multipv, effective_multipv, root_legal_move_count,
                 max_nodes, 0, max(elapsed_ms, reported_elapsed), "incomplete",
-                search_epoch, search_process_id,
+                search_epoch, search_process_id, engine_bestmove=bestmove,
             )
 
         terminal = "mate" if any("mateSign" in candidate for candidate in candidates) else "ok"
         return 200, self._result(
             sfen, candidates, requested_multipv, effective_multipv, root_legal_move_count,
             max_nodes, completed_depth, max(elapsed_ms, reported_elapsed), terminal,
-            search_epoch, search_process_id,
+            search_epoch, search_process_id, engine_bestmove=bestmove,
         )
 
     def _timeout_result(
@@ -719,27 +724,34 @@ class EngineController:
         return False
 
     @staticmethod
-    def _last_complete_iteration(
-        iterations: dict[int, dict[str, Any]],
+    def _select_candidates(
+        blocks: list[list[dict[str, Any]]],
         multipv: int,
         sfen: str,
         legal_moves: set[str],
     ) -> tuple[list[dict[str, Any]], int]:
+        """Pick the last emission block whose MultiPV set is wholly complete.
+
+        The engine may re-emit (depth, rank) lines, including a final flush at
+        movetime expiry that can even lower the reported depth. Re-emission is
+        a normal update, so only a contiguous block that itself contains ranks
+        1..multipv at one depth, all with exact scores, qualifies. Later
+        partial or bound blocks never displace an earlier complete block.
+        """
         sente_to_move = sfen.split()[1] == "b"
-        for depth in sorted(iterations, reverse=True):
-            iteration = iterations[depth]
-            current = iteration["ranks"]
-            if iteration["duplicates"] or set(current) != set(range(1, multipv + 1)):
+        for block in reversed(blocks):
+            if len(block) != multipv or [info["multipv"] for info in block] != list(range(1, multipv + 1)):
                 continue
+            if any(info["bound"] for info in block):
+                continue
+            depth = block[0]["depth"]
             candidates: list[dict[str, Any]] = []
             valid = True
             moves: set[str] = set()
-            for rank in range(1, multipv + 1):
-                info = current[rank]
+            for info in block:
                 pv = info["pv"][:64]
                 if (
-                    info["bound"]
-                    or not pv
+                    not pv
                     or not all(MOVE_RE.fullmatch(move) for move in pv)
                     or pv[0] not in legal_moves
                     or pv[0] in moves
@@ -779,10 +791,11 @@ class EngineController:
         epoch: str,
         process_id: int,
         terminal_detail: str | None = None,
+        engine_bestmove: str | None = None,
     ) -> dict[str, Any]:
         process = self._proc
         result = {
-            "contractVersion": 2,
+            "contractVersion": 3,
             "engineId": self._engine_id,
             "sfen": sfen,
             "candidates": candidates,
@@ -801,6 +814,8 @@ class EngineController:
         }
         if terminal_detail is not None:
             result["terminalDetail"] = terminal_detail
+        if engine_bestmove is not None:
+            result["engineBestmove"] = engine_bestmove
         return result
 
     def close(self) -> None:

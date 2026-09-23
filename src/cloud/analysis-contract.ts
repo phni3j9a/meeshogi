@@ -1,4 +1,4 @@
-export const ANALYSIS_CONTRACT_VERSION = 2 as const;
+export const ANALYSIS_CONTRACT_VERSION = 3 as const;
 
 export const ANALYSIS_TERMINAL_STATUSES = [
   'ok',
@@ -28,7 +28,7 @@ export type AnalysisCandidate = {
   mateSign?: AnalysisMateSign;
 };
 
-export type CloudAnalysisResultV2 = {
+export type CloudAnalysisResultV3 = {
   contractVersion: typeof ANALYSIS_CONTRACT_VERSION;
   analysisProfileId: string;
   profileVersion: number;
@@ -36,6 +36,12 @@ export type CloudAnalysisResultV2 = {
   modelId: string;
   sfen: string;
   candidates: AnalysisCandidate[];
+  /**
+   * The engine's own bestmove, kept even when it differs from the first
+   * candidate of the last fully completed MultiPV block. Required when
+   * terminal is `ok`, `mate`, or `incomplete`; absent otherwise.
+   */
+  engineBestmove?: string;
   actualNodes: number;
   completedDepth: number;
   elapsedMs: number;
@@ -62,6 +68,7 @@ const RESULT_KEYS = new Set([
   'modelId',
   'sfen',
   'candidates',
+  'engineBestmove',
   'actualNodes',
   'completedDepth',
   'elapsedMs',
@@ -144,7 +151,7 @@ function candidateHasExactScore(candidate: Record<string, unknown>): boolean {
   return candidate.mateSign === (candidate.scoreMate > 0 ? 'sente' : 'gote');
 }
 
-export function isCloudAnalysisResultV2(value: unknown): value is CloudAnalysisResultV2 {
+export function isCloudAnalysisResultV3(value: unknown): value is CloudAnalysisResultV3 {
   if (!isRecord(value) || !hasOnlyKeys(value, RESULT_KEYS)) return false;
   if (value.contractVersion !== ANALYSIS_CONTRACT_VERSION) return false;
   if (typeof value.analysisProfileId !== 'string' || value.analysisProfileId.length === 0) return false;
@@ -201,6 +208,12 @@ export function isCloudAnalysisResultV2(value: unknown): value is CloudAnalysisR
     if (value.terminalDetail !== 'checkmate' && value.terminalDetail !== 'no_legal_moves') return false;
   }
   if (value.terminal === 'win' && value.terminalDetail !== 'declaration_win') return false;
+  const expectsBestmove = value.terminal === 'ok' || value.terminal === 'mate' || value.terminal === 'incomplete';
+  if (expectsBestmove) {
+    if (typeof value.engineBestmove !== 'string' || !USI_MOVE_RE.test(value.engineBestmove)) return false;
+  } else if (value.engineBestmove !== undefined) {
+    return false;
+  }
   return true;
 }
 

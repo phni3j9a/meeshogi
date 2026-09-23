@@ -1,4 +1,5 @@
 ARG RUST_BUILDER_IMAGE=rust:1.96.0-slim-bookworm
+ARG BASE_IMAGE=ubuntu:24.04
 FROM --platform=linux/amd64 ${RUST_BUILDER_IMAGE} AS helper-builder
 
 WORKDIR /build
@@ -7,7 +8,6 @@ RUN cargo build --release --locked \
     --manifest-path /build/helper-src/Cargo.toml \
     --target x86_64-unknown-linux-gnu
 
-ARG BASE_IMAGE=ubuntu:24.04
 FROM --platform=linux/amd64 ${BASE_IMAGE} AS runtime
 
 ARG EXPECTED_ENGINE_SHA256=0cb27c8302f6eb357cd360372defe172401519c06fb4bf28eb2bf72ee0f39d80

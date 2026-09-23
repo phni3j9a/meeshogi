@@ -101,6 +101,19 @@ for raw in sys.stdin:
             print("info depth 2 multipv 2 score cp -30 nodes 250 time 20 pv 2g2f 8c8d", flush=True)
         elif scenario == "bestmove-only":
             pass
+        elif scenario == "flush-reemit":
+            print("info depth 2 multipv 1 score cp 50 nodes 200 time 20 pv 7g7f 3c3d", flush=True)
+            print("info depth 2 multipv 2 score cp -30 nodes 250 time 20 pv 2g2f 8c8d", flush=True)
+            print("info depth 2 multipv 1 score cp 51 nodes 260 time 21 pv 7g7f 3c3d", flush=True)
+            print("info depth 2 multipv 2 score cp -31 nodes 270 time 21 pv 2g2f 8c8d", flush=True)
+        elif scenario == "flush-downgrade":
+            print("info depth 3 multipv 1 score cp 55 nodes 400 time 30 pv 7g7f 3c3d", flush=True)
+            print("info depth 3 multipv 2 score cp -35 nodes 400 time 30 pv 2g2f 8c8d", flush=True)
+            print("info depth 2 multipv 1 score cp 50 nodes 410 time 31 pv 7g7f 3c3d", flush=True)
+            print("info depth 2 multipv 2 score cp -30 nodes 410 time 31 pv 2g2f 8c8d", flush=True)
+        elif scenario in {"bestmove-mismatch", "bestmove-illegal"}:
+            print("info depth 2 multipv 1 score cp 50 nodes 200 time 20 pv 7g7f 3c3d", flush=True)
+            print("info depth 2 multipv 2 score cp -30 nodes 250 time 20 pv 2g2f 8c8d", flush=True)
         elif scenario == "mate":
             print("info depth 4 multipv 1 score mate 3 nodes 300 time 8 pv 7g7f 3c3d", flush=True)
             print("info depth 4 multipv 2 score cp 15 nodes 300 time 8 pv 2g2f 8c8d", flush=True)
@@ -132,6 +145,10 @@ for raw in sys.stdin:
             bestmove = "none"
         elif scenario == "0000":
             bestmove = "0000"
+        elif scenario == "bestmove-mismatch":
+            bestmove = "2g2f"
+        elif scenario == "bestmove-illegal":
+            bestmove = "1a1a"
         print("bestmove " + bestmove, flush=True)
     elif command == "quit":
         break
@@ -253,15 +270,16 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(result["completedDepth"], 2)
         self.assertEqual([candidate["scoreCp"] for candidate in result["candidates"]], [50, -30])
         self.assertEqual([candidate["move"] for candidate in result["candidates"]], ["7g7f", "2g2f"])
-        self.assertEqual(result["contractVersion"], 2)
+        self.assertEqual(result["contractVersion"], 3)
         self.assertEqual(result["requestedMultiPv"], 2)
         self.assertEqual(result["effectiveMultiPv"], 2)
         self.assertEqual(result["rootLegalMoveCount"], 30)
+        self.assertEqual(result["engineBestmove"], "7g7f")
         self.assertTrue(result["engineEpoch"])
         self.assertEqual(result["engineEpoch"], controller.health()["engineEpoch"])
 
-    def test_partial_duplicate_rank_duplicate_move_depth_mismatch_and_bound_only_are_incomplete(self) -> None:
-        for scenario in ["partial", "duplicate-rank", "duplicate-move", "depth-mismatch", "bound-only", "bestmove-only"]:
+    def test_partial_duplicate_move_depth_mismatch_and_bound_only_are_incomplete(self) -> None:
+        for scenario in ["partial", "duplicate-move", "depth-mismatch", "bound-only", "bestmove-only"]:
             with self.subTest(scenario=scenario), self.scenario(scenario):
                 controller = self.make_controller()
                 status, result = controller.analyze(self.request())
@@ -269,6 +287,42 @@ class DriverTests(unittest.TestCase):
                 self.assertEqual(result["terminal"], "incomplete")
                 self.assertEqual(result["candidates"], [])
                 self.assertEqual(result["completedDepth"], 0)
+                self.assertEqual(result["engineBestmove"], "7g7f")
+
+    def test_reemitted_and_downgraded_flush_blocks_keep_the_last_complete_set(self) -> None:
+        with self.scenario("duplicate-rank"):
+            controller = self.make_controller()
+            status, result = controller.analyze(self.request())
+        self.assertEqual((status, result["terminal"]), (200, "ok"))
+        self.assertEqual([candidate["scoreCp"] for candidate in result["candidates"]], [51, -30])
+
+        with self.scenario("flush-reemit"):
+            controller = self.make_controller()
+            status, result = controller.analyze(self.request())
+        self.assertEqual((status, result["terminal"]), (200, "ok"))
+        self.assertEqual([candidate["scoreCp"] for candidate in result["candidates"]], [51, -31])
+        self.assertEqual(result["completedDepth"], 2)
+
+        with self.scenario("flush-downgrade"):
+            controller = self.make_controller()
+            status, result = controller.analyze(self.request())
+        self.assertEqual((status, result["terminal"]), (200, "ok"))
+        self.assertEqual(result["completedDepth"], 2)
+        self.assertEqual([candidate["scoreCp"] for candidate in result["candidates"]], [50, -30])
+
+    def test_legal_bestmove_disagreement_is_kept_not_rejected(self) -> None:
+        with self.scenario("bestmove-mismatch"):
+            controller = self.make_controller()
+            status, result = controller.analyze(self.request())
+        self.assertEqual((status, result["terminal"]), (200, "ok"))
+        self.assertEqual(result["candidates"][0]["move"], "7g7f")
+        self.assertEqual(result["engineBestmove"], "2g2f")
+
+        with self.scenario("bestmove-illegal"):
+            controller = self.make_controller()
+            status, body = controller.analyze(self.request())
+        self.assertEqual(status, 502)
+        self.assertEqual(body["reason"], "illegal_bestmove")
 
     def test_multipv_scores_keep_sente_perspective_for_both_turns(self) -> None:
         with self.scenario("mate"):
