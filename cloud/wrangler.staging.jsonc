@@ -2,11 +2,15 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "meeshogi-analysis-staging",
   "main": "src/index.ts",
-  "compatibility_date": "2026-09-24",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
   "containers": [
     {
       "class_name": "AnalysisContainer",
-      "image": "./container/Dockerfile",
+      // Private image: built from an external 0700 context by scripts/prepare-private-context.sh
+      // + `wrangler containers build -p`; the engine/weight are never committed to this repo.
+      "image": "registry.cloudflare.com/0c28583a22fe4051144d6efdb783d3b0/meeshogi-analysis-staging@sha256:ae00a072a0d82f233079c1a1d179a0600397e232feb7487cd36758b648c076dd",
       // Cloudflare Containers documents standard-2 as 1 vCPU, 6 GiB memory, and 12 GB disk.
       // Main must verify account availability and the current limits reference before deployment.
       "instance_type": "standard-2",

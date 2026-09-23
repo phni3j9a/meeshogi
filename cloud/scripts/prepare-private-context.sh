@@ -96,7 +96,8 @@ try:
         fail("engine_options.txt path escapes the private artifact root.")
     options_hash = options_entry.get("sha256")
     options_path, options_hash = checked_artifact(str(options_path), options_hash, "engine_options.txt")
-    if options_path.read_bytes() != b"FV_SCALE 40\n":
+    normalized_options = options_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if normalized_options != b"FV_SCALE 40\n":
         fail("engine_options.txt contents are not the reviewed FV_SCALE 40 setting.")
 
     created = Path(tempfile.mkdtemp(prefix="meeshogi-analysis-staging-", dir=tempfile.gettempdir()))
