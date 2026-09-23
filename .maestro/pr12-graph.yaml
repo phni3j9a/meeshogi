@@ -60,7 +60,9 @@ appId: com.meeshogi.app
     point: 'PLY41_X, CHART_Y'
 - assertVisible: '41 / 80手'
 - takeScreenshot: 95-graph-missing-ply41
-- assertVisible: '—'
+- assertVisible:
+    id: current-evaluation
+    text: '.*—.*'
 - assertNotVisible:
     id: candidate-0
 

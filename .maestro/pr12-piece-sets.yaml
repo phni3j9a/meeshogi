@@ -79,6 +79,10 @@ appId: com.meeshogi.app
 - takeScreenshot: 64-board-shiraki-light-flipped
 - tapOn:
     id: board-flip
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
 - tapOn: '後手・3手詰め ›'
 - assertVisible: '0 / 3手'
 - takeScreenshot: 65-mate-sequence-shiraki-light
@@ -148,6 +152,10 @@ appId: com.meeshogi.app
 - takeScreenshot: 70-board-sakura-light-flipped
 - tapOn:
     id: board-flip
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
 - tapOn: '後手・3手詰め ›'
 - assertVisible: '0 / 3手'
 - takeScreenshot: 71-mate-sequence-sakura-light
@@ -221,6 +229,10 @@ appId: com.meeshogi.app
 - takeScreenshot: 76-board-seiji-light-flipped
 - tapOn:
     id: board-flip
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
 - tapOn: '後手・3手詰め ›'
 - assertVisible: '0 / 3手'
 - takeScreenshot: 77-mate-sequence-seiji-light
@@ -317,6 +329,10 @@ appId: com.meeshogi.app
 - takeScreenshot: 83-board-tsuge-light-flipped
 - tapOn:
     id: board-flip
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
 - tapOn: '後手・3手詰め ›'
 - assertVisible: '0 / 3手'
 - takeScreenshot: 84-mate-sequence-tsuge-light

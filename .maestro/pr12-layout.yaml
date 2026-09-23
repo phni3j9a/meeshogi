@@ -1,0 +1,70 @@
+# PR #12 native acceptance — layout sweep for small phones / tablets / OS
+# text enlargement. Expects the KeroPona game analyzed at 標準 (restored via
+# the shared SQLite container or a fresh import + standard analysis).
+# Verifies: board, evaluation header, first candidate, fixed playback bar,
+# back/close affordances, and safe-area rendering on the current device.
+appId: com.meeshogi.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- assertVisible:
+    id: move-first
+- assertVisible:
+    id: move-prev
+- assertVisible:
+    id: move-next
+- assertVisible:
+    id: move-last
+- takeScreenshot: layout-01-board-top
+- scrollUntilVisible:
+    element:
+      id: evaluation-chart
+    direction: DOWN
+- takeScreenshot: layout-02-chart
+- scrollUntilVisible:
+    element:
+      id: candidate-0
+    direction: DOWN
+- assertVisible: 第一候補
+- takeScreenshot: layout-03-candidate0
+- scrollUntilVisible:
+    element:
+      id: analysis-tab-record
+    direction: DOWN
+- tapOn:
+    id: analysis-tab-record
+- takeScreenshot: layout-04-record-tab
+- tapOn:
+    id: analysis-tab-candidates
+# Mate modal chrome (close affordance) at this size.
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 800
+- assertVisible: '67 / 80手'
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- tapOn: '後手・3手詰め ›'
+- assertVisible: '0 / 3手'
+- takeScreenshot: layout-05-mate-modal
+- tapOn: 詰め手順を閉じる
+- assertVisible: '67 / 80手'
+# Back to the library via the 棋譜 tab root.
+- tapOn: 戻る
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 30000
+- takeScreenshot: layout-06-library
