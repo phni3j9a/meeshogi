@@ -101,6 +101,63 @@ def _cpu_flags() -> set[str]:
     return flags & RELEVANT_CPU_FLAGS
 
 
+def _process_stats(
+    pid: int,
+    proc_root: Path = Path("/proc"),
+    cgroup_memory_path: Path = Path("/sys/fs/cgroup/memory.current"),
+) -> dict[str, int]:
+    """Return best-effort process and cgroup metrics; telemetry never blocks work."""
+    stats: dict[str, int] = {}
+    process_dir = proc_root / str(pid)
+    status_path = process_dir / "status"
+    try:
+        for line in status_path.read_text(encoding="ascii", errors="ignore").splitlines():
+            fields = line.split()
+            if len(fields) != 3 or fields[2] != "kB":
+                continue
+            name = fields[0].removesuffix(":")
+            key = {
+                "VmHWM": "enginePeakRssKiB",
+                "VmRSS": "engineRssKiB",
+            }.get(name)
+            if key is None:
+                continue
+            value = int(fields[1])
+            if value >= 0:
+                stats[key] = value
+    except (OSError, UnicodeError, ValueError):
+        pass
+
+    try:
+        stat_text = (process_dir / "stat").read_text(encoding="ascii", errors="ignore")
+        close_paren = stat_text.rfind(")")
+        if close_paren >= 0:
+            fields = stat_text[close_paren + 1 :].split()
+            user_ticks = int(fields[11])
+            system_ticks = int(fields[12])
+            ticks_per_second = int(os.sysconf("SC_CLK_TCK"))
+            if user_ticks >= 0 and system_ticks >= 0 and ticks_per_second > 0:
+                stats["engineCpuMs"] = (user_ticks + system_ticks) * 1000 // ticks_per_second
+    except (OSError, UnicodeError, ValueError, IndexError, TypeError):
+        pass
+
+    try:
+        memory_bytes = int(cgroup_memory_path.read_text(encoding="ascii").strip())
+        if memory_bytes >= 0:
+            stats["containerMemUsageBytes"] = memory_bytes
+    except (OSError, UnicodeError, ValueError):
+        pass
+    return stats
+
+
+def _safe_process_stats(pid: int) -> dict[str, int]:
+    try:
+        return _process_stats(pid)
+    except Exception:
+        # Metrics are optional telemetry and must never make health or analysis fail.
+        return {}
+
+
 def _parse_engine_options(path: Path) -> int:
     """Read the one reviewed runtime option; never interpret this file as shell input."""
     try:
@@ -271,6 +328,7 @@ class EngineController:
     def health(self) -> dict[str, Any]:
         alive = self._proc is not None and self._proc.poll() is None
         ready = self._ready and alive
+        stats = _safe_process_stats(self._proc.pid) if self._proc is not None else {}
         return {
             "ready": ready,
             "engineId": self._engine_id,
@@ -278,6 +336,7 @@ class EngineController:
             "weightSha256": self._weight_sha256[:12],
             "cpuFlags": sorted(self._cpu_flags),
             "avx2": "avx2" in self._cpu_flags,
+            "stats": stats,
             **({} if ready else {"reason": self._error_code}),
         }
 
@@ -476,6 +535,7 @@ class EngineController:
             "elapsedMs": elapsed_ms,
             "multipv": multipv,
             "terminal": terminal,
+            "stats": _safe_process_stats(self._proc.pid) if self._proc is not None else {},
         }
 
     def close(self) -> None:

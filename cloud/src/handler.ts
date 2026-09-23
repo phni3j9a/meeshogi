@@ -7,6 +7,9 @@ import {
 
 const MAX_BODY_BYTES = 4096;
 const INTERNAL_ANALYZE_PATH = '/v1/internal/analyze';
+// Admin-only benchmark instrumentation. Keep this under /internal; it must never
+// overlap the future public job API namespace.
+const INTERNAL_BENCH_ANALYZE_PATH = '/v1/internal/bench/analyze';
 const INTERNAL_HEALTH_PATH = '/v1/internal/health';
 const INTERNAL_STOP_PATH = '/v1/internal/stop';
 
@@ -22,6 +25,11 @@ export type DriverClient = {
 };
 
 type AnalyzeInput = { sfen: string; movetimeMs: number; multipv: number };
+type BenchAnalyzeInput = AnalyzeInput & {
+  threads?: number;
+  hashMb?: number;
+  label?: string;
+};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -75,6 +83,43 @@ async function parseAnalyzeInput(request: Request): Promise<AnalyzeInput | null>
   return { sfen: parsed.sfen, movetimeMs: parsed.movetimeMs as number, multipv: parsed.multipv as number };
 }
 
+async function parseBenchAnalyzeInput(request: Request): Promise<BenchAnalyzeInput | null> {
+  const declaredLength = request.headers.get('content-length');
+  if (declaredLength !== null && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > MAX_BODY_BYTES)) return null;
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+  const keys = Object.keys(parsed);
+  const requiredKeys = ['sfen', 'movetimeMs', 'multipv'];
+  const allowedKeys = [...requiredKeys, 'threads', 'hashMb', 'label'];
+  if (!requiredKeys.every((key) => keys.includes(key)) || keys.some((key) => !allowedKeys.includes(key))) return null;
+  if (!isStrictShogiSfen(parsed.sfen)) return null;
+  if (!Number.isSafeInteger(parsed.movetimeMs) || (parsed.movetimeMs as number) < 50 || (parsed.movetimeMs as number) > 30_000) return null;
+  if (!Number.isSafeInteger(parsed.multipv) || (parsed.multipv as number) < 1 || (parsed.multipv as number) > 8) return null;
+  if (parsed.threads !== undefined && (!Number.isSafeInteger(parsed.threads) || (parsed.threads as number) < 1 || (parsed.threads as number) > 2)) return null;
+  if (parsed.hashMb !== undefined && (!Number.isSafeInteger(parsed.hashMb) || (parsed.hashMb as number) < 16 || (parsed.hashMb as number) > 512)) return null;
+  if (
+    parsed.label !== undefined &&
+    (typeof parsed.label !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(parsed.label))
+  ) return null;
+
+  return {
+    sfen: parsed.sfen,
+    movetimeMs: parsed.movetimeMs as number,
+    multipv: parsed.multipv as number,
+    ...(parsed.threads === undefined ? {} : { threads: parsed.threads as number }),
+    ...(parsed.hashMb === undefined ? {} : { hashMb: parsed.hashMb as number }),
+    ...(parsed.label === undefined ? {} : { label: parsed.label }),
+  };
+}
+
 async function hasEmptyJsonObject(request: Request): Promise<boolean> {
   const declaredLength = request.headers.get('content-length');
   if (declaredLength !== null && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > 512)) return false;
@@ -102,7 +147,12 @@ function analysisFailure(status = 500): Response {
 
 export async function handleRequest(request: Request, env: WorkerEnv, driver: DriverClient): Promise<Response> {
   const url = new URL(request.url);
-  if (url.pathname !== INTERNAL_ANALYZE_PATH && url.pathname !== INTERNAL_HEALTH_PATH && url.pathname !== INTERNAL_STOP_PATH) {
+  if (
+    url.pathname !== INTERNAL_ANALYZE_PATH &&
+    url.pathname !== INTERNAL_BENCH_ANALYZE_PATH &&
+    url.pathname !== INTERNAL_HEALTH_PATH &&
+    url.pathname !== INTERNAL_STOP_PATH
+  ) {
     return json({ error: 'not_found' }, 404);
   }
 
@@ -131,6 +181,58 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
       const payload: unknown = await response.json();
       if (!isRecord(payload) || typeof payload.stopped !== 'boolean') return analysisFailure(500);
       return json({ stopped: payload.stopped }, 200);
+    } catch {
+      return analysisFailure(503);
+    }
+  }
+
+  if (url.pathname === INTERNAL_BENCH_ANALYZE_PATH) {
+    if (request.method !== 'POST') return json({ error: 'not_found' }, 404);
+    const input = await parseBenchAnalyzeInput(request);
+    if (!input) return json({ error: 'invalid_request' }, 400);
+
+    try {
+      const response = await driver.fetch(
+        driverRequest('/analyze', 'POST', {
+          sfen: input.sfen,
+          movetime_ms: input.movetimeMs,
+          multipv: input.multipv,
+          ...(input.threads === undefined ? {} : { threads: input.threads }),
+          ...(input.hashMb === undefined ? {} : { hash_mb: input.hashMb }),
+        }),
+      );
+      if (response.status === 409) return json({ error: 'analysis_conflict' }, 409);
+      if (response.status === 503) return analysisFailure(503);
+      if (!response.ok) return analysisFailure(500);
+
+      const payload: unknown = await response.json();
+      if (!isRecord(payload)) return analysisFailure(500);
+      const profileVersion = Number(env.ANALYSIS_PROFILE_VERSION ?? '1');
+      const result: CloudAnalysisResultV1 = {
+        contractVersion: ANALYSIS_CONTRACT_VERSION,
+        analysisProfileId: env.ANALYSIS_PROFILE_ID ?? 'fixed-sfen-staging-v1',
+        profileVersion,
+        engineId: typeof payload.engineId === 'string' ? payload.engineId : '',
+        modelId: env.ANALYSIS_MODEL_ID ?? 'analysis-model-staging-v1',
+        sfen: input.sfen,
+        candidates: payload.candidates as CloudAnalysisResultV1['candidates'],
+        actualNodes: payload.actualNodes as number,
+        completedDepth: payload.completedDepth as number,
+        elapsedMs: payload.elapsedMs as number,
+        multipv: input.multipv,
+        completedAt: new Date().toISOString(),
+        terminal: payload.terminal as CloudAnalysisResultV1['terminal'],
+      };
+      if (!isCloudAnalysisResultV1(result)) return analysisFailure(500);
+
+      const stats: Record<string, number> = {};
+      if (isRecord(payload.stats)) {
+        for (const field of ['enginePeakRssKiB', 'engineRssKiB', 'engineCpuMs', 'containerMemUsageBytes']) {
+          const value = payload.stats[field];
+          if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) stats[field] = value;
+        }
+      }
+      return json({ ...result, stats });
     } catch {
       return analysisFailure(503);
     }

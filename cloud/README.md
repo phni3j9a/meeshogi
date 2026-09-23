@@ -2,13 +2,15 @@
 
 ## 構成と状態
 
-このpackageは固定SFEN gate用の最小構成です。Worker `meeshogi-analysis-staging` と、SQLite Durable Objectを使う `AnalysisContainer` を一つだけ定義します。Containerは `standard-2`、最大instance数1、アイドル約30秒でsleepします。設定にproduction/default environment、D1、Queue、R2はありません。
+Mainのstaging実行記録では固定SFEN gateは成功済みです。このpackageはその後の比較用最小構成です。Worker `meeshogi-analysis-staging` と、SQLite Durable Objectを使う `AnalysisContainer` を一つだけ定義します。通常設定は `standard-2`、最大instance数1、アイドル約30秒でsleepします。`wrangler.staging-2vcpu.jsonc` は同じstaging worker・image digestで `standard-3` を選ぶ比較用設定です。設定にproduction/default environment、D1、Queue、R2はありません。
 
-Workerは `POST /v1/internal/analyze`、`GET /v1/internal/health` と、後続の明示停止用 `POST /v1/internal/stop` をBearer認証で保護します。解析入力はSFEN・movetime・MultiPVだけを受け付け、未知fieldや任意USI optionを拒否します。WorkerはtokenをContainerへ転送しません。公開model IDは `analysis-model-staging-v1` です。
+Workerは `POST /v1/internal/analyze`、`POST /v1/internal/bench/analyze`、`GET /v1/internal/health` と、後続の明示停止用 `POST /v1/internal/stop` をBearer認証で保護します。解析入力はSFEN・movetime・MultiPVと、benchmark routeでのみThreads / Hashの限定値を受け付け、未知fieldや任意USI optionを拒否します。WorkerはtokenをContainerへ転送しません。公開model IDは `analysis-model-staging-v1` です。benchmark routeは管理者向け内部計測専用であり、公開app APIや将来のpublic job APIへ含めません。
 
 USI driverはPython 3標準ライブラリだけで動き、起動時にengine・weightのSHA-256、USI handshake、対応option、`isready`を検証します。1 processを排他実行し、局面ごとに `usinewgame` を送ります。`info`をdepth / MultiPVごとに保持し、要求した全候補にexact scoreとPVが揃った最も深い反復だけを返します。lowerbound / upperboundを含む反復は選びません。cp / mate scoreはSFENの手番から先手視点へ変換します。
 
-`engine_options.txt` の実内容は1行の `FV_SCALE 40` です。driverはこの行を固定allowlistとして読み、USI option `FV_SCALE` がエンジンから通知された場合だけ `setoption name FV_SCALE value 40` を送ります。`EvalDir` は同じimage内の `/opt/engine` に固定し、`Threads=1`、`USI_Hash=256`、`USI_Ponder=false`、`USI_OwnBook=false` と `BookFile=no_book` を設定します。HTTP入力からoption名・パス・USI commandは受け取りません。
+`engine_options.txt` の実内容は1行の `FV_SCALE 40` です。driverはこの行を固定allowlistとして読み、USI option `FV_SCALE` がエンジンから通知された場合だけ `setoption name FV_SCALE value 40` を送ります。`EvalDir` は同じimage内の `/opt/engine` に固定し、通常の `Threads=1`、`USI_Hash=256`、`USI_Ponder=false`、`USI_OwnBook=false` と `BookFile=no_book` を設定します。管理者向けbenchmark routeのみThreads 1–2、Hash 16–512 MiBを指定できます。HTTP入力からoption名・パス・USI commandは受け取りません。
+
+healthとbenchmark応答にはbest-effortのengine RSS / peak RSS / CPU時間とcgroup memoryを含めます。計測値が読めない環境でも解析は継続し、その値を省略します。
 
 ## 依存とローカル検証
 
@@ -23,7 +25,7 @@ npm run typecheck
 npm test
 ```
 
-Python driver testはfake USI executableと合成weightを使います。
+Python driver testはfake USI executableと合成weightを使い、合成された計測値がhealth / analysis応答に含まれることも確認します。
 
 ```sh
 cd cloud
@@ -54,7 +56,9 @@ cd cloud
 npm run deploy:staging
 ```
 
-scriptはworker名が正確に `meeshogi-analysis-staging` で `-staging` 終端であること、environment overrideがないことを確認してから `wrangler deploy -c wrangler.staging.jsonc` を呼びます。production名や`--env`を追加する構成にはしません。
+scriptはworker名が正確に `meeshogi-analysis-staging` で `-staging` 終端であること、environment overrideがないことを確認します。既定の `wrangler.staging.jsonc` に加え、`npm run deploy:staging -- --config wrangler.staging-2vcpu.jsonc` で同じstaging workerへ2 vCPU / 8 GiB / 16 GBの `standard-3` 設定を適用できます。scriptはこの2ファイル以外のconfig名を拒否します。benchmark後は必ず `wrangler.staging.jsonc` を再deployして `standard-2` に戻してください。production名や`--env`を追加する構成にはしません。
+
+benchmark runner、合成合法SFEN fixture、直列実行順、標準価格、出力形式は [docs/CLOUD.md の Benchmark section](../docs/CLOUD.md#benchmark) を参照してください。
 
 ## Security / 今回含めない範囲
 
@@ -63,4 +67,4 @@ scriptはworker名が正確に `meeshogi-analysis-staging` で `-staging` 終端
 - 非公開artifact、image archive、Cloudflare token、staging secretをGitまたは公開artifactへ含めません。
 - D1、Queue、R2、profile listing、job API、アプリ統合、production resourceはこのstepの対象外です。固定SFEN smokeが成功するまで後続実装へ進みません。
 
-デプロイ前のAVX2実行互換性、Cloudflare accountの`standard-2`利用可否、外部private contextを使ったWrangler image buildの挙動は未確認です。Mainがdeploy / health / 固定SFEN smokeを行い、binary identityとCPU flagsを確認する必要があります。
+Mainのstaging記録ではhealth、実engineの固定SFEN解析、AVX2を確認済みです。`standard-3`の利用可否と両instance typeのbenchmark、cost測定はこれからです。package内の合成テストはこれらCloudflare上の確認を代替しません。

@@ -25,6 +25,12 @@ class FakeDriver implements DriverClient {
     completedDepth: 4,
     elapsedMs: 250,
     terminal: 'ok',
+    stats: {
+      enginePeakRssKiB: 4096,
+      engineRssKiB: 3072,
+      engineCpuMs: 120,
+      containerMemUsageBytes: 12582912,
+    },
   };
   healthBody: unknown = {
     ready: true,
@@ -53,6 +59,14 @@ function authHeaders(token = TOKEN): HeadersInit {
 
 function analyzeRequest(body: unknown, token = TOKEN): Request {
   return new Request('https://worker.test/v1/internal/analyze', {
+    method: 'POST',
+    headers: { ...authHeaders(token), 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function benchRequest(body: unknown, token = TOKEN): Request {
+  return new Request('https://worker.test/v1/internal/bench/analyze', {
     method: 'POST',
     headers: { ...authHeaders(token), 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -109,6 +123,94 @@ describe('staging worker route guards', () => {
     expect(driver.requests).toHaveLength(1);
     expect(driver.requests[0].headers.has('authorization')).toBe(false);
     expect(await driver.requests[0].json()).toEqual({ sfen: SFEN, movetime_ms: 250, multipv: 1 });
+  });
+
+  it('requires the same bearer authentication for the admin-only benchmark route', async () => {
+    const driver = new FakeDriver();
+    const missing = await handleRequest(
+      new Request('https://worker.test/v1/internal/bench/analyze', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: SFEN, movetimeMs: 250, multipv: 2 }),
+      }),
+      env,
+      driver,
+    );
+    const invalid = await handleRequest(benchRequest({ sfen: SFEN, movetimeMs: 250, multipv: 2 }, 'wrong'), env, driver);
+    expect(missing.status).toBe(401);
+    expect(invalid.status).toBe(401);
+    expect(driver.requests).toHaveLength(0);
+  });
+
+  it.each([
+    ['malformed SFEN', { sfen: 'startpos' }],
+    ['movetime below bound', { movetimeMs: 49 }],
+    ['movetime above bound', { movetimeMs: 30001 }],
+    ['MultiPV below bound', { multipv: 0 }],
+    ['MultiPV above bound', { multipv: 9 }],
+    ['threads below bound', { threads: 0 }],
+    ['threads above bound', { threads: 3 }],
+    ['fractional threads', { threads: 1.5 }],
+    ['hash below bound', { hashMb: 15 }],
+    ['hash above bound', { hashMb: 513 }],
+    ['fractional hash', { hashMb: 16.5 }],
+    ['invalid label', { label: 'has whitespace' }],
+    ['unknown key', { options: { Threads: 2 } }],
+  ])('validates benchmark %s before contacting the container', async (_name, extra) => {
+    const driver = new FakeDriver();
+    const result = await handleRequest(
+      benchRequest({ sfen: SFEN, movetimeMs: 250, multipv: 2, ...extra }),
+      env,
+      driver,
+    );
+    expect(result.status).toBe(400);
+    expect(driver.requests).toHaveLength(0);
+  });
+
+  it('forwards bounded benchmark controls and returns the contract with engine stats', async () => {
+    const driver = new FakeDriver();
+    const result = await handleRequest(
+      benchRequest({ sfen: SFEN, movetimeMs: 500, multipv: 3, threads: 2, hashMb: 128, label: 'fixture:short-1' }),
+      env,
+      driver,
+    );
+    const body = await result.json() as Record<string, unknown>;
+    expect(result.status).toBe(200);
+    const { stats, ...contract } = body;
+    expect(isCloudAnalysisResultV1(contract)).toBe(true);
+    expect(driver.requests).toHaveLength(1);
+    expect(driver.requests[0].headers.has('authorization')).toBe(false);
+    expect(await driver.requests[0].json()).toEqual({
+      sfen: SFEN,
+      movetime_ms: 500,
+      multipv: 3,
+      threads: 2,
+      hash_mb: 128,
+    });
+    expect(body).not.toHaveProperty('label');
+    expect(stats).toEqual({
+      enginePeakRssKiB: 4096,
+      engineRssKiB: 3072,
+      engineCpuMs: 120,
+      containerMemUsageBytes: 12582912,
+    });
+  });
+
+  it('maps a benchmark container conflict and rejects out-of-namespace paths', async () => {
+    const driver = new FakeDriver();
+    driver.analyzeStatus = 409;
+    const conflict = await handleRequest(
+      benchRequest({ sfen: SFEN, movetimeMs: 250, multipv: 2 }),
+      env,
+      driver,
+    );
+    const publicJobPath = await handleRequest(
+      new Request('https://worker.test/v1/jobs', { method: 'POST' }),
+      env,
+      driver,
+    );
+    expect(conflict.status).toBe(409);
+    expect(publicJobPath.status).toBe(404);
   });
 
   it('maps a concurrent container request to 409 and startup failure to 503', async () => {

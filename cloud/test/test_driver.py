@@ -118,6 +118,62 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(result["candidates"][0]["scoreMate"], -3)
         self.assertEqual(result["candidates"][1]["scoreCp"], -15)
 
+    def test_analysis_and_health_include_synthetic_best_effort_stats(self) -> None:
+        synthetic = {
+            "enginePeakRssKiB": 12345,
+            "engineRssKiB": 8192,
+            "engineCpuMs": 276,
+            "containerMemUsageBytes": 50331648,
+        }
+        with patch.object(driver, "_process_stats", return_value=synthetic):
+            controller = self.make_controller()
+            health = controller.health()
+            status, result = controller.analyze(self.request())
+
+        self.assertEqual(health["cpuFlags"], sorted(controller._cpu_flags))
+        self.assertEqual(health["stats"], synthetic)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["stats"], synthetic)
+
+    def test_process_stats_parse_synthetic_proc_and_cgroup_files(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="meeshogi-synthetic-proc-") as temporary:
+            root = Path(temporary)
+            proc_root = root / "proc"
+            process_dir = proc_root / "1234"
+            process_dir.mkdir(parents=True)
+            (process_dir / "status").write_text(
+                "Name:\tfake-engine\nVmHWM:\t8192 kB\nVmRSS:\t4096 kB\n",
+                encoding="ascii",
+            )
+            stat_fields = ["S", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "120", "30"]
+            (process_dir / "stat").write_text(f"1234 (synthetic engine) {' '.join(stat_fields)}\n", encoding="ascii")
+            memory_path = root / "memory.current"
+            memory_path.write_text("50331648\n", encoding="ascii")
+
+            with patch.object(driver.os, "sysconf", return_value=100):
+                stats = driver._process_stats(1234, proc_root, memory_path)
+
+        self.assertEqual(
+            stats,
+            {
+                "enginePeakRssKiB": 8192,
+                "engineRssKiB": 4096,
+                "engineCpuMs": 1500,
+                "containerMemUsageBytes": 50331648,
+            },
+        )
+
+    def test_stats_provider_failure_does_not_fail_health_or_analysis(self) -> None:
+        with patch.object(driver, "_process_stats", side_effect=RuntimeError("synthetic stats failure")):
+            controller = self.make_controller()
+            health = controller.health()
+            status, result = controller.analyze(self.request())
+
+        self.assertEqual(health["stats"], {})
+        self.assertEqual(status, 200)
+        self.assertEqual(result["terminal"], "ok")
+        self.assertEqual(result["stats"], {})
+
     def test_invalid_sfen_is_rejected_before_engine_request(self) -> None:
         self.assertIsNone(
             driver._validate_driver_request(
