@@ -20,4 +20,13 @@ appId: com.meeshogi.app
           optional: true
       - tapOn: 'On My iPhone|このiPhone内'
       - tapOn: Meeshogi ?Fixtures
-- tapOn: '${KIF_FILE}'
+      # iOS 27's document-picker grid swallows taps that land on the filename
+      # label, so the caller passes KIF_ICON_X/KIF_ICON_Y pointing at the
+      # file icon for its grid cell (alphabetical order, top row).
+      - tapOn:
+          point: '${KIF_ICON_X},${KIF_ICON_Y}'
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn: '${KIF_FILE}'
