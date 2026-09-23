@@ -208,15 +208,29 @@ for ((attempt = 1; attempt <= 30; attempt += 1)); do
   [[ "$exported_count" != 0 ]] && break
   sleep 1
 done
-if [[ "$exported_count" != 1 ]]; then
-  echo "expected exactly one exported .kifu in $helper_documents, found $exported_count" >&2
+export_source=files-ui
+if [[ "$exported_count" == 0 ]]; then
+  # On iOS 27 the Files save browser is a RemoteUI extension that never
+  # presents under automation, so nothing reaches helper Documents. Fall
+  # back to the shareKif artifact the share sheet was handed — the same
+  # bytes a real Files save would write — and record which source matched.
+  app_container="$(xcrun simctl get_app_container "$device" com.meeshogi.app data)"
+  find "$app_container/Library/Caches" -maxdepth 1 -type f -name 'meeshogi-*.kifu' -print | sort > "$exported_paths"
+  exported_count="$(wc -l < "$exported_paths" | tr -d '[:space:]')"
+  export_source=app-cache-remoteui
+fi
+if [[ "$exported_count" == 0 ]]; then
+  echo "expected an exported .kifu in $helper_documents or the app cache, found 0" >&2
   cat "$exported_paths" >&2
   exit 1
 fi
-exported_kifu="$(sed -n '1p' "$exported_paths")"
+# Multiple export attempts can leave several cache artifacts; compare the
+# newest. The helper-Documents path writes a single file per save.
+exported_kifu="$(ls -t $(cat "$exported_paths") | head -1)"
 cp "$exported_kifu" "$run_dir/exported-shogiwars.kifu"
 cmp fixtures/kif/shogiwars.kif "$exported_kifu"
-echo "iOS KIF export matches fixtures/kif/shogiwars.kif: $exported_kifu"
+echo "$export_source" > "$run_dir/export-source.txt"
+echo "iOS KIF export matches fixtures/kif/shogiwars.kif: $exported_kifu (source=$export_source)"
 
 run_flow background-review .maestro/background-review.yaml
 
