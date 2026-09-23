@@ -1,0 +1,13 @@
+PASS graph-tap-left-edge
+PASS graph-tap-right-edge
+FAIL graph-scrub-readout :: chart-readout missing mid-drag
+FAIL graph-scrub-mainline-label :: 本譜 label missing mid-drag (ply=58手)
+FAIL graph-scrub-counter-frozen :: expected [0 / 80手] got [58 / 80手]
+FAIL graph-release-moves-once :: expected [8 / 80手] got [58 / 80手]
+PASS graph-readout-cleared
+PASS graph-release-same-index
+PASS graph-vertical-no-move
+WARN graph-vertical-page-scroll :: chart top unchanged 1605 -> 1605 (vertical drag over chart does not scroll page; scrub cancel verified)
+PASS graph-center-tap
+PASS graph-branch-opened
+PASS graph-branch-no-mainline-chart

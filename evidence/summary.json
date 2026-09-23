@@ -1,0 +1,102 @@
+{
+  "task": "meeshogi PR #12 / Issue #16 native Android acceptance",
+  "os": "android",
+  "source": {
+    "repo": "phni3j9a/meeshogi",
+    "branch": "feat/analysis-design-generated-pieces",
+    "sha": "7f877a25958fe4cd5c08341271e8c7f0cb00259b",
+    "merge_base_includes": "b646d92 (main)"
+  },
+  "verification_branch": {
+    "name": "verification/pr12-android-20260923",
+    "commit": "12e8550",
+    "note": "flow/script fixes only; no product changes, no pushes to the PR branch"
+  },
+  "environment": {
+    "device": "emulator-5554 (AVD 'acceptance', Pixel 7 class, 1080x2400 @420dpi)",
+    "android_version": "16",
+    "model": "sdk_gphone64_x86_64",
+    "apk": "artifacts/android/meeshogi.apk (Release, 80,709,445 bytes, sekirei-core v0.3.37, real engine)",
+    "maestro": "2.10.0",
+    "uiautomator_dump_latency_s": "1-3"
+  },
+  "build_launch": {
+    "built": true, "installed": true, "launched": true,
+    "fixtures_only": true
+  },
+  "suite_flows": [
+    {"flow": "licenses-review", "status": "pass", "run": "suite-run1", "script_auto": true},
+    {"flow": "import-review", "status": "pass", "run": "suite-run1", "script_auto": true},
+    {"flow": "player-names", "status": "pass", "run": "suite-run1", "script_auto": true, "note": "wars clipboard fixture"},
+    {"flow": "player-names-kiou", "status": "pass", "run": "suite-run1", "script_auto": true, "note": "kiou clipboard fixture"},
+    {"flow": "analysis-review", "status": "pass", "run": "suite-run1", "script_auto": true, "note": "long 50k full-game completion"},
+    {"flow": "analysis-partial-review", "status": "pass", "run": "suite-resume", "script_auto": false, "helper_retries": 1, "note": "failed once (new layout puts end label below fold); flow fixed with scroll+union wait, then passed — ply41 gap + finite resume verified"},
+    {"flow": "candidate-review", "status": "pass", "run": "suite-resume", "script_auto": true, "note": "candidate -> branch -> back to mainline"},
+    {"flow": "file-import", "status": "pass", "run": "suite-resume", "script_auto": true, "note": "KIF file import incl. mate fixtures"},
+    {"flow": "management-review", "status": "pass", "run": "suite-resume", "script_auto": false, "helper_retries": 1, "note": "first attempt raced the async favorite write; added wait, passed on retry (management-review-2)"},
+    {"flow": "appearance-review", "status": "pass", "run": "suite-resume", "script_auto": true},
+    {"flow": "appearance-dark", "status": "pass", "run": "suite-resume", "script_auto": true},
+    {"flow": "export-review", "status": "pass", "run": "suite-resume", "script_auto": true, "note": "exported KIF byte-identical to expected"},
+    {"flow": "background-review", "status": "pass", "run": "suite-resume", "script_auto": true, "note": "background stop/resume"},
+    {"flow": "large-text-review", "status": "pass", "run": "suite-resume", "script_auto": true},
+    {"flow": "search-delete-review", "status": "pass", "run": "suite-resume", "script_auto": true}
+  ],
+  "pr_specific_flows": [
+    {"flow": "piece-sets-picker", "status": "pass", "note": "4 generated sets (黄楊/白木/桜木/青磁) preview + select; selected-state checkmark"},
+    {"flow": "piece-sets-reflect", "status": "pass", "note": "each set reflected on board, hands (持駒), flipped view, and mate-sequence board; light+dark shots per set"},
+    {"flow": "piece-sets-persist", "status": "pass", "note": "kill/relaunch: selection kept (SQLite)"},
+    {"flow": "mate-terminal-gote", "status": "pass", "note": "後手・1手詰め badge, -M1, 後手勝ち・詰み終局 terminal label, no candidates at terminal"},
+    {"flow": "mate-terminal-sente", "status": "pass", "script_auto": false, "helper_retries": 5, "note": "flow fixes: fullmatch regex unions, dedupe-import branch, banner render latency; final run passed — 先手・1手詰め badge +M1 + 先手勝ち・詰み終局"},
+    {"flow": "pr12-large-text", "status": "pass", "note": "OS text-scaling: board/eval/first-candidate/transport/back intact; '第一候補' truncates to '第一候…' (cosmetic)"},
+    {"flow": "pr12-cleanup-games", "status": "pass", "note": "library cleanup helper (search+delete)"}
+  ],
+  "graph_checks": {
+    "script": "scripts/ci/android-graph-check.sh",
+    "method": "adb input tap/swipe at evaluation-chart-plot bounds + uiautomator tree + screencap",
+    "results": {
+      "graph-tap-left-edge": "pass (0 / 80手)",
+      "graph-tap-right-edge": "pass (80 / 80手)",
+      "graph-scrub-readout": "screenshot-verified ('本譜 16手目 +49' bubble mid-drag; transient below uiautomator latency)",
+      "graph-scrub-counter-frozen": "screenshot-verified ('0 / 80手' held mid-drag)",
+      "graph-release-moves-once": "pass (release x->ply commit, ±2 tolerance)",
+      "graph-readout-cleared": "pass",
+      "graph-release-same-index": "pass (no navigation when released at same ply)",
+      "graph-vertical-no-move": "pass (vertical drag cancels scrub, position unchanged)",
+      "graph-vertical-page-scroll": "WARN - vertical drag over the chart does not scroll the page (product observation, scrub-cancel verified)",
+      "graph-center-tap": "pass",
+      "graph-branch-opened": "pass",
+      "graph-branch-no-mainline-chart": "pass (branch screen shows no mainline chart)"
+    },
+    "fixtures": "fixtures/analysis/positions.json coverage exercised via KeroPona 80-ply game (正負/欠測/mate/terminal reviewed); missing-position dots confirmed on chart"
+  },
+  "export_comparison": {
+    "method": "export-review flow exports KIF via share sheet, file pulled with adb pull and compared byte-for-byte (cmp) against the expected KIF fixture",
+    "result": "byte-identical (suite-resume/exported.kifu)"
+  },
+  "visual_review": {
+    "screenshots_reviewed_personally": 141,
+    "videos_recorded": 15,
+    "note": "screenshots opened and checked by the verifier; videos captured via screenrecord per flow"
+  },
+  "findings": [
+    {"severity": "observation", "item": "vertical drag over the evaluation chart does not scroll the page (chart's PanResponder claims/cancels the gesture); page scroll works outside the chart area"},
+    {"severity": "observation", "item": "analysis end-state label + partial notice sit below the fold in the new actions section; flows must scroll before waiting"},
+    {"severity": "observation", "item": "import dedupe banner renders several seconds after the read-confirmation (async collision check); the '保存して検討する' button is fully unmounted on collision, not merely disabled"},
+    {"severity": "cosmetic", "item": "under OS text-scaling the candidate label truncates ('第一候…'); move text/eval remain readable"},
+    {"severity": "repo-hygiene", "item": "scripts/ci/__pycache__/devin-cloud.cpython-312.pyc committed on the PR branch (unrelated to acceptance)"}
+  ],
+  "constraints": [
+    "no-legal-moves terminal ('合法手なし') is not reachable through KIF import; verified only via mate-terminal which shows the same 'この局面には合法手がありません' panel at the terminal ply",
+    "off-scale (>±1500) non-mate evals not reliably generatable on the emulator engine",
+    "true OS-level PanResponder cancel (e.g. notification shade pull) cannot be synthesized via adb input; scrub-cancel verified via vertical-drag release instead",
+    "tablet layout approximated via wm size/density overrides, not a physical tablet",
+    "mid-drag scrub readout is transient (~1-2s) below uiautomator dump latency; verified via screencap (graph-03-scrub-mid.png), not tree assertions",
+    "mate fixtures end analysis partial at 20/28 (8 positions 探索量不足, deterministic); the mate plies themselves are analyzed (+M1 badges shown)"
+  ],
+  "evidence": {
+    "branch": "evidence/pr12-android-20260923",
+    "paths": ["evidence/suite-run1", "evidence/suite-resume", "evidence/pr12-extras"],
+    "contents": "junit XML, named takeScreenshot PNGs, step-failure shots, per-flow maestro.log, screenrecord mp4s, logcat, exported.kifu, display-variants, graph-check results+PNGs"
+  },
+  "overall": "PASS - all 15 suite flows and all PR-specific checks passed; no product-blocking bugs found"
+}
