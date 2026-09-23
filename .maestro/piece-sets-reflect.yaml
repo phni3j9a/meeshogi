@@ -1,0 +1,162 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# PR #12: every piece set must render on the board, in hands, on the flipped
+# board and in the mate sequence; the saved choice must survive a restart and
+# must not disturb the record or its analysis.
+# Requires the saved KeroPona game from the main acceptance suite.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+# ---- 白木, light ----
+- runFlow:
+    file: subflows/select-set.yaml
+    env:
+      SET_ID: piece-set-shiraki
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 66-board-shiraki-light
+- assertVisible:
+    id: board
+- tapOn:
+    id: move-last
+- takeScreenshot: 67-endgame-shiraki-light
+- tapOn:
+    id: board-flip
+- takeScreenshot: 68-flipped-shiraki-light
+- tapOn:
+    id: board-flip
+- tapOn:
+    id: move-first
+- pressKey: Back
+# ---- 桜木, light + mate sequence ----
+- runFlow:
+    file: subflows/select-set.yaml
+    env:
+      SET_ID: piece-set-sakura
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 69-board-sakura-light
+- tapOn:
+    id: move-last
+- takeScreenshot: 70-endgame-sakura-light
+# The 3-move mate sequence must render the selected set as well.
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 800
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- tapOn: '後手・3手詰め ›'
+- assertVisible: '0 / 3手'
+- takeScreenshot: 71-mate-sakura-light
+- tapOn: 詰め手順を閉じる
+- assertVisible: '67 / 80手'
+- pressKey: Back
+# ---- 青磁, light ----
+- runFlow:
+    file: subflows/select-set.yaml
+    env:
+      SET_ID: piece-set-seiji
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 72-board-seiji-light
+- tapOn:
+    id: move-last
+- takeScreenshot: 73-endgame-seiji-light
+- pressKey: Back
+# ---- 黄楊 restored, light ----
+- runFlow:
+    file: subflows/select-set.yaml
+    env:
+      SET_ID: piece-set-tsuge
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 74-board-tsuge-light
+- tapOn:
+    id: move-last
+- takeScreenshot: 75-endgame-tsuge-light
+- pressKey: Back
+# ---- switch to dark theme once ----
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 表示テーマ
+    direction: DOWN
+- tapOn: 表示テーマ
+- tapOn: ダーク
+- tapOn:
+    id: tab-games
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 30000
+# ---- 白木, dark ----
+- runFlow:
+    file: subflows/select-set.yaml
+    env:
+      SET_ID: piece-set-shiraki
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 76-board-shiraki-dark
+- pressKey: Back
+# ---- 桜木, dark ----
+- runFlow:
+    file: subflows/select-set.yaml
+    env:
+      SET_ID: piece-set-sakura
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 77-board-sakura-dark
+- pressKey: Back
+# ---- 青磁, dark ----
+- runFlow:
+    file: subflows/select-set.yaml
+    env:
+      SET_ID: piece-set-seiji
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 78-board-seiji-dark
+- pressKey: Back
+# ---- 黄楊, dark ----
+- runFlow:
+    file: subflows/select-set.yaml
+    env:
+      SET_ID: piece-set-tsuge
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 79-board-tsuge-dark
+- pressKey: Back

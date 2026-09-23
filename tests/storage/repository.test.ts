@@ -79,6 +79,7 @@ describe('端末保存', () => {
       await first.repository.insert(game);
       const settings = {
         ...DEFAULT_SETTINGS,
+        pieceSet: 'seiji' as const,
         playerNames: { shogiwars: ['a'], kiou: [], unknown: [] },
       };
       await first.repository.saveSettings(settings, []);
@@ -95,6 +96,28 @@ describe('端末保存', () => {
       second.db.close();
     } finally {
       rmSync(dir, { recursive: true });
+    }
+  });
+  it('旧設定や未知の駒セットでも棋譜と他の設定を保ち、黄楊で読み込む', async () => {
+    const { db, repository } = database(':memory:');
+    try {
+      await repository.initialize();
+      const game = sample();
+      await repository.insert(game);
+      const settings = {
+        ...DEFAULT_SETTINGS,
+        theme: 'dark' as const,
+        analysisNodes: 20000,
+        playerNames: { shogiwars: ['saved-name'], kiou: [], unknown: [] },
+      };
+      for (const pieceSet of [undefined, 'future-piece-set', null, 42, { name: 'tsuge' }]) {
+        const payload = JSON.stringify({ ...settings, pieceSet });
+        db.prepare('INSERT OR REPLACE INTO settings VALUES (1, ?)').run(payload);
+        expect(await repository.load()).toEqual({ games: [game], settings });
+        expect(db.prepare('SELECT payload FROM settings').get()?.payload).toBe(payload);
+      }
+    } finally {
+      db.close();
     }
   });
   it('旧identityの解析レコードを棋譜とともに読み戻し、破壊的移行をしない', async () => {
@@ -214,7 +237,7 @@ describe('端末保存', () => {
       "CREATE TRIGGER reject_game BEFORE UPDATE ON games BEGIN SELECT RAISE(ABORT, 'disk failure'); END;",
     );
     await expect(
-      repository.saveSettings({ ...DEFAULT_SETTINGS, theme: 'dark' }, [
+      repository.saveSettings({ ...DEFAULT_SETTINGS, theme: 'dark', pieceSet: 'sakura' }, [
         { ...game, mySide: 'black' },
       ]),
     ).rejects.toThrow('disk failure');
@@ -313,7 +336,11 @@ describe('端末保存', () => {
   it('設定のboolean破損を有効化と解釈しない', async () => {
     const { db, repository } = database(':memory:');
     await repository.initialize();
-    const payload = JSON.stringify({ ...DEFAULT_SETTINGS, autoAnalyze: 'false' });
+    const payload = JSON.stringify({
+      ...DEFAULT_SETTINGS,
+      pieceSet: 'future-piece-set',
+      autoAnalyze: 'false',
+    });
     db.prepare('INSERT INTO settings VALUES (1, ?)').run(payload);
     await expect(repository.load()).rejects.toThrow('保持');
     expect(db.prepare('SELECT payload FROM settings').get()?.payload).toBe(payload);

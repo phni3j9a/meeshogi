@@ -1,0 +1,130 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Terminal checkmate display: the clipboard must already contain a KIF that
+# ends in a real board checkmate (seeded via android-clipboard.sh).
+#   ${MOVES}        last ply (e.g. 27)
+#   ${MOVES_PREV}   ply before it (e.g. 26)
+#   ${TERMINAL_LABEL}  '先手勝ち・詰み終局' or '後手勝ち・詰み終局'
+#   ${MATE_REGEX}   mate eval regex on the previous ply (e.g. '.*\+M.*' / '.*-M.*')
+#   ${MATE_BADGE}   proven badge (e.g. '先手・1手詰め ›' / '後手・1手詰め ›')
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- tapOn:
+    id: import-button
+- extendedWaitUntil:
+    visible:
+      id: import-paste
+    timeout: 60000
+- tapOn:
+    id: import-paste
+- tapOn:
+    text: 'Allow Paste|ペーストを許可'
+    optional: true
+- assertVisible: '.*${MOVES}手の棋譜を読み取りました.*'
+# Dedupe: when the same KIF was saved before, the sheet shows
+# 'この棋譜は保存済みです' + '保存済みの棋譜を開く' (import-save is disabled).
+# The banner lands several seconds after the read confirmation (async collision
+# check); a tiny slow swipe buys render time before the optional banner wait
+# (optional-wait short-circuits near ~5s regardless of timeout).
+- swipe:
+    start: 50%, 60%
+    end: 50%, 61%
+    duration: 6000
+- extendedWaitUntil:
+    visible:
+      text: 'この棋譜は保存済みです.*'
+    timeout: 8000
+    optional: true
+- runFlow:
+    when:
+      visible: 'この棋譜は保存済みです.*'
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: 保存済みの棋譜を開く
+          direction: DOWN
+      - tapOn: 保存済みの棋譜を開く
+- runFlow:
+    when:
+      notVisible: 'この棋譜は保存済みです.*'
+    commands:
+      - swipe:
+          start: 95%, 85%
+          end: 95%, 30%
+      - scrollUntilVisible:
+          element:
+            id: import-save
+          direction: DOWN
+      - tapOn:
+          id: import-save
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+# Auto-analysis starts on save. analysis-status is always rendered but sits
+# below the fold (running: '解析中 N / M局面', partial: '解析処理が終了しました',
+# full: '全局解析が完了しました'); scroll it into view, then wait for an
+# end-state label.
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+# Maestro matches the whole node text, so include the partial-notice paragraph
+# (visible at any scroll position) alongside the end-state labels.
+- extendedWaitUntil:
+    visible: '全局解析が完了しました|解析処理が終了しました|.*局面を解析済み.*'
+    timeout: 600000
+- assertNotVisible: '解析に失敗しました。もう一度解析できます。'
+# A run can end partial ('探索量不足' positions); resume once so the terminal
+# positions get analyzed — same finite-resume semantics as the suite.
+- runFlow:
+    when:
+      visible: '.*局面を解析済み.*'
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: analysis-start
+          direction: DOWN
+      - tapOn:
+          id: analysis-start
+      - extendedWaitUntil:
+          visible: '全局解析が完了しました|解析処理が終了しました|.*局面を解析済み.*'
+          timeout: 600000
+      - assertNotVisible: '解析に失敗しました。もう一度解析できます。'
+- scrollUntilVisible:
+    element:
+      id: evaluation-chart
+    direction: UP
+- assertVisible:
+    id: evaluation-chart
+- tapOn:
+    id: move-last
+- assertVisible: '${MOVES} / ${MOVES}手'
+# Terminal checkmate: fixed winner label, no proven badge, no candidates.
+- scrollUntilVisible:
+    element:
+      text: ${TERMINAL_LABEL}
+    direction: UP
+- assertVisible: ${TERMINAL_LABEL}
+# The terminal ply gets no proven-badge text and no candidates; the badge may
+# coexist on the previous row (that distinction is what the screenshots prove).
+- assertNotVisible:
+    id: candidate-0
+- takeScreenshot: ${SHOT_PREFIX}-terminal
+# One ply earlier the normal-search mate and the proven badge must be distinct.
+- tapOn:
+    id: move-prev
+- assertVisible: '${MOVES_PREV} / ${MOVES}手'
+- scrollUntilVisible:
+    element:
+      text: ${MATE_BADGE}
+    direction: UP
+- assertVisible: ${MATE_REGEX}
+- assertVisible: ${MATE_BADGE}
+- takeScreenshot: ${SHOT_PREFIX}-mate-badge
+- pressKey: Back

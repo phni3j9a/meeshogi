@@ -1,0 +1,60 @@
+{
+  "generator": "ChatGPT Image (built-in image_gen tool)",
+  "set": "shiraki",
+  "purpose": "One shared material image per owner; all piece types reuse the same surface and the existing generated glyphs.",
+  "processing": "Trim transparent margins (threshold1); normalize body to220x256; add8px transparent padding (236x272 total); PNG palette optimization. No recoloring or manually drawn material.",
+  "generation": {
+    "generationMethod": "ChatGPT built-in image_gen precise-object-edit",
+    "set": "shiraki",
+    "pieces": [
+      {
+        "name": "sente",
+        "set": "shiraki",
+        "inputPath": "/workspace/scratch/913b74a5a03b/piece-sources/shared-wood/wood-sente.png",
+        "outputPath": "/workspace/scratch/913b74a5a03b/piece-sources/sets/shiraki/sente.png",
+        "prompt": "Use case: precise-object-edit.\nAsset type: blank shogi wooden piece body sprite for the \"shiraki\" (白木) set in meeshogi.\nThe supplied image is the EDIT TARGET.\nChange ONLY the wood material and wood color. Make this a beautiful clean pale unfinished whitewood (白木): bright warm ivory, natural unbleached cream, light cream-colored wood with a dry silky matte surface and elegant extremely fine vertical grain. Its face must be distinctly paler and less yellow than the supplied honey boxwood, with a light warm ivory-cream tone that will contrast crisply with black and vermilion ink later. No gray, no muddy beige wash, no dingy dullness, no orange or honey saturation.\nStrictly preserve the supplied exact upright pentagonal silhouette, shape, proportions, position, perfectly straight overhead orthographic view, pointed top, narrow shallow beveled edges, and genuine transparent alpha background. Keep a naturally finished but very fine narrow warm-cream edge. Retain subtle soft upper-left illumination without glossy reflections.\nThe piece remains COMPLETELY BLANK: absolutely no text, character, lettering, carving, symbol, or image on the wood. No replacement outline. No perspective, tilt, thick 3D edge, cast shadow, surrounding object, board, colored background, checkerboard pattern, watermark, or border. One isolated blank wooden piece on a genuinely transparent square PNG canvas.",
+        "generatedPath": "/workspace/scratch/913b74a5a03b/generated_images/exec-0ded295b-089d-4312-94a3-bdd6f07bbb78.png"
+      },
+      {
+        "name": "gote",
+        "set": "shiraki",
+        "inputPath": "/workspace/scratch/913b74a5a03b/piece-sources/sets/shiraki/sente.png",
+        "outputPath": "/workspace/scratch/913b74a5a03b/piece-sources/sets/shiraki/gote.png",
+        "prompt": "Use case: precise-object-edit.\nAsset type: blank gote-side shogi wooden piece body sprite for the \"shiraki\" (白木) set in meeshogi.\nThe supplied image is the EDIT TARGET and material-family reference for the sente piece.\nChange ONLY the wood color to create its matching gote counterpart. Make the wood gently DEEPER and warmer than this pale ivory sente piece: refined warm flax / natural unbleached linen cream wood, subtly richer light tan-cream midtones with luminous creamy highlights. Keep it clearly a pale whitewood set, not honey, golden amber, orange, brown or gray. The gote must be visibly a little deeper in tone than the reference, never paler. Retain the beautiful dry silky matte whitewood finish and the same elegant fine vertical grain.\nStrictly preserve the supplied exact upright pentagonal silhouette, shape, proportions, placement, straight overhead orthographic view, pointed top, very narrow shallow bevel, and genuine transparent alpha background. Preserve soft upper-left light with a subtle narrow edge, no thick side wall and no glossy plastic sheen.\nThe entire wooden face remains COMPLETELY BLANK with NO text, ink, letters, characters, carvings, symbols, or images. No extra objects, board, perspective, tilt, drop shadow, colored background, checkerboard pattern, border or watermark. Return one isolated blank piece on a square PNG canvas with real transparent alpha.",
+        "generatedPath": "/workspace/scratch/913b74a5a03b/generated_images/exec-2d0d5020-8926-41a9-aca1-1f489cc7d686.png"
+      }
+    ]
+  },
+  "assets": [
+    {
+      "file": "assets/pieces/sets/shiraki/sente.png",
+      "side": "sente",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceSha256": "9ada79ccbbb9e69ae5b674d382be1e9fd1a1029b6d8ca6da282cd4482e2dc076",
+      "size": [
+        236,
+        272
+      ],
+      "sha256": "fe5142020313c1431b25153448f5a115dbd5b79125bb336f801e7c1255c9b7fd",
+      "bytes": 37739
+    },
+    {
+      "file": "assets/pieces/sets/shiraki/gote.png",
+      "side": "gote",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceSha256": "40e98f32f1b69bbcb393b16a91c572dc8de230f15817abba6ea3b61cae3d76e4",
+      "size": [
+        236,
+        272
+      ],
+      "sha256": "2d6985416cab5e273a2d37f563a864233586347a2e8c610178cc057e95f8aced",
+      "bytes": 37978
+    }
+  ]
+}

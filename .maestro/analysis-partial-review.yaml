@@ -13,9 +13,10 @@ appId: com.meeshogi.app
     timeout: 30000
 - scrollUntilVisible:
     element:
-      text: 解析の長さ
+      text: '.*解析の長さ.*'
     direction: DOWN
-- tapOn: 解析の長さ
+- tapOn:
+    text: '.*解析の長さ.*'
 - tapOn: 標準
 - tapOn:
     id: tab-games
@@ -31,10 +32,18 @@ appId: com.meeshogi.app
 - tapOn:
     id: analysis-start
     waitToSettleTimeoutMs: 500
+# In the refreshed layout the 'analysis-status' label sits below the fold;
+# wait on the visible completion paragraph instead (same 'analysis ended'
+# semantics: it only renders once a partial run finishes).
 - extendedWaitUntil:
-    visible: 解析処理が終了しました
+    visible: '.*局面を解析済み、.*局面は探索量不足です.*'
     timeout: 600000
 - assertVisible: '.*局面を解析済み、.*局面は探索量不足です.*'
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- assertVisible: 解析処理が終了しました
 - assertNotVisible: 全局解析が完了しました
 - takeScreenshot: 51-partial-analysis
 
@@ -58,14 +67,19 @@ appId: com.meeshogi.app
       - tapOn:
           id: move-next
 - assertVisible: '41 / 80手'
+# The evaluation value is exposed as the grouped label '先手視点の評価値 —';
+# match it through the row id plus a contains-pattern (bare '—' never matches
+# a composite accessibility label).
 - scrollUntilVisible:
     element:
-      text: '—'
+      id: current-evaluation
     direction: UP
-- assertVisible: '—'
+- assertVisible:
+    id: current-evaluation
+    text: '.*—.*'
 - assertNotVisible:
     id: candidate-0
-- assertVisible: 解析すると候補手を確認できます。
+- assertVisible: 下の解析ボタンから候補手を確認できます。
 - takeScreenshot: 52-partial-skipped-ply
 
 # A second run must be a finite partial retry, not an error state or crash.
@@ -75,14 +89,19 @@ appId: com.meeshogi.app
     direction: DOWN
 - assertVisible:
     id: analysis-start
-- assertVisible: 解析を再開
+- assertVisible: '.*解析を再開'
 - tapOn:
     id: analysis-start
     waitToSettleTimeoutMs: 500
 - extendedWaitUntil:
-    visible: 解析処理が終了しました
+    visible: '.*局面を解析済み、.*局面は探索量不足です.*'
     timeout: 600000
 - assertVisible: '.*局面を解析済み、.*局面は探索量不足です.*'
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- assertVisible: 解析処理が終了しました
 - assertNotVisible: 全局解析が完了しました
 - assertNotVisible: 解析を再開できます
 - assertNotVisible: '解析に失敗しました。もう一度解析できます。'

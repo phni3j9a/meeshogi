@@ -9,6 +9,7 @@ import { ActionSheetProvider } from '@expo/react-native-action-sheet';
 import { useAppStore } from '@/store/app-store';
 import { ThemePreferenceContext, useTheme } from '@/ui/theme';
 import { AppText, Button } from '@/ui/primitives';
+import { PieceSetContext } from '@/ui/piece-sets';
 
 export const unstable_settings = { anchor: '(tabs)' };
 function Navigation() {
@@ -71,7 +72,10 @@ function Navigation() {
             sheetCornerRadius: 24,
           }}
         />
-        <Stack.Screen name="game/[id]" options={{ title: '検討', headerBackTitle: '戻る' }} />
+        <Stack.Screen
+          name="game/[id]"
+          options={{ title: '検討', headerBackTitle: '戻る', fullScreenGestureEnabled: false }}
+        />
         <Stack.Screen
           name="mate"
           options={{ title: '詰め手順', presentation: 'fullScreenModal' }}
@@ -81,6 +85,7 @@ function Navigation() {
           name="player-names"
           options={{ title: '対局者名', headerBackTitle: '設定' }}
         />
+        <Stack.Screen name="piece-sets" options={{ title: '駒セット', headerBackTitle: '設定' }} />
         <Stack.Screen
           name="game-info/[id]"
           options={{ title: '対局情報', headerBackTitle: '検討' }}
@@ -91,14 +96,17 @@ function Navigation() {
 }
 export default function RootLayout() {
   const preference = useAppStore((state) => state.settings.theme);
+  const pieceSet = useAppStore((state) => state.settings.pieceSet);
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <KeyboardProvider>
           <ThemePreferenceContext.Provider value={preference}>
-            <ActionSheetProvider>
-              <Navigation />
-            </ActionSheetProvider>
+            <PieceSetContext.Provider value={pieceSet}>
+              <ActionSheetProvider>
+                <Navigation />
+              </ActionSheetProvider>
+            </PieceSetContext.Provider>
           </ThemePreferenceContext.Provider>
         </KeyboardProvider>
       </SafeAreaProvider>

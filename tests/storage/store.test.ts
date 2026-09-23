@@ -106,6 +106,58 @@ function setup(initialGames: GameRecord[] = []) {
   return { store, repository, analyze, cancel, persisted: () => persisted };
 }
 describe('棋譜の更新と解析の隔離', () => {
+  it('駒セットの変更は進行中の解析を止めず、同じ条件の結果を保存する', async () => {
+    const { store, repository, analyze, cancel } = setup();
+    await store.getState().initialize();
+    const game = await store.getState().saveImport(fixture(), { service: 'shogiwars' });
+    const pending = deferred<PositionAnalysis>();
+    const entered = deferred<void>();
+    const firstResult = await analyze.getMockImplementation()!(game.positions[0], {
+      nodes: DEFAULT_SETTINGS.analysisNodes,
+      multiPV: DEFAULT_SETTINGS.multiPV,
+    });
+    analyze.mockImplementationOnce(async () => {
+      entered.resolve();
+      return pending.promise;
+    });
+    const run = store.getState().startAnalysis(game.id);
+    await entered.promise;
+    cancel.mockClear();
+    const runningJob = store.getState().analysisJob;
+    await store.getState().updateSettings({ pieceSet: 'shiraki' });
+    expect(store.getState().settings.pieceSet).toBe('shiraki');
+    expect(store.getState().analysisJob).toBe(runningJob);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(repository.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pieceSet: 'shiraki' }),
+      [],
+    );
+    pending.resolve(firstResult);
+    await run;
+    const analyzed = store.getState().games[0];
+    expect(analyzed.rawKif).toBe(game.rawKif);
+    expect(analyzed.analysis[0]).toEqual(firstResult);
+    expect(Object.keys(analyzed.analysis)).toHaveLength(game.positions.length);
+    expect(store.getState().settings.pieceSet).toBe('shiraki');
+  });
+  it('駒セットの保存失敗では元の選択を保ち、次の変更を保存できる', async () => {
+    const { store, repository } = setup();
+    await store.getState().initialize();
+    const game = await store.getState().saveImport(fixture(), { service: 'shogiwars' });
+    const savedSettings = store.getState().settings;
+    repository.saveSettings.mockRejectedValueOnce(new Error('disk full'));
+    await expect(store.getState().updateSettings({ pieceSet: 'sakura' })).rejects.toThrow(
+      'disk full',
+    );
+    expect(store.getState().settings).toBe(savedSettings);
+    expect(store.getState().games).toEqual([game]);
+    await store.getState().updateSettings({ pieceSet: 'seiji' });
+    expect(store.getState().settings.pieceSet).toBe('seiji');
+    expect(repository.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pieceSet: 'seiji' }),
+      [],
+    );
+  });
   it('旧DBを読み込み、停止・再開後のcurrent解析をSQLiteへ保存して再起動後も復元する', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'meeshogi-store-db-'));
     const terminalSfen = '4k4/3RG4/9/9/9/9/9/9/8K w - 1';

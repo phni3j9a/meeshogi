@@ -1,0 +1,95 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Delete the synthetic mate-ending fixture games so the library keeps only
+# suite data (up to three copies: 検証先手 / 検証先手G / a re-imported retry).
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+# Delete every game whose black-side name matches the fixtures (sente '検証先手',
+# gote '検証先手G'); retries and re-imports can leave more than two copies, so
+# each delete pass is guarded by the row still being present.
+- runFlow:
+    when:
+      visible: '.*検証先手.*'
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: '.*検証先手.*'
+          direction: DOWN
+      - tapOn: '.*検証先手.*'
+      - extendedWaitUntil:
+          visible:
+            id: game-screen
+          timeout: 30000
+      - tapOn: 棋譜の操作
+      - tapOn: 対局情報を確認・修正
+      - scrollUntilVisible:
+          element:
+            text: この棋譜を削除
+          direction: DOWN
+      - tapOn: この棋譜を削除
+      - assertVisible: 棋譜を削除しますか？
+      - tapOn: 削除
+      - extendedWaitUntil:
+          visible:
+            id: library-screen
+          timeout: 30000
+- runFlow:
+    when:
+      visible: '.*検証先手.*'
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: '.*検証先手.*'
+          direction: DOWN
+      - tapOn: '.*検証先手.*'
+      - extendedWaitUntil:
+          visible:
+            id: game-screen
+          timeout: 30000
+      - tapOn: 棋譜の操作
+      - tapOn: 対局情報を確認・修正
+      - scrollUntilVisible:
+          element:
+            text: この棋譜を削除
+          direction: DOWN
+      - tapOn: この棋譜を削除
+      - assertVisible: 棋譜を削除しますか？
+      - tapOn: 削除
+      - extendedWaitUntil:
+          visible:
+            id: library-screen
+          timeout: 30000
+- runFlow:
+    when:
+      visible: '.*検証先手.*'
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: '.*検証先手.*'
+          direction: DOWN
+      - tapOn: '.*検証先手.*'
+      - extendedWaitUntil:
+          visible:
+            id: game-screen
+          timeout: 30000
+      - tapOn: 棋譜の操作
+      - tapOn: 対局情報を確認・修正
+      - scrollUntilVisible:
+          element:
+            text: この棋譜を削除
+          direction: DOWN
+      - tapOn: この棋譜を削除
+      - assertVisible: 棋譜を削除しますか？
+      - tapOn: 削除
+      - extendedWaitUntil:
+          visible:
+            id: library-screen
+          timeout: 30000
+- assertNotVisible: '.*検証先手.*'
+- assertVisible: '.*最近の対局.*1局.*'
+- takeScreenshot: 98-cleaned-library

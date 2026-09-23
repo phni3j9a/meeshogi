@@ -1,0 +1,260 @@
+{
+  "scope": "Actual GameScreen, ShogiBoard, and PieceImage in RN Web. Synthetic analysis; constructed capture/drop and promotion SFEN fixtures. Browser tint filter verifies the RN Web path; native device rendering remains unverified.",
+  "source": "src/ui/piece-image.tsx",
+  "sourceHash": "db6b8afea459cf1f809fd6f86a7b656e5b20077688790aa6a698d97e3b3e3458",
+  "cases": [
+    {
+      "key": "light",
+      "pieces": 40,
+      "whiteOverlays": 23,
+      "overflow": false
+    },
+    {
+      "key": "dark",
+      "pieces": 40,
+      "whiteOverlays": 23,
+      "overflow": false
+    },
+    {
+      "key": "flipped",
+      "pieces": 40,
+      "whiteOverlays": 23,
+      "overflow": false
+    },
+    {
+      "key": "320",
+      "pieces": 40,
+      "whiteOverlays": 23,
+      "overflow": false
+    },
+    {
+      "key": "comparison-light",
+      "actualComponent": true
+    },
+    {
+      "key": "comparison-dark",
+      "actualComponent": true
+    },
+    {
+      "key": "promoted-white",
+      "promoted": [
+        {
+          "source": "promoted-pawn.png",
+          "overlays": 1
+        },
+        {
+          "source": "promoted-lance.png",
+          "overlays": 1
+        },
+        {
+          "source": "promoted-knight.png",
+          "overlays": 1
+        },
+        {
+          "source": "promoted-silver.png",
+          "overlays": 1
+        },
+        {
+          "source": "horse.png",
+          "overlays": 1
+        },
+        {
+          "source": "dragon.png",
+          "overlays": 1
+        }
+      ],
+      "heldTypes": 7
+    },
+    {
+      "key": "promoted-black",
+      "promoted": [
+        {
+          "source": "promoted-pawn.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-lance.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-knight.png",
+          "overlays": 0
+        },
+        {
+          "source": "promoted-silver.png",
+          "overlays": 0
+        },
+        {
+          "source": "horse.png",
+          "overlays": 0
+        },
+        {
+          "source": "dragon.png",
+          "overlays": 0
+        }
+      ],
+      "heldTypes": 7
+    }
+  ],
+  "ownership": [
+    {
+      "side": "white",
+      "before": {
+        "label": "5五、先手の歩",
+        "images": 1,
+        "source": "pawn.png",
+        "sameSource": true,
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "opacity": null,
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "held": {
+        "label": "後手の持駒、歩1枚",
+        "images": 2,
+        "source": "pawn.png",
+        "sameSource": true,
+        "loaded": true,
+        "decorative": true,
+        "overlays": 1,
+        "tint": "#281400",
+        "opacity": "0.2",
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 31,
+          "height": 37
+        }
+      },
+      "dropped": {
+        "label": "4五、後手の歩",
+        "images": 2,
+        "source": "pawn.png",
+        "sameSource": true,
+        "loaded": true,
+        "decorative": true,
+        "overlays": 1,
+        "tint": "#281400",
+        "opacity": "0.2",
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "flipped": {
+        "label": "4五、後手の歩",
+        "images": 2,
+        "source": "pawn.png",
+        "sameSource": true,
+        "loaded": true,
+        "decorative": true,
+        "overlays": 1,
+        "tint": "#281400",
+        "opacity": "0.2",
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "legalSequence": [
+        "5c5e",
+        "9i8i",
+        "P*4e"
+      ],
+      "counter": "3手目・分岐3手"
+    },
+    {
+      "side": "black",
+      "before": {
+        "label": "5五、後手の歩",
+        "images": 2,
+        "source": "pawn.png",
+        "sameSource": true,
+        "loaded": true,
+        "decorative": true,
+        "overlays": 1,
+        "tint": "#281400",
+        "opacity": "0.2",
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "held": {
+        "label": "先手の持駒、歩1枚",
+        "images": 1,
+        "source": "pawn.png",
+        "sameSource": true,
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "opacity": null,
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 31,
+          "height": 37
+        }
+      },
+      "dropped": {
+        "label": "4五、先手の歩",
+        "images": 1,
+        "source": "pawn.png",
+        "sameSource": true,
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "opacity": null,
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "flipped": {
+        "label": "4五、先手の歩",
+        "images": 1,
+        "source": "pawn.png",
+        "sameSource": true,
+        "loaded": true,
+        "decorative": true,
+        "overlays": 0,
+        "opacity": null,
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "dimensions": {
+          "width": 29,
+          "height": 30
+        }
+      },
+      "legalSequence": [
+        "5g5e",
+        "1a2a",
+        "P*4e"
+      ],
+      "counter": "3手目・分岐3手"
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "flipOwnership": true,
+  "sourceHashAfter": "db6b8afea459cf1f809fd6f86a7b656e5b20077688790aa6a698d97e3b3e3458",
+  "nativeExecution": false,
+  "validation": {
+    "typecheck": "passed",
+    "existingTests": {
+      "passed": 63,
+      "files": 7
+    },
+    "newTests": 0,
+    "generatedPngs": "All 15 match the original prompts.json SHA-256 hashes.",
+    "iosHermesExport": "entry-8f8637e1740ebcbb91b4207f5ec77b72.hbc",
+    "androidHermesExport": "entry-cdbec162bebc8305198126554cf8615e.hbc",
+    "nativeRuntime": "Not available in this environment; remaining Draft PR acceptance."
+  }
+}

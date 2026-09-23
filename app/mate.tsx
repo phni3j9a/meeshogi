@@ -86,13 +86,16 @@ export default function MateScreen() {
             <View
               style={{
                 flexDirection: 'row',
+                flexWrap: 'wrap',
                 justifyContent: 'space-between',
                 alignItems: 'baseline',
+                columnGap: 12,
+                rowGap: 4,
                 marginVertical: 20,
               }}
             >
               <AppText variant="title">{session.proof.plies}手詰め</AppText>
-              <AppText>
+              <AppText style={{ marginLeft: 'auto' }}>
                 {ply} / {total}手
               </AppText>
             </View>

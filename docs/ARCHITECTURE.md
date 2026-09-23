@@ -2,7 +2,7 @@
 
 ## 方針の確度
 
-製品要件は `PRODUCT.md` を正本とする。無料版の実装ではExpo SDK 57.0.22 / React Native 0.86.3 / React 19.2.3 / TypeScript 6.0.3を採用し、npmのlockfileで固定する。Expo Routerによる画面、SQLiteによる端末保存、ローカルExpo Moduleを介したRust解析を統合する。各OSでの検証状態は `DEVELOPMENT.md` を参照する。
+製品要件は `PRODUCT.md` を正本とする。無料版の実装ではExpo SDK 57.0.24 / React Native 0.86.3 / React 19.2.3 / TypeScript 6.0.3を採用し、npmのlockfileで固定する。Expo Routerによる画面、SQLiteによる端末保存、ローカルExpo Moduleを介したRust解析を統合する。各OSでの検証状態は `DEVELOPMENT.md` を参照する。
 
 ## 責務
 
@@ -17,6 +17,8 @@
 棋譜取り込みと盤面入力はMITライセンスのtsshogi 2.3.4を使用する。パーサーの読み込み成功に加え、元の駒表記・手数と全手の合法性を再検証する。探索と詰み証明はSekireiの合法手生成を使い、iOS・Androidとも同じRustを呼ぶ。UI操作と探索に異なるライブラリが関わるため、SFEN / USIの境界で結果の合法性を照合する。保存はexpo-sqlite、アプリ内状態はZustandとし、設定と既存棋譜の帰属更新をtransactionでまとめる。
 
 meetermのネイティブターミナル描画要件をこのアプリへ転用する必要はない。盤面の描画方式は将棋アプリとして判断する。
+
+駒セットのIDは既存の設定JSONに保存する。設定未指定・未知のIDは黄楊へ戻し、他の設定項目は従来の検証を維持する。保存が成功してから表示を更新し、ルートの共通Contextを通じて盤上・持駒・詰み手順に反映する。素材は静的に同梱し、駒セット変更に通信・棋譜の書き換え・解析の再起動を必要としない。
 
 ## 解析との接続
 

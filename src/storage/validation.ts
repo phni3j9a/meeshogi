@@ -2,6 +2,7 @@ import { Position } from 'tsshogi';
 import { isInCheck, legalMoves } from '../domain';
 import {
   DEFAULT_SETTINGS,
+  PIECE_SET_IDS,
   type AnalysisMeta,
   type GameRecord,
   type Settings,
@@ -207,6 +208,8 @@ export function decodeSettings(value: unknown): Settings {
   const settings = {
     ...DEFAULT_SETTINGS,
     ...value,
+    // An unavailable visual preset must not prevent saved games from loading.
+    pieceSet: PIECE_SET_IDS.find((id) => id === value.pieceSet) ?? DEFAULT_SETTINGS.pieceSet,
     playerNames: { ...DEFAULT_SETTINGS.playerNames, ...savedNames },
   };
   requireValid(

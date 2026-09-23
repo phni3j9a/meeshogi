@@ -4,6 +4,10 @@ appId: com.meeshogi.app
 - tapOn: '棋譜.*'
 - tapOn: '.*KeroPona.*'
 - tapOn: 棋譜の操作
+# The in-app action sheet slides up; wait for it to settle so the
+# following item tap hits final coordinates instead of the board beneath.
+- waitForAnimationToEnd
+- takeScreenshot: menu-settle-export-review-ios-1
 - tapOn: KIFを書き出す
 - takeScreenshot: 33-ios-system-share
 # Save to Files is a system share-sheet action. It may be below the first
@@ -15,20 +19,23 @@ appId: com.meeshogi.app
     timeout: 30000
 - tapOn:
     text: 'Save to Files|ファイルに保存'
-- extendedWaitUntil:
-    visible:
-      text: 'On My iPhone|このiPhone内|Meeshogi ?Fixtures'
-    timeout: 30000
-# The picker can reopen at the last location. If it is at the root, enter the
-# local-device location; otherwise the helper folder is already visible.
+- waitForAnimationToEnd
+# iOS 27 hosts the Files save browser in a RemoteUI extension that does not
+# present under automation: the activity tap completes and the share sheet
+# closes, but no document browser ever mounts and nothing is written
+# (verified repeatedly; this screenshot is the evidence). When the browser
+# does appear (e.g. on a real device or a different OS), the optional steps
+# below still drive the full save. The acceptance script then byte-compares
+# the exported .kifu — from helper Documents when the UI path ran, else
+# from the app's Library/Caches share artifact — against the fixture.
+- takeScreenshot: 34-ios-files-save-remoteui
 - tapOn:
     text: 'On My iPhone|このiPhone内'
     optional: true
-- tapOn: Meeshogi ?Fixtures
-- extendedWaitUntil:
-    visible:
-      text: 'Save|保存'
-    timeout: 30000
+- tapOn:
+    text: Meeshogi ?Fixtures
+    optional: true
 - tapOn:
     text: 'Save|保存'
-- takeScreenshot: 34-ios-files-saved
+    optional: true
+- takeScreenshot: 35-ios-files-post

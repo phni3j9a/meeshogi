@@ -2,7 +2,22 @@
 
 ## 現在地
 
-2026年9月22日現在、無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)と関連する#9/#11はマージ済みである。現在の作業はIssue #7の解析正しさ修正で、candidate worktree上の未マージ変更として扱う。Expo SDK 57 / React Native 0.86.3、tsshogi 2.3.4、SQLiteとRustの解析経路を採用し、モバイル受入はDevin Cloud常駐セッションへ移行済み（Issue #8）である。GitHub Actionsの`ci.yml`は共通ロジック・型検査・Rustテストを検証し、モバイル受入の代わりにはしない。
+2026年9月23日現在、無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)と関連する#9/#11、Issue #7の解析正しさ修正（PR #13）はマージ済みである。PR #12の画面刷新は最新mainの解析正しさ修正を取り込み、Android emulatorとiOS Simulatorのネイティブ受入を完了した。Expo SDK 57 / React Native 0.86.3、tsshogi 2.3.4、SQLiteとRustの解析経路を採用し、モバイル受入はDevin Cloud常駐セッションへ移行済み（Issue #8）である。GitHub Actionsの`ci.yml`は共通ロジック・型検査・Rustテストを検証し、モバイル受入の代わりにはしない。
+
+### PR #12: 解析画面と駒セット
+
+盤面・評価グラフ・候補手・手送りを再構成し、グラフの横ドラッグで局面を確認できる。設定では黄楊・白木・桜木・青磁を比較して選択でき、SQLite保存後に盤上・持駒・詰み手順へ共通反映する。生成済み23PNGは約0.55MiB。仕様と以前のWeb検証は[画面の改善](design/analysis-refresh.md)・[駒セット](design/piece-sets.md)を参照。
+
+最新mainの詰み終局・探索量不足の部分終了・旧解析cache除外を新画面へ統合した。駒セットの旧設定互換・保存失敗・再起動後の復元と、進行中の解析を止めない動作はロジックテストで確認した。初回の実エンジンReleaseビルドは統合コミット`7f877a2`で両OSともインストール・起動できた。[Android初回レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-android-20260923/evidence/report.md)と[iOS初回レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-ios-20260923/report.md)に、その検証と発見事項を保存した。
+
+初回のiOS実GUI操作で、iOS 26以降は全画面戻るジェスチャーがグラフの横ドラッグを奪う問題と、OS最大文字で詰め手順のカウンターが右端で切れる問題を発見した。`91cc1d0`で検討画面の全画面戻るジェスチャーを無効にし、カウンターを折り返せるようにした。修正後コミット`ba6c6df`の新規Releaseビルドを両OSで再受入し、画像を実際に開いて確認した。
+
+- [iOS修正後レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-ios-fix-20260923/report.md): Simulatorへ新規ビルド・インストール・起動。既存15フローは自動実行で全成功、visual専用フローは設計どおり未実行。PR固有の駒セット・グラフ2フロー、iPhone 17eの通常／最大文字・iPad miniのレイアウトも成功した。実GUI横ドラッグで途中の読み出し、離した位置への局面移動、画面が戻らないことを確認し、画面左端からの戻る操作は残った。最大文字の詰み手数は次行に完全表示された。KIF書き出しはfixtureとバイト一致。
+- [Android修正後レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-android-fix-20260923/evidence/report.md): emulatorへ新規ビルド・インストール・起動。既存15フローとPR固有7フローが全成功。4セットの盤上・持駒・反転・詰み手順、再起動後の保存、明暗、文字拡大、横ドラッグを確認した。グラフ上の縦ドラッグは、スクロール余地のある状態で実際にページを動かした。最初の検証スクリプトは操作後の画面情報を更新せず判定し、スクロール余地も確認していなかったため、判定手順を修正した。
+
+CIは`ba6c6df`で型検査・Vitest 112件・Rust 24件・Expo依存整合性・Devin helper 5件が成功した。受入はSimulator／emulatorまで。実iPhone・実Android端末の性能・FPS・発熱は未確認である。iOSのSave to Files保存先UIはiOS 27のRemoteUIが自動操作下で表示されず未確認だが、書き出したKIFのバイト列は確認した。Androidの専用タブレット実機と真のOSジェスチャーキャンセルも未確認である。
+
+### PR #13: 解析正しさの検証履歴
 
 Issue #7の実装状態は、Sekirei v0.3.37（`7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac`）固定、既存weight `c-leaf-wrm-seed42`（SHA-256 `807c18da03521414a8c75dfe51dd4de2caf8e9ec4909320826eac12b66852eab`）の維持、探索内でのResidualMaterial（material 1 + NNUE 1、bias 0、clip 0）、成功payloadの`meta`、未完成探索の`incomplete`、checkmate/no-legal-movesの終局区別、engine/model identityによる旧cache除外までを含む。今回の継続修正では、native境界で整合性を確認できた初回反復の予算不足だけを局面単位でスキップし、後続局面を処理する`partial`終了と正直な再起動後表示を追加する。payloadとidentityは変更しない。
 
@@ -72,8 +87,8 @@ meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機
 
 | セッション | 環境 | 用途 |
 | --- | --- | --- |
-| [`a1f26864422748319e24fcab5b2b0e85`](https://app.devin.ai/sessions/a1f26864422748319e24fcab5b2b0e85) | Devin Cloud macOS (Apple Silicon) | iOS Simulator受入（visual / full） |
-| [`43b7a4407f3b4965a5bafba70b089b7d`](https://app.devin.ai/sessions/43b7a4407f3b4965a5bafba70b089b7d) | Devin Cloud Linux (KVM) | Android ビルド・エミュレーター・Maestro受入 |
+| [`7cb3955c8c0a49b3ac96fa8e52137897`](https://app.devin.ai/sessions/7cb3955c8c0a49b3ac96fa8e52137897) | Devin Cloud macOS (Apple Silicon) | iOS Simulator受入（visual / full） |
+| [`f9dace84ec92408da0bcacaf1c95930b`](https://app.devin.ai/sessions/f9dace84ec92408da0bcacaf1c95930b) | Devin Cloud Linux (KVM) | Android ビルド・エミュレーター・Maestro受入 |
 
 実行の流れ:
 
@@ -82,7 +97,7 @@ meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機
 3. 結果は `artifacts/<OS>/` ごと `evidence/<platform>-<yyyymmdd>` のorphanブランチへpushされる。Mainがブランチをfetchしてスクリーンショットを実際に開き、証拠つきで報告する。最終判定は人間が行う。
 4. 失敗時は同じセッションでその場調査できる（liveのadb/xcrun、エミュレーター状態の観察）。これがホスト型ランナーのログだけの運用に対する利点。
 
-上の2セッションはDevin Web UIで作成したもので、暖機済みのVMと同一セッション内の成果物再利用のため引き続き既定の送信先とする。汚染・コンテキスト圧迫で作り直す場合は、Web UIを使わずに `devin-cloud.py new` で新しいSWE-2セッションを立て、上の表のIDを更新する。
+上の2セッションは2026年9月23日のPR #12受入用にCLIのACP経由で作成したSWE-2セッションである。以前のセッションはアーカイブ済みのため、こちらを既定の送信先とする。汚染・コンテキスト圧迫で作り直す場合は、Web UIを使わずに `devin-cloud.py new` で新しいSWE-2セッションを立て、上の表のIDを更新する。
 
 ### セッションの駆動
 

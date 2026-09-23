@@ -6,6 +6,7 @@ import { useAppStore } from '@/store/app-store';
 import { Settings } from '@/domain/model';
 import { AppText, Group, Notice, PageHeader, PageScroll, Row, SectionLabel } from '@/ui/primitives';
 import { useTheme } from '@/ui/theme';
+import { PIECE_SETS } from '@/ui/piece-sets';
 import { errorMessage, useChoice } from '@/ui/use-choice';
 
 export default function SettingsScreen() {
@@ -45,7 +46,7 @@ export default function SettingsScreen() {
     >
       <PageScroll>
         <PageHeader title="設定" />
-        {error && <Notice text={error} error />}
+        {error ? <Notice text={error} error /> : null}
         <SectionLabel>対局者</SectionLabel>
         <Group>
           <Row
@@ -105,6 +106,12 @@ export default function SettingsScreen() {
         </AppText>
         <SectionLabel>盤面と操作</SectionLabel>
         <Group>
+          <Row
+            label="駒セット"
+            value={PIECE_SETS[settings.pieceSet].name}
+            onPress={() => router.push('/piece-sets')}
+            testID="piece-sets-link"
+          />
           <Row
             label="盤面の向き"
             value={settings.boardFlip ? '相手が手前' : '自分が手前'}
