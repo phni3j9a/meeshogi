@@ -9,12 +9,14 @@ appId: com.meeshogi.app
 # The screenshot doubles as the real settle delay (waitForAnimationToEnd
 # returns before the JS-driven slide finishes).
 - waitForAnimationToEnd
+- takeScreenshot: menu-settle-management-review-1
 - takeScreenshot: 19a-game-menu
 - tapOn: お気に入りに追加
 # Reopen to prove the action applied in-session; this also leaves enough
 # wall-clock time for the async SQLite write to reach the WAL before stopApp.
 - tapOn: 棋譜の操作
 - waitForAnimationToEnd
+- takeScreenshot: menu-settle-management-review-2
 - assertVisible: お気に入りを解除
 - takeScreenshot: 19b-favorite-applied
 - tapOn: キャンセル
@@ -28,6 +30,7 @@ appId: com.meeshogi.app
 # The in-app action sheet slides up; wait for it to settle so the
 # following item tap hits final coordinates instead of the board beneath.
 - waitForAnimationToEnd
+- takeScreenshot: menu-settle-management-review-3
 - tapOn: 対局情報を確認・修正
 - scrollUntilVisible:
     element:
@@ -77,6 +80,7 @@ appId: com.meeshogi.app
 # The in-app action sheet slides up; wait for it to settle so the
 # following item tap hits final coordinates instead of the board beneath.
 - waitForAnimationToEnd
+- takeScreenshot: menu-settle-management-review-4
 - tapOn: 対局情報を確認・修正
 - tapOn:
     id: game-result
