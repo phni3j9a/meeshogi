@@ -77,12 +77,54 @@ meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機
 
 実行の流れ:
 
-1. 検証したいコミットとスイートをMain（このCLI）へ依頼する。MainがSessions APIで対象セッションへ指示を送り、完了まで監視する。
+1. 検証したいコミットとスイートをMain（このCLI）へ依頼する。Mainは `scripts/ci/devin-cloud.py` で対象セッションへ指示を送り、`status` で完了を確認する（下記「セッションの駆動」）。
 2. セッションは `git fetch && git reset --hard <SHA>` で正確なコミットへ合わせ、`npm install`・prebuild・ビルド・受入スクリプトを実行する。永続VMのツールチェーンは再利用するが、VMの状態をソースの正本として扱わない。
 3. 結果は `artifacts/<OS>/` ごと `evidence/<platform>-<yyyymmdd>` のorphanブランチへpushされる。Mainがブランチをfetchしてスクリーンショットを実際に開き、証拠つきで報告する。最終判定は人間が行う。
 4. 失敗時は同じセッションでその場調査できる（liveのadb/xcrun、エミュレーター状態の観察）。これがホスト型ランナーのログだけの運用に対する利点。
 
-セッションはDevin Web UIでSWE-2モードとして手動作成する（Sessions APIはSWE-2を選べない）。汚染・コンテキスト圧迫で作り直す場合は新しいSWE-2セッションを立て、上の表のIDを更新する。Linux側は `.devin/blueprint.yaml` のスナップショットでツールチェーンが暖機済みになる。macOS側は現状blueprintの `runs-on: macos` ビルドがこのorgでは利用できないため、新規セッションへ次のブートストラップを1回送る:
+上の2セッションはDevin Web UIで作成したもので、暖機済みのVMと同一セッション内の成果物再利用のため引き続き既定の送信先とする。汚染・コンテキスト圧迫で作り直す場合は、Web UIを使わずに `devin-cloud.py new` で新しいSWE-2セッションを立て、上の表のIDを更新する。
+
+### セッションの駆動
+
+```sh
+python3 scripts/ci/devin-cloud.py list                    # --all でアーカイブ済みも表示
+python3 scripts/ci/devin-cloud.py new --platform macos --prompt-file prompt.md --wait 60
+python3 scripts/ci/devin-cloud.py send <session-id> --prompt-file prompt.md --wait 60
+python3 scripts/ci/devin-cloud.py status <session-id> --messages 3
+```
+
+ヘルパーはDevin CLIの `devin acp --cloud`（ACPのcloud relay）を使い、CLIの `devin auth login` の資格情報で動く。`DEVIN_API_KEY` は使わない。
+
+- `new` は既定で `--repo phni3j9a/meeshogi --version devin-swe-2-max` とする。relayが提示しない値は拒否し、作成後のセッションが要求したversionを報告しなければ失敗にする。
+- `--wait` を過ぎても続くターンは失敗ではなく「detached」と表示する。Cloud側の作業は継続するので、長い受入は短い `--wait` で送り、`status` で結果を確認する。
+- `status` は直近のDevinメッセージを再生し、状態・platform・`devinVersionOverride`・URLを出力する。
+- Cloud側からのローカル操作要求（ファイル参照や許可確認）には応じない。受入実行にはローカルのツールを使わない。
+
+ACPを使う理由と制約:
+
+- REST APIの `POST /v3/organizations/{org}/sessions` は `devin_mode`（`normal/fast/lite/ultra/fusion`）しか受け付けず、SWE-2を選べない。
+- ACP relayの `session/new` が返す `configOptions` には次がある。いずれも最初のプロンプト前に `session/set_config_option` で設定する。
+  - `devin_version`：`devin-swe-2-low/high/max` とpriority版
+  - `platform`：`linux/macos/windows`
+- CLIの文書ではcloud ACPはinsiders向けと表記されており、`devin_version` の値も公開APIではない内部識別子である。確認はCLI 3000.11.1、2026-09-23。
+- 値が提示されなくなった場合 `new` は失敗する。そのときはWeb UIでSWE-2セッションを作成し、`send`/`status` で駆動する。別モデルで受入を実行しない。
+
+2026-09-23に `new` で作成した新規セッションの実測（読み取りのみ）:
+
+- Linux：blueprintの暖機状態があった。
+  - Node 22.23.2、Rust 1.96.0（Android targets）、cargo-ndk 4.1.2、OpenJDK 17.0.19
+  - Android SDK：build-tools 35/36、NDK 27.1.12297006、`system-images;android-36;google_apis`
+  - AVD `acceptance`、Maestro 2.10.0、`~/.gradle/init.gradle`、`/dev/kvm`
+  - 8 vCPU / 31 GiB、`~/repos/meeshogi`（`node_modules` 含む）
+- macOS：blueprintのmacOS文書に相当する状態が起動時から入っており、下の手動ブートストラップは不要だった。
+  - Apple M4 Pro (Virtual)、16 GiB
+  - `~/.cargo/bin` のrustup proxy、Rust 1.96.0（iOS targets）
+  - Homebrewの `node@22` 22.23.2と `cocoapods` 1.17.0
+  - Maestro 2.10.0（`~/maestro-2.10.0`）、OpenJDK 17.0.20.1、blueprintの `ENVRC` PATH行
+  - Xcode 26.6（17F113）、iOS 26.5/27.0 Simulator runtime
+  - 初回応答の前に、Cloud側が「`phni3j9a/meeshogi` のpull commandsに5分30秒かかった」と警告した。
+
+以下は、これらのツールが欠けたmacOSセッションへ送る予備手順として残す:
 
 ```bash
 mkdir -p ~/.cargo/bin
