@@ -72,7 +72,10 @@ function Navigation() {
             sheetCornerRadius: 24,
           }}
         />
-        <Stack.Screen name="game/[id]" options={{ title: '検討', headerBackTitle: '戻る' }} />
+        <Stack.Screen
+          name="game/[id]"
+          options={{ title: '検討', headerBackTitle: '戻る', fullScreenGestureEnabled: false }}
+        />
         <Stack.Screen
           name="mate"
           options={{ title: '詰め手順', presentation: 'fullScreenModal' }}
