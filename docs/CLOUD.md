@@ -2,7 +2,7 @@
 
 ## Current status
 
-The first staging smoke succeeded with the real engine and AVX2 CPU, and an initial `standard-2` / `standard-3` matrix is recorded below. That matrix predates contract v2 and is reference data only. The W2 repair gate remains open until the new helper/driver image is deployed and the fixed-SFEN, timeout-restart, and corrected benchmark checks are repeated. D1, Queues, job profiles, app integration, and production resources remain intentionally absent.
+The staging service runs contract v3 (image `sha256:84599cdf…`): the fixed-SFEN gate, single-legal-move and `middlegame-150` probes, and the selected-profile re-runs on the original fixture set all pass — see [Post-fix verification](#post-fix-verification-2026-09-23-image-sha25684599cdf-contract-v3). The earlier `standard-2` / `standard-3` matrix is retained as pre-fix reference only. D1, Queues, job profiles, app integration, and production resources remain intentionally absent.
 
 The cloud path is an evaluation stage. The app's on-device analysis remains in place until the fixed-SFEN gate, cloud benchmark, and both iOS and Android acceptance complete. Cloud connectivity is not a condition for local game management or analysis during migration.
 
@@ -154,4 +154,19 @@ Cold-start readiness (`cold-health` to ready): `standard-2` p50 4.4 s / p95 6.2 
 - `free-v1`: 1,000 ms, requested MultiPV 2, Threads 1, Hash 256 MiB, `standard-2` (1 vCPU / 6 GiB / 12 GB).
 - `precision-v1`: 2,000 ms, requested MultiPV 3, Threads 2, Hash 256 MiB, `standard-3` (2 vCPU / 8 GiB / 16 GB).
 - Both use the same engine/model, SFEN-only history, `usinewgame` TT reset per position, `FV_SCALE=40`, no book/Ponder, and `GenerateAllLegalMoves=true`. Effective MultiPV is derived from independent legal generation. These are staging calculation-budget choices, not a strength guarantee. Five seconds remains comparison-only, not an automatic fallback.
-- Re-run the selected profiles on the original fixture set after deploying the fix. Preserve failed requests and missing samples in the denominator; the pre-fix table does not satisfy that gate.
+
+## Post-fix verification (2026-09-23, image `sha256:84599cdf…`, contract v3)
+
+The repaired image was deployed and the selected profiles were re-run on the **original** 12-fixture set (`cloud/bench/results/postfix-free-standard-2`, `postfix-precision-standard-3`; fixture SFEN set verified identical to the pre-fix runs). Before the matrix, three gate probes passed live: initial position `ok` d21, `single-legal-move` `ok` with `effectiveMultiPv=1`, and `middlegame-150` `ok` with three exact candidates — the position whose high cp values previously failed the contract.
+
+| Profile | Requests | Warm terminal | Wall p50 / p95 / max | Depth med | NPS med | Restarts | `bm≠rank1` |
+| --- | ---: | --- | --- | ---: | ---: | ---: | ---: |
+| free-v1 `standard-2` mt1000-mpv2-t1-h256 | 60 warm + 6 cold | 50 `ok`, 10 `mate` | 1,461 / 1,506 / 1,766 ms | 18 | 732k | 0 | 0 |
+| precision-v1 `standard-3` mt2000-mpv3-t2-h256 | 60 warm + 6 cold | 47 `ok`, 13 `mate` | 2,398 / 2,513 / 3,639 ms | 18 | 1,526k | 0 | 4 |
+
+- All 132 requests returned HTTP 200 with a valid contract-v3 result; zero 4xx/5xx, zero `position_failed:*`, zero engine restarts (single `engineEpoch` per run).
+- `mate` terminals are expected: the `mate-in-one` fixture and other mate-scored positions emit explicit mate signs.
+- Precision produced 4 natural `engineBestmove ≠ rank1` cases; all were legal moves kept per contract v3 instead of failing — the behavior the pre-fix build rejected.
+- Cold-health to ready: `standard-2` 2.8/3.0/4.0 s; `standard-3` 4.0/4.2/21.1 s (one slow instance-start outlier, recorded not retried). Cold-analyze ~0.9 s.
+- Estimated container component cost per analyzed position (conservative, from `cost-estimate-*.md`): free ≈ measured engine CPU $0.0000204 + provisioned ≈ $0.000069 total; precision ≈ measured $0.0000773 + provisioned ≈ $0.000169 total. Excludes Workers/DO/Queue/D1/egress/base charges — estimates, not invoices.
+- The earlier claim of a deterministic `middlegame-150` engine hang did not reproduce under the repaired driver: `ok` at mpv3/2 s and mpv2/1 s on staging, and `ok` at mpv3/5 s/threads 2 in a local container run of the same image generation. The remaining hang evidence is one local stop-ignoring observation on the pre-repair build; the timeout→kill→restart path is covered by synthetic tests and the bounded driver deadline.
