@@ -1,0 +1,106 @@
+{
+  "target": {
+    "repo": "phni3j9a/meeshogi",
+    "pr": 12,
+    "issue": 16,
+    "sha": "ba6c6df839f27394d99061014f13faa3b0b8baee",
+    "previous_sha": "7f877a25958fe4cd5c08341271e8c7f0cb00259b",
+    "product_diff_vs_previous": "app/_layout.tsx (iOS fullScreenGestureEnabled flag), app/mate.tsx (counter wrap fix); src/ui/charts.tsx byte-identical"
+  },
+  "environment": {
+    "os": "Ubuntu Linux, KVM",
+    "device": "emulator-5554, AVD acceptance, sdk_gphone64_x86_64, Android 16, 1080x2400@420dpi",
+    "build": "Release APK real engine (Rust 4 ABIs), artifacts/android/meeshogi.apk ~128.8MB",
+    "install": "adb install -r Success; launched via monkey LAUNCHER; library data persisted across reinstall",
+    "real_device": "not verified - emulator only"
+  },
+  "suite_run": {
+    "run_dir": "artifacts/android/runs/20260923T141103Z-23840",
+    "script": "scripts/ci/android-acceptance.sh",
+    "result": "15/15 flows PASS, 0 junit failures",
+    "flows": {
+      "licenses-review": "pass",
+      "import-review": "pass",
+      "player-names": "pass",
+      "player-names-kiou": "pass",
+      "analysis-review": "pass (50k full analysis)",
+      "analysis-partial-review": "pass (10k partial, finite resume)",
+      "candidate-review": "pass",
+      "file-import": "pass",
+      "management-review": "pass",
+      "appearance-review": "pass",
+      "appearance-dark": "pass",
+      "export-review": "pass + byte-identical cmp vs fixtures/kif/shogiwars.kif",
+      "background-review": "pass",
+      "large-text-review": "pass (font_scale 1.3)",
+      "search-delete-review": "pass"
+    },
+    "method": "script automatic, no helper retries"
+  },
+  "pr12_run": {
+    "run_dir": "artifacts/android/runs/20260923T143118Z-34182",
+    "script": "scripts/ci/android-pr12-checks.sh",
+    "maestro_flows": {
+      "piece-sets-picker": "pass (4 generated sets preview/select)",
+      "piece-sets-reflect": "pass (board + hands + flipped + mate reflection)",
+      "piece-sets-persist": "pass (kill/relaunch SQLite persistence)",
+      "mate-terminal-sente": "pass",
+      "mate-terminal-gote": "pass",
+      "pr12-cleanup-games": "pass",
+      "pr12-large-text": "pass (font_scale 1.3)"
+    },
+    "graph_check": {
+      "graph-tap-left-edge": "pass",
+      "graph-tap-right-edge": "pass",
+      "graph-scrub-readout": "info (transient < uiautomator latency; verified visually in graph-03-scrub-mid.png)",
+      "graph-scrub-counter-frozen": "info (same)",
+      "graph-release-moves-once": "pass",
+      "graph-readout-cleared": "pass",
+      "graph-release-same-index": "pass",
+      "graph-vertical-no-move": "pass",
+      "graph-vertical-page-scroll": "warn - test-position condition, see vertical_scroll",
+      "graph-center-tap": "pass",
+      "graph-branch-opened": "pass",
+      "graph-branch-no-mainline-chart": "pass"
+    },
+    "display_variants": "8 shots: default/small/tablet-portrait/tablet-landscape, library+game (wm override, not dedicated AVD)"
+  },
+  "vertical_scroll": {
+    "question": "does a vertical drag starting ON the evaluation chart scroll the page?",
+    "verdict": "NOT A BUG - on ba6c6df the on-chart vertical drag DOES scroll when scroll room exists",
+    "controlled_comparison_same_gesture": {
+      "gesture": "input swipe 540 1700->1300 (400px up, 400ms); marker = element y-bounds inside shared ScrollView",
+      "on_chart": "chart_top 1605->1267 (cand_top -338)",
+      "off_chart": "chart_top 1605->1200 (cand_top -405)",
+      "down_drag_at_scroll_top_on_chart": "0 (no room above)",
+      "down_drag_at_scroll_top_off_chart": "0 (identical)",
+      "round1_seq_replicated": "edge tap + horizontal micro-scrub, then up320@650ms: 1605->1301 (scrolls)",
+      "interpretation": "chart consumes ~65-70px while its horizontal-claim condition (|dx|>7 && |dx|>|dy|*1.3) evaluates, then yields to the parent ScrollView; vertical gestures always yield"
+    },
+    "round1_difference": "round-1 WARN (1605->1605) was a position artifact: at ply 0 the whole page fits the viewport (empty candidates card, no scroll room in either direction). Reproduced identically on ba6c6df at the same page state; with scroll room present the same drag scrolls. charts.tsx is byte-identical between the two SHAs - no product change involved",
+    "evidence": "evidence/vertscroll/{vertscroll.mp4, vs-00-start.png, vs-01-after-onchart.png, vs-02-after-offchart.png, vs-04/05 down-drag shots, vs-06/07 seq shots, results.txt, results-extra.txt}"
+  },
+  "scrub_semantics": {
+    "edge_taps": "left->ply0, right->ply80",
+    "mid_drag_readout": "本譜 27手目 +41 bubble during drag; counter stays 80/80 - preview does not commit (sc-03, scrub.mp4)",
+    "release_commit": "single commit to release index: 44 (expected ~47 within input-swipe sampling granularity)",
+    "tap_select": "58 at x75% (expected ~60)",
+    "cancel_same_index": "out-and-back scrub ending at same index: no extra nav (58->58)",
+    "release_beyond_left_edge": "clamps to ply 0"
+  },
+  "mate_counter_fix": {
+    "verified": "app/mate.tsx counter under OS large text (font_scale 1.3)",
+    "evidence": "evidence/vertscroll/mate-large-{1,2,3}.png: '0 / 1手' and '1 / 1手' fully visible; bounds x860-1028 inside 1080px width - no right-edge clipping",
+    "also_seen": "mate sequence list, hands display, board layout under large text"
+  },
+  "unverified": [
+    "real device behavior (emulator only)",
+    "true OS-level gesture cancellation (synthetic input swipes only; vertical-drag cancel verified instead)",
+    "tablet on a dedicated device (wm size/density override used)"
+  ],
+  "findings": [
+    "No product bugs found on ba6c6df; all acceptance criteria pass",
+    "WARN graph-vertical-page-scroll is a test-position condition, not a product defect",
+    "mate.tsx counter clipping fix confirmed on Android under font_scale 1.3"
+  ]
+}

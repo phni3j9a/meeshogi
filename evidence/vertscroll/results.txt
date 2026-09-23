@@ -1,0 +1,12 @@
+S0 chart_top=1605 cand_top=1981
+A(on-chart up400) chart_top=1267 cand_top=1643 delta_cand=-338
+reset chart_top=1605 cand_top=1981
+B(off-chart up400) chart_top=1200 cand_top=1576 delta_cand=-405
+C(on-chart down400) cand_top=1981 -> 1981 delta=0
+D(off-chart down400) cand_top=1981 -> 1981 delta=0
+E(after tap+scrub, up320@650) chart_top 1605 -> 1301
+F(fresh, up320@650)        chart_top 1605 -> 1286
+G(fresh, up320@400)        chart_top 1605 -> 1271
+H(chart-bottom-edge up320) chart_top 1605 -> 1268
+VERDICT: on-chart vertical drag SCROLLS the page on ba6c6df (deltas -304..-338 vs -405 off-chart, same 320-400px gesture).
+Round-1 no-move was a ply-0 page-fits-viewport artifact (no scroll room), not a product difference: charts.tsx byte-identical between SHAs.
