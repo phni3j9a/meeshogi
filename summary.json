@@ -1,0 +1,115 @@
+{
+  "scope": "ios-native-reacceptance-after-fix",
+  "repo": "phni3j9a/meeshogi",
+  "pr": 12,
+  "issue": 16,
+  "target_sha": "ba6c6df839f27394d99061014f13faa3b0b8baee",
+  "target_branch": "feat/analysis-design-generated-pieces",
+  "previous_verified_sha": "7f877a25958fe4cd5c08341271e8c7f0cb00259b",
+  "fix_under_test": {
+    "commit": "91cc1d0a3f4c51b4057973de4944abb1595cd180",
+    "changes": [
+      "app/_layout.tsx: Stack.Screen game/[id] gains fullScreenGestureEnabled: false",
+      "app/mate.tsx: title row gains flexWrap: wrap + columnGap/rowGap, counter gets marginLeft: auto"
+    ]
+  },
+  "environment": {
+    "host": "macOS Apple Silicon (Devin Cloud)",
+    "xcode": "26.6 (17F113)",
+    "sdk": "iphonesimulator26.5",
+    "node": "22.23.2",
+    "cocoapods": "1.17.0",
+    "rust": "1.96.0",
+    "maestro": "2.10.0",
+    "simulators": {
+      "suite_primary": "iPhone 18 Pro iOS 27.0 (1308A109-3EE0-4711-9287-85246639DBC7)",
+      "layout_secondary": "iPhone 17e iOS 26.5 (D2F41855-8EB4-4D04-902E-AD87273C0CFA)",
+      "layout_tablet": "iPad mini (A17 Pro) iOS 26.5 (04E546A6-D66F-4E0B-8B46-D7A16C5EB803)"
+    }
+  },
+  "build": {
+    "fresh": true,
+    "prior_build_reused": false,
+    "steps": ["npm ci", "npx expo prebuild --platform ios --no-install --clean", "bash scripts/engine/build-ios.sh", "pod install --project-directory=ios", "xcodebuild -workspace ios/meeshogi.xcworkspace -scheme meeshogi -configuration Release -sdk iphonesimulator ARCHS=arm64 CODE_SIGNING_ALLOWED=NO -derivedDataPath $RUNNER_TEMP/meeshogi-ios"],
+    "result": "BUILD SUCCEEDED",
+    "app_built_at_utc": "2026-09-23T06:59:50Z",
+    "bundle_fix_marker": "main.jsbundle contains fullScreenGestureEnabled symbol"
+  },
+  "results": {
+    "fix1_chart_drag": {
+      "status": "pass",
+      "verified": [
+        "center->right drag from ply67: screen did NOT pop; scrub readout changed mid-drag (本譜 54手目 -> 74手目); release moved board ONCE to 74 / 80手",
+        "center->left drag from ply74: no pop; scrub to 本譜 0手目; release -> 0 / 80手 初期局面",
+        "long drag to right edge: no pop; scrub 本譜 80手目 後手勝ち・詰み終; release -> 80 / 80手",
+        "vertical drag on chart: page scrolled, scrub cancelled, ply marker unchanged",
+        "left-edge interactive pop still works (seam-start drag tracked finger and popped to library)",
+        "header 戻る pops to library"
+      ],
+      "method": "real GUI mouse drags via Simulator window (computer tool) — faithful touch events that hit RN PanResponder; XCTest swipes cannot reach it",
+      "evidence": "pr12/fix1-drag/ (11 screenshots + graph-drag-fix.mp4 366s)"
+    },
+    "fix2_mate_counter_max_text": {
+      "status": "pass",
+      "device": "iPhone 17e iOS 26.5, content_size accessibility-extra-large",
+      "verified": "'0 / 3手' counter fully readable, wraps to its own line below '3手詰め', no right-edge clipping",
+      "evidence": "pr12/fix2-mate/01-mate-counter-full.png + 02-mate-counter-zoom.png"
+    },
+    "acceptance_suite_full": {
+      "status": "pass",
+      "command": "IOS_ACCEPTANCE_MODE=full bash scripts/ci/ios-acceptance.sh",
+      "run_dir": "suite/final-run (artifacts/ios/runs/20260923T140047Z-7262)",
+      "exit": 0,
+      "flows": {
+        "licenses-review": "pass",
+        "import-review": "pass",
+        "player-names": "pass",
+        "player-names-kiou": "pass",
+        "analysis-review": "pass",
+        "analysis-partial-review": "pass",
+        "candidate-review": "pass",
+        "file-import": "pass",
+        "management-review": "pass",
+        "appearance-review": "pass",
+        "appearance-dark": "pass",
+        "export-review-ios": "pass",
+        "background-review": "pass",
+        "large-text-review": "pass",
+        "search-delete-review": "pass",
+        "ios-visual-review": "skip (visual-mode only, by suite design)"
+      },
+      "export_kif": "byte-identical to fixtures/kif/shogiwars.kif (sha256 e527fbd0bd25e88652176ff4e6c572ff638c597b1eacfb902799ea6d202dbf55); Save-to-Files destination UI itself unverified (iOS RemoteUI limitation, same as phase 1)"
+    },
+    "pr12_ios_checks": {
+      "status": "pass",
+      "command": "bash scripts/ci/pr12-ios-checks.sh",
+      "flows": {"pr12-piece-sets": "pass", "pr12-graph": "pass"},
+      "persistence": "settings row JSON pieceSet=tsuge after kill/relaunch; PRAGMA integrity_check = ok"
+    },
+    "pr12_device_layout": {
+      "iphone17e_default": "pass",
+      "iphone17e_accessibility_extra_large": "pass",
+      "ipadmini_a17pro": "pass"
+    },
+    "hands_on_regression": {
+      "piece_sets_4": "pass (pr12-piece-sets flow, all 4 sets preview/select/board+hand reflect, light+dark)",
+      "board_flip": "pass (piece-sets flow toggles + board screenshot asserts)",
+      "held_pieces": "pass (金2/銀2/桂/歩 in hand shown on board captures incl. 17e XL)",
+      "mate_sequence": "pass (badge -> 詰め手順 modal at ply67; counter verified at XL text)",
+      "graph_taps": "pass (pr12-graph: 16%->0, 56%->40, 96%->80, 57%->41 欠測, 83%->67 mate badge, candidate tab -> branch, 本譜に戻る -> 67)",
+      "restart_persistence": "pass (SQLite pieceSet=tsuge + integrity ok)"
+    }
+  },
+  "unverified": [
+    "Files save destination UI (iOS 27 RemoteUI never presents under automation; export bytes verified via app Cache copy)",
+    "Real-device performance/FPS (not measured, not claimed)",
+    "Edge-swipe on non-seam start positions under Simulator mouse input (system Files app showed identical narrow-seam behavior — simulator input path limitation, not app behavior)"
+  ],
+  "bugs_found_this_round": [],
+  "prior_bugs": {
+    "PR12-IOS-1": "RESOLVED (high): fullscreen swipe-back no longer steals chart drags",
+    "PR12-IOS-2": "RESOLVED (low): mate counter no longer clips at OS-max text"
+  },
+  "flow_modifications_this_round": "none — ran upstream flows at ba6c6df as-is",
+  "evidence_root": "evidence/pr12-ios-fix-20260923"
+}

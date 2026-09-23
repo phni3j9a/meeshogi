@@ -1,0 +1,27 @@
+{
+  "branch": "evidence/pr12-ios-fix-20260923",
+  "kind": "ios-native-reacceptance-evidence",
+  "target_sha": "ba6c6df839f27394d99061014f13faa3b0b8baee",
+  "created_at_utc": "2026-09-23",
+  "session": "https://app.devin.ai/sessions/7cb3955c8c0a49b3ac96fa8e52137897",
+  "device_primary": "iPhone 18 Pro / iOS 27.0 / 1308A109-3EE0-4711-9287-85246639DBC7",
+  "devices_secondary": [
+    "iPhone 17e / iOS 26.5 / D2F41855-8EB4-4D04-902E-AD87273C0CFA",
+    "iPad mini (A17 Pro) / iOS 26.5 / 04E546A6-D66F-4E0B-8B46-D7A16C5EB803"
+  ],
+  "contents": {
+    "report.md": "human-readable report",
+    "summary.json": "machine-readable results",
+    "manifest.json": "this file",
+    "suite/runs-index.txt": "acceptance run index",
+    "suite/final-run/": "IOS_ACCEPTANCE_MODE=full run artifacts (timeline, junit x15, screenshots, flow.mp4, exported kifu + integrity files, simulator.log.gz, devices.json)",
+    "pr12/checks/": "pr12-ios-checks.sh output: piece-sets + graph flow recordings/junit/screenshots, settings-payload.json, db-integrity.txt",
+    "pr12/layout/iphone17e/": "pr12-device-layout.sh output (default + accessibility-extra-large passes)",
+    "pr12/layout/ipadmini/": "pr12-device-layout.sh output",
+    "pr12/fix1-drag/": "GUI drag verification: graph-drag-fix.mp4 + 01-11 step screenshots",
+    "pr12/fix2-mate/": "iPhone 17e max-text mate counter screenshots (full + zoom)",
+    "pr12/launch.png": "post-install first launch",
+    "logs/": "script stdout logs (ios-acceptance, pr12-ios-checks, layout x2)"
+  },
+  "notes": "per-flow device-simulator.log files are gzip-compressed to keep the branch small; all other artifacts original bytes"
+}

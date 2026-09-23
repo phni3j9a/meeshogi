@@ -1,0 +1,154 @@
+2026-09-23T14:00:47Z acceptance.start mode=full
+2026-09-23T14:00:47Z simulator.boot.start
+An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=405):
+Unable to boot device in current state: Booted
+Monitoring boot status for iPhone 18 Pro (1308A109-3EE0-4711-9287-85246639DBC7).
+Device already booted, nothing to do.
+
+2026-09-23T14:00:48Z simulator.boot.end
+2026-09-23T14:00:48Z app.install.start
+2026-09-23T14:00:52Z app.install.end
+/Users/devin/repos/meeshogi-pr12-ios/artifacts/ios/runs/20260923T140047Z-7262/files-helper/MeeshogiFixtures.app: replacing existing signature
+Monitoring boot status for iPhone 18 Pro (1308A109-3EE0-4711-9287-85246639DBC7).
+Device already booted, nothing to do.
+
+Installed /Users/devin/repos/meeshogi-pr12-ios/artifacts/ios/runs/20260923T140047Z-7262/files-helper/MeeshogiFixtures.app
+Documents: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/0779F5B2-D50B-4D82-9377-018FCAA725C8/Documents
+Fixture: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/0779F5B2-D50B-4D82-9377-018FCAA725C8/Documents/kiou.kif
+Fixture: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/0779F5B2-D50B-4D82-9377-018FCAA725C8/Documents/kiou-shift-jis.kif
+2026-09-23T14:00:58Z clipboard-helper.start file=fixtures/kif/shogiwars.kif request=a646a019-de4e-41d9-a664-46dc0490c39f
+com.meeshogi.testfiles: 7436
+2026-09-23T14:01:01Z clipboard-helper.end file=fixtures/kif/shogiwars.kif request=a646a019-de4e-41d9-a664-46dc0490c39f attempts=2
+2026-09-23T14:01:01Z flow.start licenses-review
+
+Waiting for flows to complete...
+[Passed] licenses-review (27s)
+
+1/1 Flow Passed in 27s
+
+2026-09-23T14:01:54Z flow.end licenses-review
+2026-09-23T14:01:54Z flow.start import-review
+
+Waiting for flows to complete...
+[Passed] import-review (1m 2s)
+
+1/1 Flow Passed in 1m 2s
+
+2026-09-23T14:03:11Z flow.end import-review
+2026-09-23T14:03:12Z clipboard-helper.start file=/Users/devin/repos/meeshogi-pr12-ios/artifacts/ios/runs/20260923T140047Z-7262/clipboard-wars.txt request=da2effd2-afcb-4362-842f-985b8c0793f6
+com.meeshogi.testfiles: 8180
+2026-09-23T14:03:14Z clipboard-helper.end file=/Users/devin/repos/meeshogi-pr12-ios/artifacts/ios/runs/20260923T140047Z-7262/clipboard-wars.txt request=da2effd2-afcb-4362-842f-985b8c0793f6 attempts=2
+2026-09-23T14:03:14Z flow.start player-names
+
+Waiting for flows to complete...
+[Passed] player-names (44s)
+
+1/1 Flow Passed in 44s
+
+2026-09-23T14:04:11Z flow.end player-names
+2026-09-23T14:04:12Z clipboard-helper.start file=/Users/devin/repos/meeshogi-pr12-ios/artifacts/ios/runs/20260923T140047Z-7262/clipboard-kiou.txt request=104c0e8f-ffa3-439b-8f0d-f490ceb9848f
+com.meeshogi.testfiles: 8539
+2026-09-23T14:04:15Z clipboard-helper.end file=/Users/devin/repos/meeshogi-pr12-ios/artifacts/ios/runs/20260923T140047Z-7262/clipboard-kiou.txt request=104c0e8f-ffa3-439b-8f0d-f490ceb9848f attempts=2
+2026-09-23T14:04:15Z flow.start player-names-kiou
+
+Waiting for flows to complete...
+[Passed] player-names-kiou (40s)
+
+1/1 Flow Passed in 40s
+
+2026-09-23T14:05:10Z flow.end player-names-kiou
+2026-09-23T14:05:10Z flow.start analysis-review
+
+Waiting for flows to complete...
+[Passed] analysis-review (2m 47s)
+
+1/1 Flow Passed in 2m 47s
+
+2026-09-23T14:08:12Z flow.end analysis-review
+2026-09-23T14:08:12Z flow.start analysis-partial-review
+
+Waiting for flows to complete...
+[Passed] analysis-partial-review (1m 50s)
+
+1/1 Flow Passed in 1m 50s
+
+2026-09-23T14:10:16Z flow.end analysis-partial-review
+2026-09-23T14:10:16Z flow.start candidate-review
+
+Waiting for flows to complete...
+[Passed] candidate-review (36s)
+
+1/1 Flow Passed in 36s
+
+2026-09-23T14:11:05Z flow.end candidate-review
+2026-09-23T14:11:05Z flow.start file-import
+
+Waiting for flows to complete...
+[Passed] file-import (1m 27s)
+
+1/1 Flow Passed in 1m 27s
+
+2026-09-23T14:12:45Z flow.end file-import
+2026-09-23T14:12:45Z flow.start management-review
+
+Waiting for flows to complete...
+[Passed] management-review (1m 25s)
+
+1/1 Flow Passed in 1m 25s
+
+2026-09-23T14:14:21Z flow.end management-review
+2026-09-23T14:14:21Z flow.start appearance-review
+
+Waiting for flows to complete...
+[Passed] appearance-review (58s)
+
+1/1 Flow Passed in 58s
+
+2026-09-23T14:15:30Z flow.end appearance-review
+2026-09-23T14:15:30Z flow.start appearance-dark
+
+Waiting for flows to complete...
+[Passed] appearance-dark (57s)
+
+1/1 Flow Passed in 57s
+
+2026-09-23T14:16:37Z flow.end appearance-dark
+2026-09-23T14:16:37Z flow.start export-review-ios
+
+Waiting for flows to complete...
+[Passed] export-review-ios (31s)
+
+1/1 Flow Passed in 31s
+
+2026-09-23T14:17:19Z flow.end export-review-ios
+iOS KIF export matches fixtures/kif/shogiwars.kif: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/CADDDAF2-14F5-4735-AEA2-021CDB764ED6/Library/Caches/meeshogi-af273776-e863-4a86-b1a7-432e36fa0984.kifu (source=app-cache-remoteui)
+2026-09-23T14:17:50Z flow.start background-review
+
+Waiting for flows to complete...
+[Passed] background-review (1m 3s)
+
+1/1 Flow Passed in 1m 3s
+
+2026-09-23T14:19:03Z flow.end background-review
+2026-09-23T14:19:04Z flow.start large-text-review
+
+Waiting for flows to complete...
+[Passed] large-text-review (37s)
+
+1/1 Flow Passed in 38s
+
+2026-09-23T14:19:53Z flow.end large-text-review
+2026-09-23T14:19:53Z flow.start search-delete-review
+
+Waiting for flows to complete...
+[Passed] search-delete-review (41s)
+
+1/1 Flow Passed in 41s
+
+2026-09-23T14:20:45Z flow.end search-delete-review
+2026-09-23T14:20:45Z acceptance.end status=0
+Detected file type from extension: PNG
+Note: No display specified. Defaulting to display: D49B348F-DED6-431C-970F-1AC77022C29E (screenID: 1, name: LCD)
+Wrote screenshot to: /Users/devin/repos/meeshogi-pr12-ios/artifacts/ios/runs/20260923T140047Z-7262/final.png
+getpwuid_r did not find a match for uid 501
+EXIT=0
