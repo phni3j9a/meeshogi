@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "meeshogi-analysis-local-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "durable_objects": {
+    "bindings": [
+      { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" },
+      { "name": "JOB_COORDINATOR", "class_name": "JobCoordinator" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] },
+    { "tag": "v2", "new_sqlite_classes": ["JobCoordinator"] }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "meeshogi-analysis-local-test-db",
+      "database_id": "local-test-db",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "JOB_QUEUE", "queue": "meeshogi-analysis-local-test-jobs" }
+    ],
+    "consumers": [
+      {
+        "queue": "meeshogi-analysis-local-test-jobs",
+        "max_batch_size": 1,
+        "max_retries": 3,
+        "dead_letter_queue": "meeshogi-analysis-local-test-dlq",
+        "max_concurrency": 1
+      }
+    ]
+  },
+  "vars": {
+    "ANALYSIS_MODEL_ID": "local-test-model",
+    "ANALYSIS_ENGINE_ID": "YaneuraOu NNUE 9.70git 64AVX2",
+    "ANALYSIS_INSTANCE_TYPE": "standard-2"
+  }
+}

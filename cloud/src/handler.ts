@@ -14,10 +14,13 @@ const INTERNAL_HEALTH_PATH = '/v1/internal/health';
 const INTERNAL_STOP_PATH = '/v1/internal/stop';
 
 export type WorkerEnv = {
+  ANALYSIS_ADMIN_TOKEN?: string;
   STAGING_ADMIN_TOKEN?: string;
   ANALYSIS_PROFILE_ID?: string;
   ANALYSIS_PROFILE_VERSION?: string;
   ANALYSIS_MODEL_ID?: string;
+  ANALYSIS_ENGINE_ID?: string;
+  ANALYSIS_INSTANCE_TYPE?: string;
 };
 
 export type DriverClient = {
@@ -30,6 +33,8 @@ type BenchAnalyzeInput = AnalyzeInput & {
   hashMb?: number;
   label?: string;
 };
+
+export type ServerProfileAnalyzeInput = AnalyzeInput & { threads?: number; hashMb?: number };
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -160,6 +165,48 @@ async function mapDriverFailure(response: Response): Promise<Response> {
   return analysisFailure(response.status === 502 ? 502 : 500, reason);
 }
 
+/** Runs the same bounded driver and contract path as bench/analyze for a server-fixed job profile. */
+export async function analyzeWithServerProfile(
+  input: ServerProfileAnalyzeInput,
+  env: WorkerEnv,
+  driver: DriverClient,
+): Promise<Response> {
+  if (
+    !isStrictShogiSfen(input.sfen) ||
+    !Number.isSafeInteger(input.movetimeMs) || input.movetimeMs < 50 || input.movetimeMs > 30_000 ||
+    !Number.isSafeInteger(input.multipv) || input.multipv < 1 || input.multipv > 8 ||
+    (input.threads !== undefined && (!Number.isSafeInteger(input.threads) || input.threads < 1 || input.threads > 2)) ||
+    (input.hashMb !== undefined && (!Number.isSafeInteger(input.hashMb) || input.hashMb < 16 || input.hashMb > 512))
+  ) return json({ error: 'invalid_request' }, 400);
+
+  try {
+    const response = await driver.fetch(
+      driverRequest('/analyze', 'POST', {
+        sfen: input.sfen,
+        movetime_ms: input.movetimeMs,
+        multipv: input.multipv,
+        ...(input.threads === undefined ? {} : { threads: input.threads }),
+        ...(input.hashMb === undefined ? {} : { hash_mb: input.hashMb }),
+      }),
+    );
+    if (!response.ok) return mapDriverFailure(response);
+    const payload: unknown = await response.json();
+    if (!isRecord(payload)) return analysisFailure(500);
+    const result = v3Result(input, payload, env);
+    if (!result) return analysisFailure(500, 'contract_validation_failed');
+    const stats: Record<string, number> = {};
+    if (isRecord(payload.stats)) {
+      for (const field of ['enginePeakRssKiB', 'engineRssKiB', 'engineCpuMs', 'containerMemUsageBytes']) {
+        const value = payload.stats[field];
+        if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) stats[field] = value;
+      }
+    }
+    return json({ ...result, stats });
+  } catch {
+    return analysisFailure(503);
+  }
+}
+
 function v3Result(input: AnalyzeInput, payload: Record<string, unknown>, env: WorkerEnv): CloudAnalysisResultV3 | null {
   if (payload.contractVersion !== ANALYSIS_CONTRACT_VERSION) return null;
   if (payload.sfen !== input.sfen || payload.requestedMultiPv !== input.multipv) return null;
@@ -203,9 +250,9 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
     return json({ error: 'not_found' }, 404);
   }
 
-  const expectedToken = env.STAGING_ADMIN_TOKEN;
-  if (!expectedToken) return json({ error: 'service_not_configured' }, 503);
-  if (!isAuthorized(request, expectedToken)) return json({ error: 'unauthorized' }, 401);
+  const expectedTokens = [env.ANALYSIS_ADMIN_TOKEN, env.STAGING_ADMIN_TOKEN].filter((token): token is string => Boolean(token));
+  if (expectedTokens.length === 0) return json({ error: 'service_not_configured' }, 503);
+  if (!expectedTokens.some((token) => isAuthorized(request, token))) return json({ error: 'unauthorized' }, 401);
 
   if (url.pathname === INTERNAL_HEALTH_PATH) {
     if (request.method !== 'GET') return json({ error: 'not_found' }, 404);
@@ -237,35 +284,7 @@ export async function handleRequest(request: Request, env: WorkerEnv, driver: Dr
     if (request.method !== 'POST') return json({ error: 'not_found' }, 404);
     const input = await parseBenchAnalyzeInput(request);
     if (!input) return json({ error: 'invalid_request' }, 400);
-
-    try {
-      const response = await driver.fetch(
-        driverRequest('/analyze', 'POST', {
-          sfen: input.sfen,
-          movetime_ms: input.movetimeMs,
-          multipv: input.multipv,
-          ...(input.threads === undefined ? {} : { threads: input.threads }),
-          ...(input.hashMb === undefined ? {} : { hash_mb: input.hashMb }),
-        }),
-      );
-      if (!response.ok) return mapDriverFailure(response);
-
-      const payload: unknown = await response.json();
-      if (!isRecord(payload)) return analysisFailure(500);
-      const result = v3Result(input, payload, env);
-      if (!result) return analysisFailure(500, 'contract_validation_failed');
-
-      const stats: Record<string, number> = {};
-      if (isRecord(payload.stats)) {
-        for (const field of ['enginePeakRssKiB', 'engineRssKiB', 'engineCpuMs', 'containerMemUsageBytes']) {
-          const value = payload.stats[field];
-          if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) stats[field] = value;
-        }
-      }
-      return json({ ...result, stats });
-    } catch {
-      return analysisFailure(503);
-    }
+    return analyzeWithServerProfile(input, env, driver);
   }
 
   if (request.method !== 'POST') return json({ error: 'not_found' }, 404);

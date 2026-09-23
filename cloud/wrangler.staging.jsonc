@@ -18,15 +18,41 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" }
+      { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" },
+      { "name": "JOB_COORDINATOR", "class_name": "JobCoordinator" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] }
+    { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] },
+    { "tag": "v2", "new_sqlite_classes": ["JobCoordinator"] }
   ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "meeshogi-analysis-staging-db",
+      "database_id": "c2260c42-3565-4780-964e-937335c9a0a7",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "JOB_QUEUE", "queue": "meeshogi-analysis-staging-jobs" }
+    ],
+    "consumers": [
+      {
+        "queue": "meeshogi-analysis-staging-jobs",
+        "max_batch_size": 1,
+        "max_retries": 3,
+        "dead_letter_queue": "meeshogi-analysis-staging-dlq",
+        "max_concurrency": 1
+      }
+    ]
+  },
   "vars": {
     "ANALYSIS_PROFILE_ID": "fixed-sfen-staging-v1",
     "ANALYSIS_PROFILE_VERSION": "1",
-    "ANALYSIS_MODEL_ID": "analysis-model-staging-v1"
+    "ANALYSIS_MODEL_ID": "analysis-model-staging-v1",
+    "ANALYSIS_ENGINE_ID": "YaneuraOu NNUE 9.70git 64AVX2",
+    "ANALYSIS_INSTANCE_TYPE": "standard-2"
   }
 }
