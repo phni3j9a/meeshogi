@@ -143,18 +143,21 @@ shot graph-04-release
 
 # 4. A scrub released back at the already-selected index must not navigate.
 tap $((px1 + 4)) "$cy"; sleep 0.6
+dump
 pre_same=$(text_of 'move-counter')
 adb shell input swipe $x20 $cy $((px1 + 6)) $cy 700
 sleep 0.5
+dump
 check graph-release-same-index "$pre_same" "$(text_of 'move-counter')"
 
 # 5. Vertical drag inside the chart cancels the scrub — position must not
-#    move. Whether the page scrolls is recorded as information (the gesture is
-#    consumed as a scrub-cancel over the chart on this build).
+#    move. If the page cannot scroll, compare the same gesture outside the
+#    chart before attributing the lack of movement to the chart.
 before=$(text_of 'move-counter')
 chart_top_before=$(bounds_of 'evaluation-chart' | awk -F'[][ ,]+' '{print $3}')
 adb shell input swipe "$cx" "$cy" "$cx" $((cy - 320)) 650
 sleep 0.8
+dump
 after=$(text_of 'move-counter')
 chart_top_after=$(bounds_of 'evaluation-chart' | awk -F'[][ ,]+' '{print $3}')
 check graph-vertical-no-move "$before" "$after"
@@ -164,6 +167,7 @@ if [[ -n "$chart_top_before" && -n "$chart_top_after" && "$chart_top_after" != "
 fi
 adb shell input swipe "$cx" "$cy" "$cx" $((cy + 320)) 650
 sleep 0.8
+dump
 chart_top_after2=$(bounds_of 'evaluation-chart' | awk -F'[][ ,]+' '{print $3}')
 [[ "$after" == "$(text_of 'move-counter')" ]] || fail graph-vertical-no-move-2 "position moved on second vertical drag"
 if [[ -z "$page_scrolled" && -n "$chart_top_after" && -n "$chart_top_after2" && "$chart_top_after2" != "$chart_top_after" ]]; then
@@ -172,7 +176,19 @@ fi
 if [[ -n "$page_scrolled" ]]; then
   pass graph-vertical-page-scrolled
 else
-  printf 'WARN graph-vertical-page-scroll :: chart top unchanged %s -> %s (vertical drag over chart does not scroll page; scrub cancel verified)\n' "$chart_top_before" "${chart_top_after2:-?}" | tee -a "$results"
+  outside_before=$chart_top_after2
+  outside_x=$((width_px * 95 / 100))
+  adb shell input swipe "$outside_x" "$cy" "$outside_x" $((cy - 320)) 650
+  sleep 0.8
+  dump
+  outside_after=$(bounds_of 'evaluation-chart' | awk -F'[][ ,]+' '{print $3}')
+  if [[ -z "$outside_before" || -z "$outside_after" ]]; then
+    fail graph-vertical-page-scrolled 'could not measure chart position for outside control'
+  elif [[ "$outside_before" != "$outside_after" ]]; then
+    fail graph-vertical-page-scrolled 'outside drag scrolls while chart drag did not'
+  else
+    info graph-vertical-page-scrolled 'neither chart nor outside drag scrolls in this page state'
+  fi
 fi
 shot graph-05-vertical
 
@@ -184,6 +200,7 @@ read -r px1 py1 px2 py2 <<< "$(edges "$plot_bounds")"
 cx=$(( (px1 + px2) / 2 )); cy=$(( (py1 + py2) / 2 ))
 tap "$cx" "$cy"
 sleep 0.7
+dump
 mid=$(text_of 'move-counter')
 [[ "$mid" =~ ^[0-9]+\ /\ 80手$ ]] && pass graph-center-tap || fail graph-center-tap "unexpected counter [$mid]"
 shot graph-06-center-tap
@@ -195,10 +212,10 @@ if exists 'candidate-0'; then
   tap $b
   wait_visible '分岐検討' 10 1 || true
   dump
-  if node_attr '分岐検討' bounds >/dev/null; then pass graph-branch-opened; else fail graph-branch-opened 'branch banner missing'; fi
+  if [[ -n "$(node_attr '分岐検討' bounds)" ]]; then pass graph-branch-opened; else fail graph-branch-opened 'branch banner missing'; fi
   # evaluation-chart may linger in the tree offscreen; only fail if it is
   # actually inside the branch viewport.
-  chart_in_view=$(node_attr 'evaluation-chart' bounds | awk -F'[][ ,]+' -v h="$height_px" '{print ($2 < h && $4 > 0) ? "yes" : "no"}')
+  chart_in_view=$(node_attr 'evaluation-chart' bounds | awk -F'[][ ,]+' -v h="$height_px" '{print ($3 < h && $5 > 0) ? "yes" : "no"}')
   if [[ "$chart_in_view" == yes ]]; then fail graph-branch-no-mainline-chart 'mainline chart visible inside branch'; else pass graph-branch-no-mainline-chart; fi
   shot graph-07-branch
   adb shell input keyevent 4

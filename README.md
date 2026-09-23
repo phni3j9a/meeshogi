@@ -8,7 +8,7 @@
 
 無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)はマージ済みです。Issue #7の解析正しさ修正は[PR #13](https://github.com/phni3j9a/meeshogi/pull/13)で統合済みです。Sekirei v0.3.37を固定し、ResidualMaterial評価、単一合法手の実探索、`meta`/`incomplete`契約、終局表示、identityによる旧キャッシュ除外を追加しています。ログイン・通信・課金は利用条件に含めません。
 
-PR #12では、[棋譜解析画面の改善](docs/design/analysis-refresh.md)と[4種類の駒セット](docs/design/piece-sets.md)を追加しています。最新mainとの統合後のiOS・Android受入検証を進めています。以下は画面変更前の検証記録です。
+PR #12では、[棋譜解析画面の改善](docs/design/analysis-refresh.md)と[4種類の駒セット](docs/design/piece-sets.md)を追加しました。解析正しさ修正を取り込み、Android emulatorとiOS Simulatorの両方で実エンジンのReleaseビルド・起動・主要操作・画面を確認済みです。初回受入で見つかったiOSのグラフ操作と最大文字の表示も修正し、両OSで再受入しました。結果・証拠・未確認事項は[開発状況](docs/DEVELOPMENT.md#pr-12-解析画面と駒セット)に記録しています。
 
 Issue #7の修正では、公開fixtureを使うA/B/C/Dのhost診断に加え、製品コード`6a54ff5`でAndroid emulator・iOS Simulatorの新規ビルド・起動・受入フロー・両OSスクリーンショット目視まで検証済みです（両OSともMaestro 15フロー成功・失敗0。iOSは別検査として書き出しKIFとfixtureのバイト一致も確認）。証拠は `evidence/android-20260922`（run `20260922T203618Z-74028`）と `evidence/ios-20260922`（run `20260922T204527Z-37636`）に保存しています。実機での動作・性能は未検証です。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
 

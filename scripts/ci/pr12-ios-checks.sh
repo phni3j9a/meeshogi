@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# PR #12 native acceptance driver (verification branch only — not part of the
-# shipped suite). Runs the PR-specific Maestro flows against the booted
+# PR #12 native acceptance driver. Runs the PR-specific Maestro flows against the booted
 # simulator the acceptance script selected, records screen video per flow,
 # and captures the settings row from SQLite for the piece-set persistence
 # check. Usage:
