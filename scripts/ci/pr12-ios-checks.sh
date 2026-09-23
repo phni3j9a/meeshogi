@@ -31,7 +31,7 @@ run_flow() {
   xcrun simctl io "$device" recordVideo "$run_dir/$name.mov" > "$run_dir/$name.record.log" 2>&1 &
   record_pid=$!
   local status=0
-  maestro --device "$device" test \
+  "${MAESTRO_BIN:-maestro}" --device "$device" test \
     -e INITIAL_READY_TIMEOUT=180000 -e IMPORT_SAVE_TIMEOUT=120000 \
     --format junit --output "$output/junit.xml" \
     --test-output-dir "$output/test-output" "$flow" || status=$?

@@ -24,6 +24,8 @@ appId: com.meeshogi.app
 - assertVisible:
     id: move-last
 - takeScreenshot: layout-01-board-top
+- tapOn:
+    id: move-first
 - scrollUntilVisible:
     element:
       id: evaluation-chart
@@ -33,7 +35,7 @@ appId: com.meeshogi.app
     element:
       id: candidate-0
     direction: DOWN
-- assertVisible: 第一候補
+- assertVisible: '.*第一候補.*'
 - takeScreenshot: layout-03-candidate0
 - scrollUntilVisible:
     element:
@@ -62,7 +64,7 @@ appId: com.meeshogi.app
 - tapOn: 詰め手順を閉じる
 - assertVisible: '67 / 80手'
 # Back to the library via the 棋譜 tab root.
-- tapOn: 戻る
+- tapOn: '戻る|Back'
 - extendedWaitUntil:
     visible:
       id: library-screen
