@@ -1,7 +1,23 @@
 appId: com.meeshogi.app
 ---
 - launchApp
-- tapOn: '棋譜.*'
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 解析の長さ
+    direction: DOWN
+- tapOn: 解析の長さ
+- tapOn: 長め
+- tapOn:
+    id: tab-games
 - tapOn: '.*KeroPona.*'
 - scrollUntilVisible:
     element:
@@ -15,7 +31,7 @@ appId: com.meeshogi.app
           id: analysis-start
 - extendedWaitUntil:
     visible: 全局解析が完了しました
-    timeout: 240000
+    timeout: 600000
 - takeScreenshot: 10-full-analysis
 # A fresh process must load all computed positions from SQLite.
 - stopApp
@@ -30,7 +46,19 @@ appId: com.meeshogi.app
 - tapOn:
     id: move-prev
     repeat: 13
-    delay: 350
+    delay: 800
+- runFlow:
+    when:
+      visible: '68 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
+- runFlow:
+    when:
+      visible: '66 / 80手'
+    commands:
+      - tapOn:
+          id: move-next
 - assertVisible: '67 / 80手'
 - scrollUntilVisible:
     element:
@@ -43,7 +71,7 @@ appId: com.meeshogi.app
 - tapOn:
     text: 一手進む
     repeat: 3
-    delay: 350
+    delay: 800
 - assertVisible: '3 / 3手'
 - takeScreenshot: 13-mate-completed
 - tapOn: 詰め手順を閉じる
@@ -51,7 +79,19 @@ appId: com.meeshogi.app
 - tapOn:
     id: move-prev
     repeat: 16
-    delay: 350
+    delay: 800
+- runFlow:
+    when:
+      visible: '52 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
+- runFlow:
+    when:
+      visible: '50 / 80手'
+    commands:
+      - tapOn:
+          id: move-next
 - assertVisible: '51 / 80手'
 - tapOn: '後手・1手詰め ›'
 - assertVisible: '0 / 1手'
@@ -95,3 +135,17 @@ appId: com.meeshogi.app
 - stopApp
 - launchApp
 - assertVisible: '.*1手目から再開.*'
+# Leave the shared app state at the default budget for subsequent flows.
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 解析の長さ
+    direction: DOWN
+- tapOn: 解析の長さ
+- tapOn: 標準
+- tapOn:
+    id: tab-games

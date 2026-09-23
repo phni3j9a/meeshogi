@@ -51,10 +51,19 @@ export interface MateProof {
   side: Side;
   pv: string[];
 }
+export interface AnalysisMeta {
+  requestedNodes: number;
+  nodes: number;
+  completedDepth: number;
+  fallback: boolean;
+  budgetReached: boolean;
+}
 export interface PositionAnalysis {
   sfen: string;
   engineId: string;
   modelId: string;
+  status: 'complete';
+  meta: AnalysisMeta;
   conditions: AnalysisConditions;
   /** Every score is normalized to black's perspective. */
   candidates: AnalysisCandidate[];

@@ -6,11 +6,13 @@
 
 ## 状態
 
-無料版の機能実装は[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)で統合済みです。KIFの取り込み・合法手検証、SQLite保存、戦績集計、Sekireiの端末内解析と分岐検討を利用できます。ログイン・通信・課金は利用条件に含めません。
+無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)はマージ済みです。Issue #7の解析正しさ修正は[PR #13](https://github.com/phni3j9a/meeshogi/pull/13)で統合済みです。Sekirei v0.3.37を固定し、ResidualMaterial評価、単一合法手の実探索、`meta`/`incomplete`契約、終局表示、identityによる旧キャッシュ除外を追加しています。ログイン・通信・課金は利用条件に含めません。
 
-2026年9月22日、[棋譜解析画面の改善](docs/design/analysis-refresh.md)と、ChatGPT Imageで生成した[4種類の駒セット](docs/design/piece-sets.md)を追加しました。設定から黄楊・白木・桜木・青磁を選べます。この変更のiOS・Androidネイティブ画面での受入検証は未実施です。以下の過去の受入結果とは区別します。
+PR #12では、[棋譜解析画面の改善](docs/design/analysis-refresh.md)と[4種類の駒セット](docs/design/piece-sets.md)を追加しています。最新mainとの統合後のiOS・Android受入検証を進めています。以下は画面変更前の検証記録です。
 
-Androidは実機での主要操作とCIの全14フローを確認しました。iOSはRelease Simulatorで各ページを撮影して目視し、詳細操作・全テーマ・文字拡大・実機性能の未検証分は継続検証として区別しています。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
+Issue #7の修正では、公開fixtureを使うA/B/C/Dのhost診断に加え、製品コード`6a54ff5`でAndroid emulator・iOS Simulatorの新規ビルド・起動・受入フロー・両OSスクリーンショット目視まで検証済みです（両OSともMaestro 15フロー成功・失敗0。iOSは別検査として書き出しKIFとfixtureのバイト一致も確認）。証拠は `evidence/android-20260922`（run `20260922T203618Z-74028`）と `evidence/ios-20260922`（run `20260922T204527Z-37636`）に保存しています。実機での動作・性能は未検証です。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
+
+全局解析では、native境界で検証済みの初回反復の予算不足だけをその局面の欠測として扱い、後続局面の解析を続けます。処理が最後まで走っても不足が残る場合は解析済み件数と探索量不足の件数を分けて表示し、全局面の有効結果が揃った場合だけ全局解析完了と表示します。不完全な候補は保存せず、再起動後は保存済み結果と欠測だけを表示します。
 
 ## 開発
 
@@ -20,6 +22,7 @@ Node.js 22.23.2、Rust 1.96.0を使用します。JavaScript依存は `package-l
 npm ci
 npm run check
 cargo test --manifest-path native/sekirei/Cargo.toml --locked
+bash scripts/engine/static-eval-cross-check.sh
 ```
 
 ネイティブ解析を含むため、開発用アプリをビルドします。AndroidはJDK 17 / SDK 36 / NDK 27.1.12297006、iOSはmacOS / Xcodeが必要です。`android/` と `ios/` はExpo CNGの生成物として扱います。
@@ -40,7 +43,7 @@ npm run ios
 
 iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインストールします。CIの操作検証と、ビルド済みSimulatorアプリを使う再検証の手順は[開発状況](docs/DEVELOPMENT.md#操作検証の実行)を参照してください。
 
-解析にはsekirei-weightの現行候補 `c-leaf-wrm-seed42` を同梱し、読み込み時にSHA-256を確認します。固定したruntime・モデルの来歴と利用条件は[解析エンジン](docs/ENGINE.md)、戦型の判定条件は[分類ルール](docs/OPENINGS.md)を参照してください。
+解析にはsekirei-weightの現行候補 `c-leaf-wrm-seed42` を同梱し、読み込み時にSHA-256を確認します。固定したruntime・モデルの来歴と利用条件は[解析エンジン](docs/ENGINE.md)、戦型の判定条件は[分類ルール](docs/OPENINGS.md)を参照してください。Issue #7のvariant比較は診断専用の[ハーネス](scripts/diagnostics/README.md)を参照してください。
 
 ## 初期版の体験
 
@@ -54,7 +57,7 @@ iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインス�
 
 ## 開発方針
 
-- iOS・Androidを同時に進める。GitHub Actionsで共通チェック、Devin Cloudの常駐セッションで両OSのビルド・起動・主要操作を検証する。
+- iOS・Androidを同時に進める。GitHub Actionsの`ci.yml`は共通ロジック・型検査・Rustテストを確認し、モバイルのビルド・起動・主要操作はDevin Cloudの各OS受入セッションで別に検証する。
 - `sekirei-weight`は実用的なweightの開発、本リポジトリはモバイル統合とアプリ体験を担当する。
 - モックや固定の解析結果による画面検証と、実エンジンによる解析を区別する。
 - まず無料版の一巡する体験を作る。LLM機能のためのサーバーや課金基盤を先行実装しない。
@@ -65,6 +68,7 @@ iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインス�
 - [採用した9画面とデザイン基準](docs/design/README.md)
 - [構成方針と未決事項](docs/ARCHITECTURE.md)
 - [実装順序と両OSの検証](docs/DEVELOPMENT.md)
+- [Issue #7エンジン診断ハーネス](scripts/diagnostics/README.md)
 - [棋譜サンプルと取り込み期待値](fixtures/kif/README.md)
 - [Codex向け作業指示](AGENTS.md)
 

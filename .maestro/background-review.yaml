@@ -25,11 +25,12 @@ appId: com.meeshogi.app
     element:
       text: '以前のモデル・解析条件の結果が.*'
     direction: DOWN
+- assertVisible: '以前のモデル・解析条件の結果が.*'
 - scrollUntilVisible:
     element:
       id: analysis-status
     direction: DOWN
-- assertVisible: この棋譜は未解析です
+- assertVisible: '解析済み .* / 81局面'
 - takeScreenshot: 34-changed-analysis-conditions
 - tapOn:
     id: analysis-start

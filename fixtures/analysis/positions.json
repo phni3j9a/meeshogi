@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "provenance": {
+    "kind": "synthetic-public-sfen",
+    "privateRecords": false,
+    "playerNames": false,
+    "sequence": {
+      "start": "sequence-start",
+      "moves": ["3b4a+", "5a6a", "7h7a+"],
+      "generator": "Sekirei v0.3.37 legal move generation"
+    }
+  },
+  "positions": [
+    {
+      "id": "single-reply",
+      "sfen": "4k+S3/9/1N1BB4/9/9/9/9/2L6/4K4 w LP 2",
+      "purpose": "one legal move must enter normal search",
+      "expected": {"legalMoves": 1, "bestMove": "5a6a", "nodesPositive": true}
+    },
+    {
+      "id": "sequence-start",
+      "sfen": "4k4/6S2/1N1BB4/9/9/9/9/2L6/4K4 b LP 1",
+      "purpose": "first position of the public synthetic continuous-check sequence",
+      "expected": {"terminal": null, "statusAtAdequateBudget": "complete"}
+    },
+    {
+      "id": "sequence-after-first",
+      "sfen": "4k+S3/9/1N1BB4/9/9/9/9/2L6/4K4 w LP 2",
+      "appliedMoves": ["3b4a+"],
+      "purpose": "single-reply position reached after the first checking move",
+      "expected": {"legalMoves": 1, "statusAtAdequateBudget": "complete"}
+    },
+    {
+      "id": "sequence-after-reply",
+      "sfen": "3k1+S3/9/1N1BB4/9/9/9/9/2L6/4K4 b LP 3",
+      "appliedMoves": ["3b4a+", "5a6a"],
+      "purpose": "next checking position; no mate-to-CP-to-mate oscillation",
+      "expected": {"terminal": null, "statusAtAdequateBudget": "complete"}
+    },
+    {
+      "id": "sequence-terminal",
+      "sfen": "2+Lk1+S3/9/1N1BB4/9/9/9/9/9/4K4 w LP 4",
+      "appliedMoves": ["3b4a+", "5a6a", "7h7a+"],
+      "purpose": "terminal position reached by the public synthetic sequence",
+      "expected": {"legalMoves": 0, "terminal": "checkmate", "status": "complete"}
+    },
+    {
+      "id": "checkmate-white",
+      "sfen": "2+Lk1+S3/9/1N1BB4/9/9/9/9/9/4K4 w LP 4",
+      "purpose": "checkmate with white to move",
+      "expected": {"legalMoves": 0, "terminal": "checkmate", "status": "complete"}
+    },
+    {
+      "id": "checkmate-black",
+      "sfen": "2+lK1+s3/9/1n1bb4/9/9/9/9/9/4k4 b lp 4",
+      "purpose": "color-swapped checkmate with black to move",
+      "expected": {"legalMoves": 0, "terminal": "checkmate", "status": "complete"}
+    },
+    {
+      "id": "no-legal-moves",
+      "sfen": "k8/9/9/9/9/2nn1nn2/9/3p1p3/4K4 b - 1",
+      "purpose": "no legal moves without check is a distinct terminal result",
+      "expected": {"legalMoves": 0, "terminal": "no-legal-moves", "status": "complete"}
+    },
+    {
+      "id": "non-mate-startpos",
+      "sfen": "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+      "purpose": "ordinary non-terminal position",
+      "expected": {"legalMoves": 30, "terminal": null, "statusAtAdequateBudget": "complete"}
+    },
+    {
+      "id": "multipv-remaining-two",
+      "sfen": "k8/9/9/9/9/9/9/8r/4K4 b - 1",
+      "purpose": "MultiPV 3 with only two legal moves",
+      "expected": {"legalMoves": 2, "requestedMultiPV": 3, "candidateCount": 2}
+    },
+    {
+      "id": "tiny-budget",
+      "sfen": "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+      "purpose": "first MultiPV iteration is interrupted by a one-node budget",
+      "expected": {"requestedNodes": 1, "requestedMultiPV": 3, "status": "incomplete", "fallback": true}
+    }
+  ]
+}

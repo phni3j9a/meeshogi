@@ -26,10 +26,12 @@ import { errorMessage, useChoice } from '@/ui/use-choice';
 import {
   formatEvaluation,
   isDisplayableMateProof,
+  resolveCurrentEvaluation,
   toEvaluationChartValue,
   toEvaluationValue,
 } from '@/ui/evaluation';
 import { currentGameAnalysis, isCompatibleAnalysis } from '@/analysis/cache';
+import { analysisJobProcessed, partialAnalysisMessage } from '@/store/analysis-job';
 
 type Branch = { origin: number; positions: string[]; moves: string[]; cursor: number };
 
@@ -106,7 +108,8 @@ export default function GameScreen() {
         : null;
   const candidates =
     currentAnalysis?.candidates.filter((candidate) => validMoves.includes(candidate.usi)) ?? [];
-  const currentEvaluation = toEvaluationValue(candidates[0]);
+  const displayAnalysis = currentAnalysis ? { ...currentAnalysis, candidates } : currentAnalysis;
+  const currentEvaluation = resolveCurrentEvaluation(displayAnalysis);
   const bottomSide: Side = flipped
     ? game?.mySide === 'white'
       ? 'black'
@@ -291,6 +294,8 @@ export default function GameScreen() {
   const completed = mainlineAnalysis.filter(Boolean).length;
   const fullyAnalyzed = completed >= game.positions.length;
   const previousResults = Object.keys(game.analysis).length - completed;
+  const processed = job ? analysisJobProcessed(job) : completed;
+  const partial = job?.status === 'partial';
   const lastMove = branch
     ? branch.cursor > 0
       ? branch.moves[branch.cursor - 1]
@@ -307,7 +312,8 @@ export default function GameScreen() {
     currentEvaluation.kind === 'missing'
       ? theme.muted
       : currentEvaluation.kind === 'white-mate' ||
-          (currentEvaluation.kind === 'centipawn' && currentEvaluation.value < 0)
+          ((currentEvaluation.kind === 'centipawn' || currentEvaluation.kind === 'checkmate') &&
+            currentEvaluation.value < 0)
         ? theme.loss
         : theme.win;
   const statusLabel = branch
@@ -316,17 +322,19 @@ export default function GameScreen() {
       : currentAnalysis
         ? '分岐の解析結果'
         : '分岐は未解析'
-    : fullyAnalyzed
-      ? '全局解析が完了しました'
-      : job?.status === 'running'
-        ? `解析中 ${completed} / ${job.total}局面`
-        : job?.status === 'paused'
-          ? `解析を停止中 ${completed} / ${job.total}局面`
-          : job?.status === 'error'
-            ? '解析を再開できます'
-            : completed
-              ? `${completed}局面を解析済み`
-              : 'この棋譜は未解析です';
+    : partial
+      ? '解析処理が終了しました'
+      : fullyAnalyzed
+        ? '全局解析が完了しました'
+        : job?.status === 'running'
+          ? `解析中 ${processed} / ${job.total}局面`
+          : job?.status === 'paused'
+            ? `解析を停止中 ${processed} / ${job.total}局面`
+            : job?.status === 'error'
+              ? '解析を再開できます'
+              : completed
+                ? `解析済み ${completed} / ${game.positions.length}局面`
+                : 'この棋譜は未解析です';
   return (
     <View
       style={{ flex: 1, backgroundColor: theme.background, paddingBottom: insets.bottom }}
@@ -429,8 +437,17 @@ export default function GameScreen() {
               <View style={styles.evaluationMetric}>
                 <AppText
                   selectable
+                  testID="current-evaluation"
                   accessibilityLabel={`先手視点の評価値 ${formatEvaluation(currentEvaluation)}`}
-                  style={[styles.evaluationValue, { color: evaluationColor }]}
+                  style={[
+                    styles.evaluationValue,
+                    { color: evaluationColor },
+                    currentEvaluation.kind === 'checkmate' && {
+                      fontSize: 17,
+                      lineHeight: 24,
+                      flexShrink: 1,
+                    },
+                  ]}
                 >
                   {formatEvaluation(currentEvaluation)}
                 </AppText>
@@ -490,10 +507,10 @@ export default function GameScreen() {
             {!branch && (
               <LineChart
                 values={mainlineAnalysis.map((result) =>
-                  toEvaluationChartValue(toEvaluationValue(result?.candidates[0])),
+                  toEvaluationChartValue(resolveCurrentEvaluation(result)),
                 )}
                 valueLabels={mainlineAnalysis.map((result) => {
-                  const evaluation = toEvaluationValue(result?.candidates[0]);
+                  const evaluation = resolveCurrentEvaluation(result);
                   return evaluation.kind === 'missing' ? '未解析' : formatEvaluation(evaluation);
                 })}
                 selected={ply}
@@ -718,6 +735,7 @@ export default function GameScreen() {
             </View>
           )}
           <View style={[styles.analysisActions, { borderColor: theme.border }]}>
+            {!branch && partial && job && <Notice text={partialAnalysisMessage(job)} />}
             {!branch && previousResults > 0 && (
               <Notice
                 text={`以前のモデル・解析条件の結果が${previousResults}局面あります。現在の設定で解析し直せます。`}
@@ -746,7 +764,7 @@ export default function GameScreen() {
               <View
                 accessibilityRole="progressbar"
                 accessibilityLabel="全局解析の進捗"
-                accessibilityValue={{ now: completed, min: 0, max: job.total }}
+                accessibilityValue={{ now: processed, min: 0, max: job.total }}
                 style={[styles.progressTrack, { backgroundColor: theme.inset }]}
               >
                 <View
@@ -754,7 +772,7 @@ export default function GameScreen() {
                     styles.progressFill,
                     {
                       backgroundColor: theme.win,
-                      width: `${job.total ? (completed / job.total) * 100 : 0}%`,
+                      width: `${job.total ? (processed / job.total) * 100 : 0}%`,
                     },
                   ]}
                 />
@@ -771,7 +789,13 @@ export default function GameScreen() {
                   />
                 ) : (
                   <TextButton
-                    label={fullyAnalyzed ? '解析済み' : completed ? '解析を再開' : '解析する'}
+                    label={
+                      fullyAnalyzed
+                        ? '解析済み'
+                        : completed || (job?.budgetShortfallPlies.length ?? 0) > 0
+                          ? '解析を再開'
+                          : '解析する'
+                    }
                     disabled={fullyAnalyzed}
                     testID="analysis-start"
                     onPress={() => void startAnalysis(id).catch((e) => setError(errorMessage(e)))}

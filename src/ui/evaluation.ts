@@ -1,14 +1,22 @@
-import type { AnalysisCandidate, MateProof, Side } from '../domain/model';
+import { CURRENT_ANALYSIS_IDENTITY } from '../analysis/identity';
+import { isValidAnalysisMeta } from '../analysis/meta';
+import type { AnalysisCandidate, MateProof, PositionAnalysis, Side } from '../domain/model';
 
 export type EvaluationValue =
   | { kind: 'centipawn'; value: number }
   | { kind: 'black-mate'; plies: number }
   | { kind: 'white-mate'; plies: number }
+  | { kind: 'checkmate'; value: number; winner: Side }
   | { kind: 'missing' };
 
 export type EvaluationSource = Pick<AnalysisCandidate, 'scoreCp' | 'mate'> | null | undefined;
 
 export const EVALUATION_CHART_EDGE = 1500;
+
+function sideToMove(sfen: string): Side | undefined {
+  const side = sfen.trim().split(/\s+/u)[1];
+  return side === 'b' ? 'black' : side === 'w' ? 'white' : undefined;
+}
 
 function isFiniteNumber(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -37,6 +45,8 @@ export function formatEvaluation(value: EvaluationValue): string {
       return `+M${value.plies}`;
     case 'white-mate':
       return `-M${value.plies}`;
+    case 'checkmate':
+      return `${value.winner === 'black' ? '先手勝ち' : '後手勝ち'}・詰み終局`;
     case 'missing':
       return '—';
   }
@@ -50,9 +60,46 @@ export function toEvaluationChartValue(value: EvaluationValue): number | null {
       return EVALUATION_CHART_EDGE;
     case 'white-mate':
       return -EVALUATION_CHART_EDGE;
+    case 'checkmate':
+      return value.value;
     case 'missing':
       return null;
   }
+}
+
+/**
+ * Resolve the current-position display value from one complete analysis.
+ *
+ * This intentionally takes the whole result so terminal summaries cannot be
+ * confused with an ordinary candidate score.  Stored results from a previous
+ * engine/model identity are kept for migration-free loading but are not
+ * displayable here.
+ */
+export function resolveCurrentEvaluation(
+  analysis: PositionAnalysis | null | undefined,
+): EvaluationValue {
+  if (!analysis) return { kind: 'missing' };
+  if (analysis.status !== 'complete' || !isValidAnalysisMeta(analysis.meta, analysis.conditions)) {
+    return { kind: 'missing' };
+  }
+  if (
+    analysis.engineId !== CURRENT_ANALYSIS_IDENTITY.engineId ||
+    analysis.modelId !== CURRENT_ANALYSIS_IDENTITY.modelId
+  ) {
+    return { kind: 'missing' };
+  }
+  if (analysis.terminal === 'no-legal-moves') return { kind: 'missing' };
+  if (analysis.terminal === 'checkmate') {
+    const side = sideToMove(analysis.sfen);
+    if (!side) return { kind: 'missing' };
+    const winner: Side = side === 'white' ? 'black' : 'white';
+    return {
+      kind: 'checkmate',
+      value: winner === 'black' ? EVALUATION_CHART_EDGE : -EVALUATION_CHART_EDGE,
+      winner,
+    };
+  }
+  return toEvaluationValue(analysis.candidates[0]);
 }
 
 export function isDisplayableMateProof(

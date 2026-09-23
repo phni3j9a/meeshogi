@@ -14,14 +14,8 @@ import {
 import { inferAttribution, sameGameOccasion, sameRecordedGame } from '../domain';
 import type { LocalRepository } from '../storage/repository';
 import { isCompatibleAnalysis } from '../analysis/cache';
-
-type AnalysisJob = {
-  gameId: string;
-  status: 'running' | 'paused' | 'error';
-  completed: number;
-  total: number;
-  error?: string;
-};
+import { AnalysisBudgetIncompleteError } from '../analysis/errors';
+import type { AnalysisJob } from './analysis-job';
 type ImportOptions = {
   service: Service;
   mySide?: Side | null;
@@ -59,12 +53,11 @@ export interface AppState {
   analyzePosition(sfen: string): Promise<PositionAnalysis>;
   clearError(): void;
 }
+export type { AnalysisJob } from './analysis-job';
 interface Dependencies {
   openRepository(): Promise<LocalRepository>;
   analyze(sfen: string, conditions: AnalysisConditions): Promise<PositionAnalysis>;
   cancel(): void | Promise<void>;
-  engineId: string;
-  modelId: string;
   createId(): string;
 }
 export function makeAppStore(deps: Dependencies) {
@@ -268,56 +261,77 @@ export function makeAppStore(deps: Dependencies) {
         if (!game) return;
         const conditions = { nodes: get().settings.analysisNodes, multiPV: get().settings.multiPV };
         const reusable = (a: PositionAnalysis | undefined, sfen: string) =>
-          isCompatibleAnalysis(a, sfen, conditions, deps);
+          isCompatibleAnalysis(a, sfen, conditions);
         let completed = game.positions.filter((sfen, ply) =>
           reusable(game.analysis[ply], sfen),
         ).length;
-        set({
-          analysisJob: { gameId: id, status: 'running', completed, total: game.positions.length },
+        const budgetShortfallPlies: number[] = [];
+        const makeJob = (status: AnalysisJob['status'], error?: string): AnalysisJob => ({
+          gameId: id,
+          status,
+          completed,
+          total: game.positions.length,
+          budgetShortfallPlies: [...budgetShortfallPlies],
+          ...(error === undefined ? {} : { error }),
         });
+        const isCurrentRun = () => {
+          const current = get().games.find((item) => item.id === id);
+          return (
+            run === generation &&
+            !!current &&
+            get().settings.analysisNodes === conditions.nodes &&
+            get().settings.multiPV === conditions.multiPV
+          );
+        };
+        set({ analysisJob: makeJob('running') });
         try {
           for (const [ply, sfen] of game.positions.entries()) {
-            if (run !== generation) return;
+            if (!isCurrentRun()) return;
             const current = get().games.find((g) => g.id === id);
             if (!current) return;
             if (reusable(current.analysis[ply], sfen)) continue;
-            const result = await engine(async () => {
-              if (run !== generation) throw new Error('解析を停止しました。');
-              return deps.analyze(sfen, conditions);
-            });
-            if (run !== generation) return;
+            let result: PositionAnalysis;
+            try {
+              result = await engine(async () => {
+                if (!isCurrentRun()) throw new Error('解析を停止しました。');
+                return deps.analyze(sfen, conditions);
+              });
+            } catch (error) {
+              if (!(error instanceof AnalysisBudgetIncompleteError)) throw error;
+              // A budget shortfall is recoverable only for the still-current
+              // run.  Cancellation, settings changes, deletion, and another
+              // job must invalidate this response before it changes state.
+              if (!isCurrentRun()) return;
+              budgetShortfallPlies.push(ply);
+              set({ analysisJob: makeJob('running') });
+              continue;
+            }
+            if (!isCurrentRun()) return;
             if (!reusable(result, sfen))
               throw new Error('解析結果の局面・モデル・条件が一致しません。');
             await write(async () => {
-              if (run !== generation) return;
+              if (!isCurrentRun()) return;
               const latest = get().games.find((g) => g.id === id);
               if (!latest) return;
               const next = { ...latest, analysis: { ...latest.analysis, [ply]: result } };
               await repo().save(next);
               replaceGame(next);
             });
-            if (run !== generation) return;
+            if (!isCurrentRun()) return;
             completed++;
-            set({
-              analysisJob: {
-                gameId: id,
-                status: 'running',
-                completed,
-                total: game.positions.length,
-              },
-            });
+            set({ analysisJob: makeJob('running') });
           }
-          if (run === generation) set({ analysisJob: null });
+          if (!isCurrentRun()) return;
+          set({
+            analysisJob: budgetShortfallPlies.length ? makeJob('partial') : null,
+          });
         } catch (error) {
-          if (run === generation)
+          if (isCurrentRun())
             set({
-              analysisJob: {
-                gameId: id,
-                status: 'error',
-                completed,
-                total: game.positions.length,
-                error: error instanceof Error ? error.message : '解析に失敗しました。',
-              },
+              analysisJob: makeJob(
+                'error',
+                error instanceof Error ? error.message : '解析に失敗しました。',
+              ),
             });
         }
       },
@@ -337,7 +351,7 @@ export function makeAppStore(deps: Dependencies) {
             return deps.analyze(sfen, conditions);
           });
           if (focus !== focusGeneration) throw new Error('局面の解析を中止しました。');
-          if (!isCompatibleAnalysis(result, sfen, conditions, deps))
+          if (!isCompatibleAnalysis(result, sfen, conditions))
             throw new Error('解析結果の局面・モデル・条件が一致しません。');
           return result;
         } finally {

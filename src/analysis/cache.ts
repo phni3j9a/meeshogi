@@ -1,17 +1,19 @@
 import type { AnalysisConditions, GameRecord, PositionAnalysis } from '../domain/model';
 import { CURRENT_ANALYSIS_IDENTITY } from './identity';
+import { isValidAnalysisMeta } from './meta';
 
 export function isCompatibleAnalysis(
   analysis: PositionAnalysis | null | undefined,
   sfen: string,
   conditions: AnalysisConditions,
-  identity = CURRENT_ANALYSIS_IDENTITY,
 ): analysis is PositionAnalysis {
   return (
     !!analysis &&
+    analysis.status === 'complete' &&
+    isValidAnalysisMeta(analysis.meta, analysis.conditions) &&
     analysis.sfen === sfen &&
-    analysis.engineId === identity.engineId &&
-    analysis.modelId === identity.modelId &&
+    analysis.engineId === CURRENT_ANALYSIS_IDENTITY.engineId &&
+    analysis.modelId === CURRENT_ANALYSIS_IDENTITY.modelId &&
     analysis.conditions.nodes === conditions.nodes &&
     analysis.conditions.multiPV === conditions.multiPV
   );
@@ -21,11 +23,8 @@ export function isCompatibleAnalysis(
 export function currentGameAnalysis(
   game: Pick<GameRecord, 'positions' | 'analysis'>,
   conditions: AnalysisConditions,
-  identity = CURRENT_ANALYSIS_IDENTITY,
 ): (PositionAnalysis | null)[] {
   return game.positions.map((sfen, ply) =>
-    isCompatibleAnalysis(game.analysis[ply], sfen, conditions, identity)
-      ? game.analysis[ply]
-      : null,
+    isCompatibleAnalysis(game.analysis[ply], sfen, conditions) ? game.analysis[ply] : null,
   );
 }

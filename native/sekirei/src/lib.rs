@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use sekirei_core::board::Board;
 use sekirei_core::color::Color;
+use sekirei_core::eval::{self, NnueOutputMode};
 use sekirei_core::movegen::{generate_legal_moves, is_in_check};
 use sekirei_core::mv::Move;
 use sekirei_core::nnue;
@@ -23,7 +24,7 @@ use sekirei_core::tt::Tt;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-pub const ENGINE_ID: &str = "sekirei-v0.3.36@aeb6ea30d58f93cad84ffe98bc13441feb807fa8";
+pub const ENGINE_ID: &str = "sekirei-v0.3.37@7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac+meeshogi-analysis-v2+eval-material1-nnue1-bias0-clip0";
 pub const MODEL_ID: &str =
     "c-leaf-wrm-seed42@807c18da03521414a8c75dfe51dd4de2caf8e9ec4909320826eac12b66852eab";
 const MODEL_SHA256: &str = "807c18da03521414a8c75dfe51dd4de2caf8e9ec4909320826eac12b66852eab";
@@ -61,11 +62,22 @@ struct NativeAnalysis {
     sfen: String,
     engine_id: &'static str,
     model_id: &'static str,
+    meta: AnalysisMeta,
     nodes: u64,
     depth: u32,
     candidates: Vec<NativeCandidate>,
     terminal: Option<&'static str>,
     mate_proof: Option<MateProofOutput>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisMeta {
+    requested_nodes: u64,
+    nodes: u64,
+    completed_depth: u32,
+    fallback: bool,
+    budget_reached: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -271,6 +283,10 @@ pub fn initialize_model(path: &Path) -> Result<(), String> {
     // The process-global loader is intentional. It prevents a background
     // position from changing evaluation weights while a foreground search is
     // still using them.
+    // Select the research configuration before the model becomes active. The
+    // mode is process-global in Sekirei, so it is deliberately set once at
+    // initialization and never changed while a position is being searched.
+    eval::set_nnue_output_mode(NnueOutputMode::ResidualMaterial);
     nnue::load_weights(path).map_err(|error| format!("cannot activate model: {error}"))?;
     state.replace(ModelIdentity {
         path: path.to_path_buf(),
@@ -498,6 +514,18 @@ fn proof_output(result: ProofResult, side: Color) -> MateProofOutput {
     }
 }
 
+fn terminal_kind(board: &mut Board) -> Option<&'static str> {
+    if !generate_legal_moves(board).is_empty() {
+        return None;
+    }
+    let side_to_move = board.side_to_move;
+    Some(if is_in_check(board, side_to_move) {
+        "checkmate"
+    } else {
+        "no-legal-moves"
+    })
+}
+
 fn analyze_position(
     sfen: &str,
     nodes: u64,
@@ -529,6 +557,45 @@ fn analyze_position(
     // taking the serial lock so a cancelled request cannot poison the next
     // position queued by the app.
     CANCEL_REQUESTED.store(false, Ordering::Relaxed);
+
+    let mut legal_board = initial.clone();
+    let legal_moves = generate_legal_moves(&mut legal_board);
+    let terminal = if legal_moves.is_empty() {
+        terminal_kind(&mut legal_board)
+    } else {
+        None
+    };
+
+    // A terminal position is a complete result even though no iterative
+    // search depth can be completed. Keep this path explicit so a depth-zero
+    // checkmate is not mistaken for a tiny-budget fallback.
+    if let Some(terminal) = terminal {
+        if request_was_cancelled(request_id) {
+            CANCEL_REQUESTED.store(false, Ordering::Relaxed);
+            return Err("analysis cancelled".to_string());
+        }
+        let output = NativeAnalysis {
+            status: "complete",
+            sfen: sfen.to_string(),
+            engine_id: ENGINE_ID,
+            model_id: MODEL_ID,
+            meta: AnalysisMeta {
+                requested_nodes: nodes,
+                nodes: 0,
+                completed_depth: 0,
+                fallback: false,
+                budget_reached: false,
+            },
+            nodes: 0,
+            depth: 0,
+            candidates: Vec::new(),
+            terminal: Some(terminal),
+            mate_proof: None,
+        };
+        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
+        return Ok(output);
+    }
+
     // The app intentionally runs one Rayon worker and disables speculative
     // prefetch (top_n=0). It keeps memory and scheduling deterministic on both
     // mobile platforms while retaining the core's MultiPV implementation.
@@ -568,14 +635,41 @@ fn analyze_position(
         return Err("analysis cancelled".to_string());
     }
 
-    let mut candidates = Vec::with_capacity(info.pv_list.len());
-    let lines = if info.pv_list.is_empty() {
+    let expected_candidates = (multi_pv as usize).min(legal_moves.len());
+    let mut lines = if info.pv_list.is_empty() {
         info.best_move
+            .filter(|mv| legal_moves.contains(mv))
             .map(|mv| vec![(mv, info.score)])
-            .unwrap_or_default()
+            .unwrap_or_else(|| {
+                legal_moves
+                    .first()
+                    .copied()
+                    .map(|mv| vec![(mv, info.score)])
+                    .unwrap_or_default()
+            })
     } else {
         info.pv_list.clone()
     };
+    lines.retain(|(mv, _)| legal_moves.contains(mv));
+    let mut seen = Vec::with_capacity(lines.len());
+    lines.retain(|(mv, _)| {
+        if seen.contains(mv) {
+            false
+        } else {
+            seen.push(*mv);
+            true
+        }
+    });
+    lines.truncate(expected_candidates);
+
+    let completed_iteration = info.depth > 0 && lines.len() == expected_candidates;
+    let fallback = info.depth == 0 && !lines.is_empty();
+    let status = if completed_iteration {
+        "complete"
+    } else {
+        "incomplete"
+    };
+    let mut candidates = Vec::with_capacity(lines.len());
     for (mv, score) in lines {
         let score_cp = if score.abs() >= MATE_THRESHOLD {
             None
@@ -608,22 +702,6 @@ fn analyze_position(
     } else {
         None
     };
-    let terminal = if candidates.is_empty() {
-        let mut terminal_board = initial.clone();
-        let no_legal_moves = generate_legal_moves(&mut terminal_board).is_empty();
-        if no_legal_moves {
-            let side_to_move = terminal_board.side_to_move;
-            Some(if is_in_check(&mut terminal_board, side_to_move) {
-                "checkmate"
-            } else {
-                "no-legal-moves"
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
     // The proof path above checks cancellation while it runs, but terminal
     // positions do not need a proof. Check once more before publishing any
     // result so a request arriving during PV/terminal assembly is never saved.
@@ -634,14 +712,21 @@ fn analyze_position(
     }
     set_active_abort(request_id, None);
     let output = NativeAnalysis {
-        status: "complete",
+        status,
         sfen: sfen.to_string(),
         engine_id: ENGINE_ID,
         model_id: MODEL_ID,
+        meta: AnalysisMeta {
+            requested_nodes: nodes,
+            nodes: info.nodes,
+            completed_depth: info.depth,
+            fallback,
+            budget_reached: info.nodes >= nodes,
+        },
         nodes: info.nodes,
         depth: info.depth,
         candidates,
-        terminal,
+        terminal: None,
         mate_proof,
     };
     CANCEL_REQUESTED.store(false, Ordering::Relaxed);
@@ -824,6 +909,32 @@ mod tests {
         default_model_path()
     }
 
+    const SINGLE_REPLY_SFEN: &str = "4k+S3/9/1N1BB4/9/9/9/9/2L6/4K4 w LP 2";
+    const MATE_SEQUENCE_START_SFEN: &str = "4k4/6S2/1N1BB4/9/9/9/9/2L6/4K4 b LP 1";
+    const MATE_SEQUENCE_AFTER_FIRST_SFEN: &str = "4k+S3/9/1N1BB4/9/9/9/9/2L6/4K4 w LP 2";
+    const MATE_SEQUENCE_AFTER_REPLY_SFEN: &str = "3k1+S3/9/1N1BB4/9/9/9/9/2L6/4K4 b LP 3";
+    const MATE_SEQUENCE_TERMINAL_SFEN: &str = "2+Lk1+S3/9/1N1BB4/9/9/9/9/9/4K4 w LP 4";
+    const BLACK_CHECKMATE_SFEN: &str = "2+lK1+s3/9/1n1bb4/9/9/9/9/9/4k4 b lp 4";
+    const NO_LEGAL_MOVES_SFEN: &str = "k8/9/9/9/9/2nn1nn2/9/3p1p3/4K4 b - 1";
+    const MULTI_PV_TWO_LEGAL_SFEN: &str = "k8/9/9/9/9/9/9/8r/4K4 b - 1";
+
+    fn analyze_loaded(sfen: &str, nodes: u64, multi_pv: u32) -> NativeAnalysis {
+        analyze_position(sfen, nodes, multi_pv, prepare_request()).expect("analysis must succeed")
+    }
+
+    fn assert_candidate_pv_is_legal(sfen: &str, candidate: &NativeCandidate) {
+        let mut board = Board::from_sfen(sfen).expect("fixture SFEN");
+        for usi in &candidate.pv {
+            let mv = sekirei_core::sfen::move_from_usi(usi, &board)
+                .unwrap_or_else(|_| panic!("candidate PV contains invalid USI {usi}"));
+            assert!(
+                legal_move(&mut board, mv),
+                "candidate PV contains illegal {usi}"
+            );
+            board.do_move(mv);
+        }
+    }
+
     #[test]
     fn model_manifest_is_exact_when_present() {
         let path = model_path();
@@ -832,6 +943,21 @@ mod tests {
         }
         let digest = validate_model_file(&path).expect("the bundled model must be valid");
         assert_eq!(digest, MODEL_SHA256);
+    }
+
+    #[test]
+    fn invalid_model_bytes_fail_closed() {
+        assert!(validate_model_bytes(b"not-a-model").is_err());
+        let mut wrong_magic = vec![0u8; MODEL_SIZE];
+        wrong_magic[..8].copy_from_slice(b"BADMAGIC");
+        assert!(validate_model_bytes(&wrong_magic).is_err());
+    }
+
+    #[test]
+    fn initialization_selects_residual_material_mode() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        assert_eq!(eval::nnue_output_mode(), NnueOutputMode::ResidualMaterial);
     }
 
     #[test]
@@ -975,6 +1101,226 @@ mod tests {
         cancel(request_id);
         let result = search.join().expect("search thread");
         assert!(matches!(result, Err(error) if error == "analysis cancelled"));
+    }
+
+    #[test]
+    fn single_legal_move_runs_a_real_search_and_returns_a_child_result() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        let result = analyze_loaded(SINGLE_REPLY_SFEN, 10_000, 1);
+
+        assert_eq!(result.status, "complete");
+        assert_eq!(result.terminal, None);
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].usi, "5a6a");
+        assert!(
+            result.nodes > 0,
+            "single legal move must enter normal search"
+        );
+        assert!(result.depth > 0);
+        assert_eq!(result.meta.nodes, result.nodes);
+        assert_eq!(result.meta.completed_depth, result.depth);
+        assert!(!result.meta.fallback);
+        assert_candidate_pv_is_legal(SINGLE_REPLY_SFEN, &result.candidates[0]);
+    }
+
+    #[test]
+    fn successful_json_exposes_the_versioned_meta_contract() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        let result = analyze_loaded(SINGLE_REPLY_SFEN, 10_000, 1);
+        let json = serde_json::to_value(&result).expect("serialize analysis");
+        assert_eq!(json["engineId"], ENGINE_ID);
+        assert_eq!(json["meta"]["requestedNodes"], 10_000);
+        assert_eq!(json["meta"]["nodes"], result.nodes);
+        assert_eq!(json["meta"]["completedDepth"], result.depth);
+        assert!(json["meta"]["fallback"].is_boolean());
+        assert!(json["meta"]["budgetReached"].is_boolean());
+    }
+
+    #[test]
+    fn complete_result_keeps_all_requested_multipv_lines_when_only_two_moves_exist() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        let mut board = Board::from_sfen(MULTI_PV_TWO_LEGAL_SFEN).expect("fixture SFEN");
+        assert_eq!(generate_legal_moves(&mut board).len(), 2);
+
+        let result = analyze_loaded(MULTI_PV_TWO_LEGAL_SFEN, 100_000, 3);
+        assert_eq!(result.status, "complete");
+        assert_eq!(result.candidates.len(), 2);
+        assert!(result.candidates[0].usi != result.candidates[1].usi);
+        for candidate in &result.candidates {
+            assert_candidate_pv_is_legal(MULTI_PV_TWO_LEGAL_SFEN, candidate);
+        }
+    }
+
+    #[test]
+    fn first_iteration_budget_exhaustion_is_incomplete_with_a_legal_fallback() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        let result = analyze_loaded(
+            "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+            1,
+            3,
+        );
+
+        assert_eq!(result.status, "incomplete");
+        assert_eq!(result.depth, 0);
+        assert_eq!(result.meta.completed_depth, 0);
+        assert!(result.meta.fallback);
+        assert!(result.meta.budget_reached);
+        assert!(!result.candidates.is_empty());
+        assert_candidate_pv_is_legal(
+            "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+            &result.candidates[0],
+        );
+    }
+
+    #[test]
+    fn completed_multipv_snapshot_survives_later_budget_exhaustion() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+
+        let mut baseline_board = Board::startpos();
+        let baseline = SpeculativeSearcher::new(Tt::new(TT_SIZE_MB), 0).search(
+            &mut baseline_board,
+            SearchConfig {
+                max_depth: 1,
+                time_limit: None,
+                node_limit: None,
+                soft_limit: None,
+                multi_pv: 3,
+            },
+        );
+        assert_eq!(baseline.depth, 1);
+        assert_eq!(baseline.pv_list.len(), 3);
+
+        let result = analyze_loaded(
+            "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+            baseline.nodes + 30,
+            3,
+        );
+        assert_eq!(result.status, "complete");
+        assert_eq!(result.candidates.len(), 3);
+        assert!(result.meta.completed_depth >= 1);
+        assert!(result.meta.budget_reached);
+        assert_eq!(result.meta.nodes, result.nodes);
+    }
+
+    #[test]
+    fn continuous_check_sequence_does_not_oscillate_between_mate_and_cp() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+
+        for sfen in [
+            MATE_SEQUENCE_START_SFEN,
+            MATE_SEQUENCE_AFTER_FIRST_SFEN,
+            MATE_SEQUENCE_AFTER_REPLY_SFEN,
+        ] {
+            let result = analyze_loaded(sfen, 100_000, 1);
+            assert_eq!(result.status, "complete", "{sfen}");
+            assert_eq!(result.candidates.len(), 1, "{sfen}");
+            assert!(result.candidates[0].mate.is_some(), "{sfen}");
+            assert!(result.candidates[0].score_cp.is_none(), "{sfen}");
+            assert_candidate_pv_is_legal(sfen, &result.candidates[0]);
+        }
+    }
+
+    #[test]
+    fn terminal_positions_are_complete_for_both_sides_without_candidates() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+
+        for (sfen, expected_side, expected_terminal) in [
+            (MATE_SEQUENCE_TERMINAL_SFEN, Color::White, "checkmate"),
+            (BLACK_CHECKMATE_SFEN, Color::Black, "checkmate"),
+            (NO_LEGAL_MOVES_SFEN, Color::Black, "no-legal-moves"),
+        ] {
+            let mut board = Board::from_sfen(sfen).expect("terminal fixture");
+            assert_eq!(board.side_to_move, expected_side, "{sfen}");
+            assert!(generate_legal_moves(&mut board).is_empty(), "{sfen}");
+            let result = analyze_loaded(sfen, 1, 3);
+            assert_eq!(result.status, "complete", "{sfen}");
+            assert_eq!(result.terminal, Some(expected_terminal), "{sfen}");
+            assert!(result.candidates.is_empty(), "{sfen}");
+            assert_eq!(result.nodes, 0, "{sfen}");
+            assert_eq!(result.depth, 0, "{sfen}");
+            assert!(!result.meta.fallback, "{sfen}");
+            assert!(!result.meta.budget_reached, "{sfen}");
+        }
+    }
+
+    #[test]
+    fn non_mate_position_is_not_reported_as_terminal() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        let sfen = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1";
+        let result = analyze_loaded(sfen, 10_000, 1);
+
+        assert_eq!(result.status, "complete");
+        assert_eq!(result.terminal, None);
+        assert_eq!(result.candidates.len(), 1);
+        assert!(result.nodes > 0);
+    }
+
+    #[test]
+    fn residual_material_static_eval_matches_reference_values() {
+        let _guard = ANALYSIS_TEST_MUTEX.lock().expect("analysis test lock");
+        initialize_model(&model_path()).expect("load local model");
+        let weights = nnue::read_weights(&model_path()).expect("read local model");
+        let cases = [
+            (
+                "startpos",
+                "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+                0,
+                -35,
+                -35,
+                -35,
+            ),
+            ("single-reply", SINGLE_REPLY_SFEN, -3850, 461, -3389, 3389),
+            (
+                "mate-sequence-start",
+                MATE_SEQUENCE_START_SFEN,
+                3850,
+                -184,
+                3666,
+                3666,
+            ),
+            (
+                "mate-sequence-after-reply",
+                MATE_SEQUENCE_AFTER_REPLY_SFEN,
+                3850,
+                -184,
+                3666,
+                3666,
+            ),
+        ];
+
+        for (name, sfen, material, nnue, combined, sente) in cases {
+            let board = Board::from_sfen(sfen).expect("static-eval SFEN");
+            assert_eq!(eval::material_score(&board), material, "material: {name}");
+            assert_eq!(
+                eval::evaluate_with_weights(&board, &weights),
+                nnue,
+                "raw NNUE: {name}"
+            );
+            assert_eq!(
+                eval::evaluate_with_weights_mode(
+                    &board,
+                    &weights,
+                    NnueOutputMode::ResidualMaterial,
+                ),
+                combined,
+                "combined: {name}"
+            );
+            assert_eq!(eval::evaluate(&board), combined, "active mode: {name}");
+            let sente_value = if board.side_to_move == Color::Black {
+                combined
+            } else {
+                -combined
+            };
+            assert_eq!(sente_value, sente, "sente perspective: {name}");
+        }
     }
 
     #[test]
