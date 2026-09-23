@@ -12,9 +12,10 @@ appId: com.meeshogi.app
     timeout: 30000
 - scrollUntilVisible:
     element:
-      text: 解析の長さ
+      text: '.*解析の長さ.*'
     direction: DOWN
-- tapOn: 解析の長さ
+- tapOn:
+    text: '.*解析の長さ.*'
 - tapOn: 長め
 - tapOn:
     id: tab-games
@@ -143,9 +144,10 @@ appId: com.meeshogi.app
     timeout: 30000
 - scrollUntilVisible:
     element:
-      text: 解析の長さ
+      text: '.*解析の長さ.*'
     direction: DOWN
-- tapOn: 解析の長さ
+- tapOn:
+    text: '.*解析の長さ.*'
 - tapOn: 標準
 - tapOn:
     id: tab-games

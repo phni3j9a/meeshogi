@@ -4,6 +4,10 @@ appId: com.meeshogi.app
 - tapOn: '棋譜.*'
 - tapOn: '.*KeroPona.*'
 - tapOn: 棋譜の操作
+# The in-app action sheet slides up; wait for it to settle so the
+# following item tap hits final coordinates instead of the board beneath.
+- waitForAnimationToEnd
+- takeScreenshot: menu-settle-export-review-1
 - tapOn: KIFを書き出す
 - takeScreenshot: 33-system-share
 - runFlow:

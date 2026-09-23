@@ -13,9 +13,10 @@ appId: com.meeshogi.app
     timeout: 30000
 - scrollUntilVisible:
     element:
-      text: 解析の長さ
+      text: '.*解析の長さ.*'
     direction: DOWN
-- tapOn: 解析の長さ
+- tapOn:
+    text: '.*解析の長さ.*'
 - tapOn: 標準
 - tapOn:
     id: tab-games
@@ -58,11 +59,16 @@ appId: com.meeshogi.app
       - tapOn:
           id: move-next
 - assertVisible: '41 / 80手'
+# The evaluation value is exposed as the grouped label '先手視点の評価値 —';
+# match it through the row id plus a contains-pattern (bare '—' never matches
+# a composite accessibility label).
 - scrollUntilVisible:
     element:
-      text: '—'
+      id: current-evaluation
     direction: UP
-- assertVisible: '—'
+- assertVisible:
+    id: current-evaluation
+    text: '.*—.*'
 - assertNotVisible:
     id: candidate-0
 - assertVisible: 下の解析ボタンから候補手を確認できます。
@@ -75,7 +81,7 @@ appId: com.meeshogi.app
     direction: DOWN
 - assertVisible:
     id: analysis-start
-- assertVisible: 解析を再開
+- assertVisible: '.*解析を再開'
 - tapOn:
     id: analysis-start
     waitToSettleTimeoutMs: 500

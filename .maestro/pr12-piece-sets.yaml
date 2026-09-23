@@ -1,0 +1,406 @@
+# PR #12 native acceptance — generated piece sets (黄楊/白木/桜木/青磁).
+# Preconditions left by the full suite: the KeroPona game is imported and
+# analyzed at 標準 (ply 41 is the known budget-shortfall gap), the theme is
+# dark, and player names are configured. Each set is verified through the
+# picker preview, the board, captured pieces in hand, board flip, and the
+# mate-sequence screen; the final set is then checked across a process
+# restart (SQLite persistence).
+appId: com.meeshogi.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+# Keep the game pushed on the 対局 stack; switching to the 設定 tab keeps
+# its screen (and ply) mounted.
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- takeScreenshot: 60-board-tsuge-dark
+
+# ==== 白木 (shiraki) ====
+- tapOn: '^戻る$|^Back$'
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: piece-sets-link
+    direction: DOWN
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- takeScreenshot: 61-piece-sets-picker-dark
+- tapOn:
+    id: piece-set-shiraki
+- takeScreenshot: 62-picker-shiraki-selected-dark
+- tapOn: '設定|Back'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+# The settings row composite ('駒セット, 白木, Forward') proves the selection
+# was applied; the picker's own 選択中 marker is not reliably exposed to a11y.
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 白木.*'
+    direction: UP
+- assertVisible: '.*駒セット, 白木.*'
+- scrollUntilVisible:
+    element:
+      text: '.*表示テーマ.*'
+    direction: DOWN
+- tapOn:
+    text: '.*表示テーマ.*'
+- tapOn: ライト
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 800
+- assertVisible: '67 / 80手'
+- takeScreenshot: 63-board-shiraki-light
+- tapOn:
+    id: board-flip
+- takeScreenshot: 64-board-shiraki-light-flipped
+- tapOn:
+    id: board-flip
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- tapOn: '後手・3手詰め ›'
+- assertVisible: '0 / 3手'
+- takeScreenshot: 65-mate-sequence-shiraki-light
+- tapOn: 詰め手順を閉じる
+- assertVisible: '67 / 80手'
+- tapOn: '^戻る$|^Back$'
+- tapOn: '設定.*'
+- scrollUntilVisible:
+    element:
+      text: '.*表示テーマ.*'
+    direction: DOWN
+- tapOn:
+    text: '.*表示テーマ.*'
+- tapOn: ダーク
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- takeScreenshot: 66-board-shiraki-dark
+- tapOn:
+    id: board-flip
+- takeScreenshot: 67-board-shiraki-dark-flipped
+- tapOn:
+    id: board-flip
+
+# ==== 桜木 (sakura) ====
+- tapOn: '^戻る$|^Back$'
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: piece-sets-link
+    direction: DOWN
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- takeScreenshot: 68-piece-sets-picker-dark-sakura
+- tapOn:
+    id: piece-set-sakura
+- takeScreenshot: 71-picker-sakura-selected-dark
+- tapOn: '設定|Back'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 桜木.*'
+    direction: UP
+- assertVisible: '.*駒セット, 桜木.*'
+- scrollUntilVisible:
+    element:
+      text: '.*表示テーマ.*'
+    direction: DOWN
+- tapOn:
+    text: '.*表示テーマ.*'
+- tapOn: ライト
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- assertVisible: '67 / 80手'
+- takeScreenshot: 69-board-sakura-light
+- tapOn:
+    id: board-flip
+- takeScreenshot: 70-board-sakura-light-flipped
+- tapOn:
+    id: board-flip
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- tapOn: '後手・3手詰め ›'
+- assertVisible: '0 / 3手'
+- takeScreenshot: 71-mate-sequence-sakura-light
+- tapOn: 詰め手順を閉じる
+- assertVisible: '67 / 80手'
+- tapOn: '^戻る$|^Back$'
+- tapOn: '設定.*'
+- scrollUntilVisible:
+    element:
+      text: '.*表示テーマ.*'
+    direction: DOWN
+- tapOn:
+    text: '.*表示テーマ.*'
+- tapOn: ダーク
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- takeScreenshot: 72-board-sakura-dark
+- tapOn:
+    id: board-flip
+- takeScreenshot: 73-board-sakura-dark-flipped
+- tapOn:
+    id: board-flip
+
+# ==== 青磁 (seiji) — the set kept for the persistence check ====
+- tapOn: '^戻る$|^Back$'
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: piece-sets-link
+    direction: DOWN
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: piece-set-seiji
+    direction: DOWN
+- tapOn:
+    id: piece-set-seiji
+- takeScreenshot: 78-picker-seiji-selected-dark
+- tapOn: '設定|Back'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 青磁.*'
+    direction: UP
+- assertVisible: '.*駒セット, 青磁.*'
+- scrollUntilVisible:
+    element:
+      text: '.*表示テーマ.*'
+    direction: DOWN
+- tapOn:
+    text: '.*表示テーマ.*'
+- tapOn: ライト
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- assertVisible: '67 / 80手'
+- takeScreenshot: 75-board-seiji-light
+- tapOn:
+    id: board-flip
+- takeScreenshot: 76-board-seiji-light-flipped
+- tapOn:
+    id: board-flip
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- tapOn: '後手・3手詰め ›'
+- assertVisible: '0 / 3手'
+- takeScreenshot: 77-mate-sequence-seiji-light
+- tapOn: 詰め手順を閉じる
+- assertVisible: '67 / 80手'
+- tapOn: '^戻る$|^Back$'
+- tapOn: '設定.*'
+- scrollUntilVisible:
+    element:
+      text: '.*表示テーマ.*'
+    direction: DOWN
+- tapOn:
+    text: '.*表示テーマ.*'
+- tapOn: ダーク
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- takeScreenshot: 78-board-seiji-dark
+- tapOn:
+    id: board-flip
+- takeScreenshot: 79-board-seiji-dark-flipped
+- tapOn:
+    id: board-flip
+
+# ==== Persistence: kill + relaunch must keep 青磁 (SQLite settings row) ====
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 60000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 13
+    delay: 800
+- assertVisible: '67 / 80手'
+- takeScreenshot: 80-board-seiji-after-relaunch-dark
+# Persistence is proven through the settings row (backed by the SQLite
+# settings payload); the picker shot keeps the visual 選択中 evidence.
+- tapOn: '^戻る$|^Back$'
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 青磁.*'
+    direction: UP
+- assertVisible: '.*駒セット, 青磁.*'
+- scrollUntilVisible:
+    element:
+      id: piece-sets-link
+    direction: DOWN
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: piece-set-seiji
+    direction: DOWN
+- takeScreenshot: 81-picker-seiji-persisted-dark
+
+# ==== Restore 黄楊 + light; the game must stay intact afterwards ====
+- tapOn:
+    id: piece-set-tsuge
+- takeScreenshot: 82-picker-tsuge-selected-dark
+- tapOn: '設定|Back'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 黄楊.*'
+    direction: UP
+- assertVisible: '.*駒セット, 黄楊.*'
+- scrollUntilVisible:
+    element:
+      text: '.*表示テーマ.*'
+    direction: DOWN
+- tapOn:
+    text: '.*表示テーマ.*'
+- tapOn: ライト
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: board-flip
+    timeout: 30000
+- assertVisible: '67 / 80手'
+- takeScreenshot: 82-board-tsuge-light
+- tapOn:
+    id: board-flip
+- takeScreenshot: 83-board-tsuge-light-flipped
+- tapOn:
+    id: board-flip
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- tapOn: '後手・3手詰め ›'
+- assertVisible: '0 / 3手'
+- takeScreenshot: 84-mate-sequence-tsuge-light
+- tapOn: 詰め手順を閉じる
+- assertVisible: '67 / 80手'
+# The record and the partial-analysis state must be intact after set swaps.
+- tapOn:
+    id: move-last
+- scrollUntilVisible:
+    element:
+      id: analysis-tab-record
+    direction: DOWN
+- tapOn:
+    id: analysis-tab-record
+- assertVisible: '.*６八角打.*'
+- takeScreenshot: 85-record-intact-tsuge-light

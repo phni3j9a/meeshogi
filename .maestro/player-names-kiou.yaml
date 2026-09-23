@@ -15,7 +15,8 @@ appId: com.meeshogi.app
     text: 'Allow Paste|ペーストを許可'
     optional: true
 - assertVisible: '.*シシ神.*'
-- hideKeyboard
+# See player-names.yaml: neutral-tap keyboard dismissal instead of hideKeyboard.
+- tapOn: 棋譜で使う名前
 - takeScreenshot: 08-player-names-both-services
 - tapOn:
     id: names-save

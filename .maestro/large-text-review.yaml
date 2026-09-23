@@ -23,10 +23,14 @@ appId: com.meeshogi.app
     direction: DOWN
 - takeScreenshot: 40-large-analysis
 - tapOn: 棋譜の操作
+# The in-app action sheet slides up; wait for it to settle so the
+# following item tap hits final coordinates instead of the board beneath.
+- waitForAnimationToEnd
+- takeScreenshot: menu-settle-large-text-review-1
 - tapOn: 対局情報を確認・修正
 - scrollUntilVisible:
     element:
-      text: 後手の戦型
+      text: '.*後手の戦型.*'
     direction: DOWN
 - takeScreenshot: 41-large-game-info
 - stopApp

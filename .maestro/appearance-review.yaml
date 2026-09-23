@@ -15,9 +15,10 @@ env:
 - tapOn: '設定.*'
 - scrollUntilVisible:
     element:
-      text: 表示テーマ
+      text: '.*表示テーマ.*'
     direction: DOWN
-- tapOn: 表示テーマ
+- tapOn:
+    text: '.*表示テーマ.*'
 - tapOn: ${APPEARANCE_LABEL}
 - takeScreenshot: 25-${SHOT_PREFIX}-settings
 - scrollUntilVisible:

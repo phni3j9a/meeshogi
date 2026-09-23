@@ -12,15 +12,18 @@ appId: com.meeshogi.app
     file: subflows/pick-kif.yaml
     env:
       KIF_FILE: kiou.kif
+      KIF_ICON_X: 50%
+      KIF_ICON_Y: 29%
 - assertVisible: '.*77手の棋譜を読み取りました.*'
 - swipe:
     start: 95%, 85%
     end: 95%, 30%
 - scrollUntilVisible:
     element:
-      text: サービス
+      text: '.*サービス.*'
     direction: DOWN
-- tapOn: サービス
+- tapOn:
+    text: '.*サービス.*'
 - tapOn: 棋桜
 - scrollUntilVisible:
     element:
@@ -63,6 +66,8 @@ appId: com.meeshogi.app
     file: subflows/pick-kif.yaml
     env:
       KIF_FILE: kiou-shift-jis.kif
+      KIF_ICON_X: 18%
+      KIF_ICON_Y: 29%
 - assertVisible: '.*77手の棋譜を読み取りました.*'
 - swipe:
     start: 95%, 85%

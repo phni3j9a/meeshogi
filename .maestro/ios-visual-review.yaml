@@ -72,6 +72,10 @@ appId: com.meeshogi.app
       id: game-screen
     timeout: 30000
 - tapOn: 棋譜の操作
+# The in-app action sheet slides up; wait for it to settle so the
+# following item tap hits final coordinates instead of the board beneath.
+- waitForAnimationToEnd
+- takeScreenshot: menu-settle-ios-visual-review-1
 - tapOn: 対局情報を確認・修正
 - extendedWaitUntil:
     visible: '.*対局日時.*'
