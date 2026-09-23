@@ -19,7 +19,16 @@ appId: com.meeshogi.app
 - takeScreenshot: menu-settle-management-review-2
 - assertVisible: お気に入りを解除
 - takeScreenshot: 19b-favorite-applied
-- tapOn: キャンセル
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: キャンセル
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - pressKey: Back
 - stopApp
 - launchApp
 - tapOn: お気に入り

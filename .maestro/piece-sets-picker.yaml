@@ -1,0 +1,104 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# PR #12: settings > 盤面と操作 > 駒セット picker.
+# Requires a saved KeroPona game from the main acceptance suite.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: piece-sets-link
+    direction: DOWN
+- takeScreenshot: 60-settings-piece-sets-row
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- assertVisible:
+    id: piece-set-tsuge
+- assertVisible:
+    id: piece-set-shiraki
+- assertVisible:
+    id: piece-set-sakura
+- assertVisible:
+    id: piece-set-seiji
+- assertVisible: 選択中
+- takeScreenshot: 61-piece-sets-picker-light
+# The default set must be selected before any change.
+- assertVisible:
+    id: piece-set-tsuge
+    checked: true
+- scrollUntilVisible:
+    element:
+      id: piece-set-seiji
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: 62-piece-sets-picker-bottom
+# Switch to 白木 and confirm the selection marker moves.
+- tapOn:
+    id: piece-set-shiraki
+- extendedWaitUntil:
+    visible:
+      id: piece-set-shiraki
+      checked: true
+    timeout: 30000
+- takeScreenshot: 63-piece-sets-shiraki-selected
+# Dark theme picker must keep the same four cards and selection.
+- pressKey: Back
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 表示テーマ
+    direction: DOWN
+- tapOn: 表示テーマ
+- tapOn: ダーク
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- assertVisible:
+    id: piece-set-shiraki
+    checked: true
+- takeScreenshot: 64-piece-sets-picker-dark
+# Restore light theme and the default set for the board checks.
+- pressKey: Back
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: 表示テーマ
+    direction: DOWN
+- tapOn: 表示テーマ
+- tapOn: ライト
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- tapOn:
+    id: piece-set-tsuge
+- extendedWaitUntil:
+    visible:
+      id: piece-set-tsuge
+      checked: true
+    timeout: 30000
+- takeScreenshot: 65-piece-sets-restored

@@ -1,0 +1,90 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# PR #12: a selected piece set is written to the SQLite settings row and must
+# survive a process kill, and the record + analysis must remain intact.
+# Requires the saved KeroPona game from the main acceptance suite.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- runFlow:
+    file: subflows/select-set.yaml
+    env:
+      SET_ID: piece-set-seiji
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+# Board, analysis graph and playback must be intact under the persisted set.
+- assertVisible:
+    id: board
+- scrollUntilVisible:
+    element:
+      id: evaluation-chart
+    direction: DOWN
+- assertVisible:
+    id: evaluation-chart
+- takeScreenshot: 80-persisted-seiji-light
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- assertVisible:
+    id: analysis-status
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 5
+    delay: 500
+- assertVisible: '75 / 80手'
+- tapOn:
+    id: move-first
+- pressKey: Back
+# The picker must report the persisted selection, then restore the default.
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: piece-sets-link
+    direction: DOWN
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- assertVisible:
+    id: piece-set-seiji
+    checked: true
+- takeScreenshot: 81-persisted-picker-seiji
+- tapOn:
+    id: piece-set-tsuge
+- extendedWaitUntil:
+    visible:
+      id: piece-set-tsuge
+      checked: true
+    timeout: 30000
+- pressKey: Back
+# Return to the light theme for the remaining checks.
+- scrollUntilVisible:
+    element:
+      text: 表示テーマ
+    direction: DOWN
+- tapOn: 表示テーマ
+- tapOn: ライト
+- tapOn:
+    id: tab-games
