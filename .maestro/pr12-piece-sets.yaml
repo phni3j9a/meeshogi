@@ -40,19 +40,19 @@ appId: com.meeshogi.app
 - takeScreenshot: 61-piece-sets-picker-dark
 - tapOn:
     id: piece-set-shiraki
-- extendedWaitUntil:
-    visible: 選択中
-    timeout: 15000
-- scrollUntilVisible:
-    element:
-      id: piece-set-seiji
-    direction: DOWN
-- takeScreenshot: 62-picker-shiraki-bottom-dark
-- tapOn: '設定'
+- takeScreenshot: 62-picker-shiraki-selected-dark
+- tapOn: '設定|Back'
 - extendedWaitUntil:
     visible:
       id: settings-screen
     timeout: 30000
+# The settings row composite ('駒セット, 白木, Forward') proves the selection
+# was applied; the picker's own 選択中 marker is not reliably exposed to a11y.
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 白木.*'
+    direction: UP
+- assertVisible: '.*駒セット, 白木.*'
 - scrollUntilVisible:
     element:
       text: '.*表示テーマ.*'
@@ -124,14 +124,17 @@ appId: com.meeshogi.app
 - takeScreenshot: 68-piece-sets-picker-dark-sakura
 - tapOn:
     id: piece-set-sakura
-- extendedWaitUntil:
-    visible: 選択中
-    timeout: 15000
-- tapOn: '設定'
+- takeScreenshot: 71-picker-sakura-selected-dark
+- tapOn: '設定|Back'
 - extendedWaitUntil:
     visible:
       id: settings-screen
     timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 桜木.*'
+    direction: UP
+- assertVisible: '.*駒セット, 桜木.*'
 - scrollUntilVisible:
     element:
       text: '.*表示テーマ.*'
@@ -200,15 +203,17 @@ appId: com.meeshogi.app
     direction: DOWN
 - tapOn:
     id: piece-set-seiji
-- extendedWaitUntil:
-    visible: 選択中
-    timeout: 15000
-- takeScreenshot: 74-picker-seiji-selected-dark
-- tapOn: '設定'
+- takeScreenshot: 78-picker-seiji-selected-dark
+- tapOn: '設定|Back'
 - extendedWaitUntil:
     visible:
       id: settings-screen
     timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 青磁.*'
+    direction: UP
+- assertVisible: '.*駒セット, 青磁.*'
 - scrollUntilVisible:
     element:
       text: '.*表示テーマ.*'
@@ -275,12 +280,18 @@ appId: com.meeshogi.app
     delay: 800
 - assertVisible: '67 / 80手'
 - takeScreenshot: 80-board-seiji-after-relaunch-dark
-# Reopen the picker to confirm the persisted selection marker.
+# Persistence is proven through the settings row (backed by the SQLite
+# settings payload); the picker shot keeps the visual 選択中 evidence.
 - tapOn: '設定.*'
 - extendedWaitUntil:
     visible:
       id: settings-screen
     timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 青磁.*'
+    direction: UP
+- assertVisible: '.*駒セット, 青磁.*'
 - scrollUntilVisible:
     element:
       id: piece-sets-link
@@ -295,20 +306,22 @@ appId: com.meeshogi.app
     element:
       id: piece-set-seiji
     direction: DOWN
-- assertVisible: 選択中
 - takeScreenshot: 81-picker-seiji-persisted-dark
 
 # ==== Restore 黄楊 + light; the game must stay intact afterwards ====
 - tapOn:
     id: piece-set-tsuge
-- extendedWaitUntil:
-    visible: 選択中
-    timeout: 15000
-- tapOn: '設定'
+- takeScreenshot: 82-picker-tsuge-selected-dark
+- tapOn: '設定|Back'
 - extendedWaitUntil:
     visible:
       id: settings-screen
     timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*駒セット, 黄楊.*'
+    direction: UP
+- assertVisible: '.*駒セット, 黄楊.*'
 - scrollUntilVisible:
     element:
       text: '.*表示テーマ.*'

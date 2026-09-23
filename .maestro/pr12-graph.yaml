@@ -73,6 +73,11 @@ appId: com.meeshogi.app
     point: 'PLY67_X, CHART_Y'
 - assertVisible: '67 / 80手'
 - takeScreenshot: 96-graph-mate-threat-ply67
+- scrollUntilVisible:
+    element:
+      text: '後手・3手詰め ›'
+    direction: UP
+- assertVisible: '後手・3手詰め ›'
 
 # Branch vs mainline separation: inside a candidate branch the mainline
 # chart is not rendered at all.
@@ -80,20 +85,14 @@ appId: com.meeshogi.app
     id: move-first
 - scrollUntilVisible:
     element:
-      id: square-2g
-    direction: UP
+      id: candidate-0
+    direction: DOWN
 - tapOn:
-    id: square-2g
-- tapOn:
-    id: square-2f
+    id: candidate-0
 - assertVisible: 分岐検討
 - assertNotVisible:
     id: evaluation-chart
 - takeScreenshot: 97-branch-no-chart
-- scrollUntilVisible:
-    element:
-      text: 本譜に戻る
-    direction: UP
 - tapOn: 本譜に戻る
 - assertVisible: '0 / 80手'
 - scrollUntilVisible:
