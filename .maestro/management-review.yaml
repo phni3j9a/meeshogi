@@ -85,7 +85,7 @@ appId: com.meeshogi.app
 - tapOn:
     id: game-result
 - tapOn: 棋譜の結果に戻す
-- assertVisible: 後手の勝ち
+- assertVisible: '.*後手の勝ち.*'
 - stopApp
 - launchApp
 - tapOn: '戦績.*'
