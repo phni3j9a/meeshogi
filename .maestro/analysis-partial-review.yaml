@@ -31,10 +31,18 @@ appId: com.meeshogi.app
 - tapOn:
     id: analysis-start
     waitToSettleTimeoutMs: 500
+# In the refreshed layout the 'analysis-status' label sits below the fold;
+# wait on the visible completion paragraph instead (same 'analysis ended'
+# semantics: it only renders once a partial run finishes).
 - extendedWaitUntil:
-    visible: 解析処理が終了しました
+    visible: '.*局面を解析済み、.*局面は探索量不足です.*'
     timeout: 600000
 - assertVisible: '.*局面を解析済み、.*局面は探索量不足です.*'
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- assertVisible: 解析処理が終了しました
 - assertNotVisible: 全局解析が完了しました
 - takeScreenshot: 51-partial-analysis
 
@@ -80,9 +88,14 @@ appId: com.meeshogi.app
     id: analysis-start
     waitToSettleTimeoutMs: 500
 - extendedWaitUntil:
-    visible: 解析処理が終了しました
+    visible: '.*局面を解析済み、.*局面は探索量不足です.*'
     timeout: 600000
 - assertVisible: '.*局面を解析済み、.*局面は探索量不足です.*'
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- assertVisible: 解析処理が終了しました
 - assertNotVisible: 全局解析が完了しました
 - assertNotVisible: 解析を再開できます
 - assertNotVisible: '解析に失敗しました。もう一度解析できます。'

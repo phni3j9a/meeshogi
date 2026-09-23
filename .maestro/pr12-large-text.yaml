@@ -1,0 +1,70 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# OS font_scale is raised by the runner; verify the refreshed analysis screen,
+# graph, candidates and piece-set picker under OS text scaling.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- takeScreenshot: 90-large-library-pr12
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- takeScreenshot: 91-large-game-top
+- scrollUntilVisible:
+    element:
+      id: evaluation-chart
+    direction: DOWN
+- takeScreenshot: 92-large-chart
+- assertVisible:
+    id: move-counter
+- scrollUntilVisible:
+    element:
+      id: candidate-0
+    direction: DOWN
+- takeScreenshot: 93-large-candidates
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- takeScreenshot: 94-large-analysis-footer
+- pressKey: Back
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 30000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: piece-sets-link
+    direction: DOWN
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- takeScreenshot: 95-large-piece-sets
+- scrollUntilVisible:
+    element:
+      id: piece-set-seiji
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: 96-large-piece-sets-bottom
+- pressKey: Back
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- tapOn:
+    id: tab-games
+- takeScreenshot: 97-large-after-return

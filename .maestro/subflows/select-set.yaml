@@ -1,0 +1,36 @@
+appId: com.meeshogi.app
+---
+# Helper: open the piece-set picker, select ${SET_ID}, and return to the library.
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: piece-sets-link
+    direction: DOWN
+- tapOn:
+    id: piece-sets-link
+- extendedWaitUntil:
+    visible:
+      id: piece-sets-screen
+    timeout: 30000
+- tapOn:
+    id: ${SET_ID}
+- extendedWaitUntil:
+    visible:
+      id: ${SET_ID}
+      checked: true
+    timeout: 30000
+- pressKey: Back
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- tapOn:
+    id: tab-games
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 30000

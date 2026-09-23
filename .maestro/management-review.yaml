@@ -5,6 +5,11 @@ appId: com.meeshogi.app
 - tapOn: '.*KeroPona.*'
 - tapOn: 棋譜の操作
 - tapOn: お気に入りに追加
+# The favorite write is async; reopen the menu and confirm the label flipped
+# so the state is provably registered before the process is stopped.
+- tapOn: 棋譜の操作
+- assertVisible: お気に入りを解除
+- pressKey: Back
 - stopApp
 - launchApp
 - tapOn: お気に入り
