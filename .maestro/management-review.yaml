@@ -55,9 +55,9 @@ appId: com.meeshogi.app
 - takeScreenshot: 22-draw-excluded-from-win-rate
 - scrollUntilVisible:
     element:
-      text: 四間飛車
+      text: '.*四間飛車.*'
     direction: DOWN
-- tapOn: 四間飛車
+- tapOn: '.*四間飛車.*'
 - takeScreenshot: 23-opening-detail
 # Restore the original result. Opening overrides remain intentionally visible.
 - stopApp
