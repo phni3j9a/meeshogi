@@ -2,7 +2,7 @@
 
 ## Current status
 
-The deployed staging image runs contract v3: the fixed-SFEN gate, single-legal-move and `middlegame-150` probes, and the selected-profile re-runs on the original fixture set all pass — see [Post-fix verification](#post-fix-verification-2026-09-23-image-sha25684599cdf-contract-v3). The W3 async job backend is now implemented in this checkout and binds the already-created staging D1 database and Queues. Its migration, principal seed, deployment, and live fault-injection checks remain for Main. Production resources remain absent; on-device analysis remains in the app during evaluation.
+The deployed staging image runs contract v3: the fixed-SFEN gate, single-legal-move and `middlegame-150` probes, and the selected-profile re-runs on the original fixture set all pass — see [Post-fix verification](#post-fix-verification-2026-09-23-image-sha25684599cdf-contract-v3). The W3 async job backend is now implemented in this checkout and binds the already-created staging D1 database and Queues. The migration, principals, deployment, and live API verification are done — see [Live W3 verification](#live-w3-verification-2026-09-23-version-9910c162--standard-2-resting-config). Production resources remain absent; on-device analysis remains in the app during evaluation.
 
 The cloud path is an evaluation stage. The app's on-device analysis remains in place until the fixed-SFEN gate, cloud benchmark, and both iOS and Android acceptance complete. Cloud connectivity is not a condition for local game management or analysis during migration.
 
@@ -49,7 +49,25 @@ cd cloud
 npx wrangler d1 migrations apply meeshogi-analysis-staging-db --remote --config wrangler.staging.jsonc
 ```
 
-The config's DO migration `v2` creates `JobCoordinator` during the authorized staging deploy. Tests use only `wrangler.test.jsonc`, an ephemeral local D1/Queue namespace, and a synthetic service binding; they never target staging resources. The assignment's live evidence still outstanding for Main includes remote migration/deployment and principal seeding, live Queue/Container fault injection, the five-second comparison, and a full-game cost observation. The local fake-engine tests do not establish those results.
+The config's DO migration `v2` creates `JobCoordinator` during the authorized staging deploy. Tests use only `wrangler.test.jsonc`, an ephemeral local D1/Queue namespace, and a synthetic service binding; they never target staging resources. The local fake-engine tests do not establish live Cloudflare results — the verified live state is recorded below.
+
+### Live W3 verification (2026-09-23, version `9910c162` / standard-2 resting config)
+
+Migration `0001_init.sql` applied to the remote D1; two principals seeded (`staging-main` with precision, `staging-free-only` free-only; tokens live only outside Git). Observed on the deployed Worker:
+
+- End-to-end: POST job (3 positions, free-v1) → `queued` → `running` → `completed` in ~8 s; committed contract-v3 results (initial position depth 21, `engineBestmove=2g2f`); per-position cost ledger ~$0.00053 each.
+- Idempotency: same key+payload → `duplicate:true`, original jobId; same key different payload → `409`.
+- Authz: no token → `401`; cross-owner GET → `404`; free-only principal + `precision-v1` → `precision_not_enabled`; revoked path enforced by flag.
+- Cancel: 12-position job cancelled mid-run → `cancelled` with 2 committed results preserved, rest pending.
+- Deploy churn: worker redeployed mid-job → the 12-position precision job still completed 12/12 with zero failures (queue redelivery/recovery held).
+- Cache: identical job resubmitted → all positions `cached:true`, `$0` cost, identical results — and a `precision-v1` resubmit on a different SFEN executed for real on the `standard-3` deployment (`cached:false`, cost ledger charged). Note: instance type is intentionally not part of the cache key.
+- Kill switch: `POST /v1/internal/kill {mode:"admission"}` → new jobs refused `503 admission_disabled`; `DELETE` restored admission.
+- Quota: fifth free job of the UTC day admitted, sixth POST → `daily_quota_exceeded`.
+- Paging: `limit=4` pages returned stable position indexes 0–3 then 4–7 with `nextCursor`.
+
+Not exercised live: true engine timeout/hang injection (no SSH/instance-delete on this account — synthetic driver tests cover kill/restart), Queue retry→DLQ path, and the 6-POST/min window (the per-owner/global active-job and quota gates reject first by design).
+
+The 5-second comparison required by AC5 completed earlier on both instance types: `cloud/bench/results/ref5s-standard-2` and `ref5s-standard-3`, each 36/36 warm HTTP 200 on the original 12 fixtures (3 warm each) plus 3 cold samples — including `middlegame-150` at 5 s on both types, further contradicting the earlier deterministic-hang claim.
 
 ## Private artifact build and deploy
 
