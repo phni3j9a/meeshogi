@@ -4,6 +4,9 @@ appId: com.meeshogi.app
 - tapOn: '棋譜.*'
 - tapOn: '.*KeroPona.*'
 - tapOn: 棋譜の操作
+# The in-app action sheet slides up; wait for it to settle so the
+# following item tap hits final coordinates instead of the board beneath.
+- waitForAnimationToEnd
 - tapOn: お気に入りに追加
 - stopApp
 - launchApp
@@ -12,6 +15,9 @@ appId: com.meeshogi.app
 - takeScreenshot: 20-favorite
 - tapOn: '.*KeroPona.*'
 - tapOn: 棋譜の操作
+# The in-app action sheet slides up; wait for it to settle so the
+# following item tap hits final coordinates instead of the board beneath.
+- waitForAnimationToEnd
 - tapOn: 対局情報を確認・修正
 - scrollUntilVisible:
     element:
@@ -58,6 +64,9 @@ appId: com.meeshogi.app
 - launchApp
 - tapOn: '.*KeroPona.*'
 - tapOn: 棋譜の操作
+# The in-app action sheet slides up; wait for it to settle so the
+# following item tap hits final coordinates instead of the board beneath.
+- waitForAnimationToEnd
 - tapOn: 対局情報を確認・修正
 - tapOn:
     id: game-result
