@@ -20,3 +20,4 @@ Runs: suite `20260923T141103Z-23840`, PR12 extras `20260923T143118Z-34182`, manu
   - `sc-*.png` — edge taps, mid-drag readout, release, cancel
   - `mate-large-*.png` — mate.tsx counter under font_scale 1.3
   - `results.txt`, `results-extra.txt` — numeric measurements
+- `evidence/graph-check-v2/` — updated android-graph-check.sh @ 99a70dd rerun on the same ba6c6df install: results.txt (9 PASS / 2 INFO), graph-01..07 PNGs, ui.xml

@@ -102,5 +102,15 @@
     "No product bugs found on ba6c6df; all acceptance criteria pass",
     "WARN graph-vertical-page-scroll is a test-position condition, not a product defect",
     "mate.tsx counter clipping fix confirmed on Android under font_scale 1.3"
-  ]
+  ],
+  "graph_check_v2": {
+    "script_sha": "99a70dd8c35266e675138c225d8b9cb5e54cdce2",
+    "product_sha": "ba6c6df839f27394d99061014f13faa3b0b8baee (no rebuild, same install/emulator)",
+    "exit_code": 0,
+    "result": "9 PASS / 2 INFO / 0 FAIL / 0 WARN",
+    "graph-vertical-page-scrolled": "PASS - on-chart vertical drag changed chart_top this run (scroll room present; consistent with manual controlled comparison)",
+    "notes": "updated checks: post-gesture uiautomator dump, outside-chart control drag, same-index release / center tap / branch display bounds fix (x->y)",
+    "failures": "none - no script-vs-product attribution needed",
+    "evidence": "evidence/graph-check-v2/{results.txt,graph-01..07.png,ui.xml}"
+  }
 }

@@ -75,3 +75,18 @@ font_scale=1.3 で詰め手順画面を開き、カウンタ `0 / 1手` → `1 /
 - `evidence/pr12/` — run `20260923T143118Z-34182`: junit 7 件、graph-check PNG/results、`display-variants/` 8 枚、`videos/`、logcat
 - `evidence/vertscroll/` — 主目的 1–3 の手動計測一式（動画 2 本含む）
 - `summary.json` — 機械可読サマリ
+
+---
+
+## 追記: graph-check スクリプト更新版の再実行（99a70dd）
+
+- 対象スクリプト: `scripts/ci/android-graph-check.sh` @ `99a70dd8c35266e675138c225d8b9cb5e54cdce2`（製品コードは ba6c6df のまま、APK 再ビルドなし・同一インストール/エミュレータで再実行）
+- 更新点: 操作後の `uiautomator dump` 更新、縦ドラッグ不動時のグラフ外対照操作、同一位置リリース・中央タップ・分岐表示の bounds 判定修正（x→y 座標）
+- **終了コード: 0**
+- **結果: PASS×9 / INFO×2 / FAIL 0 / WARN 0**
+  - `graph-vertical-page-scrolled` → **PASS**（今回のページ状態では縦ドラッグで chart_top が変化 = スクロール余地あり。ba6c6df 上の手動対照実験と一致: グラフ上ドラッグは親 ScrollView に引き渡されてページが動く）
+  - `graph-scrub-readout` / `graph-scrub-counter-frozen` は INFO（uiautomator 遅延超過の過渡状態、graph-03-scrub-mid.png で目視確認済みの設計）
+  - `graph-vertical-no-move` PASS（縦ドラッグで手数は動かない＝スクラブキャンセル維持）
+  - `graph-branch-opened` / `graph-branch-no-mainline-chart` PASS（修正後の y-bounds 判定で分岐画面内に本譜チャート非表示を正しく判定）
+- 失敗なし — スクリプト問題・製品問題の区別対象は発生せず
+- 証拠: `evidence/graph-check-v2/`（results.txt + graph-01〜07 PNG + ui.xml）
