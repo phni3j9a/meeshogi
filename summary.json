@@ -1,0 +1,91 @@
+{
+  "platform": "ios",
+  "source_sha": "7f877a25958fe4cd5c08341271e8c7f0cb00259b",
+  "verify_branch": "verify/pr12-ios-flows",
+  "verify_branch_sha": "f7458ead061f04dee3ba65ee93c4be6bdf7fc7d5",
+  "evidence_branch": "evidence/pr12-ios-20260923",
+  "build": {
+    "type": "Release-iphonesimulator (real sekirei engine, ARCHS=arm64)",
+    "steps": "npm ci -> expo prebuild --no-install -> build-ios.sh -> pod install -> xcodebuild -> ios-app-artifact.sh",
+    "install_launch": "ok (simctl install + launch, iPhone 18 Pro iOS 27.0)"
+  },
+  "suite": {
+    "mode": "IOS_ACCEPTANCE_MODE=full",
+    "final_automated_run": "runs/20260923T105327Z-30703",
+    "flows": [
+      {"name": "import-review", "status": "pass", "how": "script-automatic"},
+      {"name": "file-import", "status": "pass", "how": "script-automatic"},
+      {"name": "player-names", "status": "pass", "how": "script-automatic"},
+      {"name": "player-names-kiou", "status": "pass", "how": "script-automatic"},
+      {"name": "analysis-review", "status": "pass", "how": "script-automatic", "covers": "長め50k全局完了(80手 投了)"},
+      {"name": "analysis-partial-review", "status": "pass", "how": "script-automatic", "covers": "標準10k partial/ply41欠測/有限再開"},
+      {"name": "candidate-review", "status": "pass", "how": "script-automatic", "covers": "候補分岐→本譜"},
+      {"name": "management-review", "status": "pass", "how": "script-automatic", "covers": "戦績・お気に入り・削除"},
+      {"name": "appearance-review", "status": "pass", "how": "script-automatic", "covers": "明暗テーマ"},
+      {"name": "appearance-dark", "status": "pass", "how": "script-automatic"},
+      {"name": "licenses-review", "status": "pass", "how": "script-automatic"},
+      {"name": "export-review-ios", "status": "pass", "how": "helper-rerun + Library/Caches byte-compare", "note": "in-run FAIL: iOS 27 RemoteUI save browser never presents under automation; export bytes verified via app-container Library/Caches artifact (byte MATCH vs fixtures/kif/shogiwars.kif)"},
+      {"name": "background-review", "status": "pass", "how": "helper-rerun", "covers": "背景停止・条件変更の復元"},
+      {"name": "large-text-review", "status": "pass", "how": "helper-rerun", "covers": "OS文字拡大"},
+      {"name": "search-delete-review", "status": "pass", "how": "helper-rerun", "covers": "検索・削除"},
+      {"name": "ios-visual-review", "status": "skip", "how": "n/a", "note": "visual mode only; out of scope for this full run by design"}
+    ]
+  },
+  "pr12_checks": {
+    "piece_sets": {"status": "pass", "flow": ".maestro/pr12-piece-sets.yaml", "duration": "2m39s", "covers": "4 sets (黄楊/白木/桜木/青磁) preview+select, board+持駒+反転+詰み手順反映, light+dark, kill/relaunch SQLite persistence (pieceSet=tsuge in settings payload + integrity_check ok), record/analysis intact"},
+    "graph": {"status": "pass", "flow": ".maestro/pr12-graph.yaml", "duration": "27s", "covers": "左端(0/80)/右端(80/80)/中間(40/80)/欠測(41/80)タップ選択, 縦スワイプ→スクロール・キャンセル(マーカー不変), ply67 3手詰めバッジ, 分岐検討時のチャート非表示(本譜分離), 本譜に戻る→ply67復元"},
+    "graph_drag": {"status": "fail-product-bug", "how": "GUI mouse drag (real touch events)", "covers": "横ドラッグ中の本譜評価ラベル・離した位置への一度の移動 — iOS 26+ では fullscreen swipe-back が横ドラッグを奪い実ユーザーに届かない"},
+    "layout": {"status": "pass", "covers": "iPhone 18 Pro / iPhone 17e (小画面) / iPad mini (tablet); 盤・評価・第一候補・固定手送り・戻る/閉じる・safe area", "extra": "accessibility-extra-large content size pass on iPhone 17e"},
+    "positions_json": {"status": "pass", "how": "cargo test (24/24) + in-flow asserts", "covers": "終局の正負・欠測表示・候補なし表示"}
+  },
+  "findings": [
+    {
+      "id": "PR12-IOS-1",
+      "severity": "high",
+      "type": "product-bug",
+      "title": "iOS 26+ で評価グラフの横ドラッグが fullscreen swipe-back に奪われる",
+      "cause": "react-native-screens ~4.26 が iOS 26+ で fullScreenSwipeEnabled を既定有効化 (RNSScreen.mm isFullScreenSwipeEffectivelyEnabled)。game/[id] の card push で gesture 未指定 → どこからの横ドラッグも pop に届き PanResponder まで渡らない",
+      "screen": "game/[id] 解析画面 評価グラフ",
+      "repro": "グラフ上を水平ドラッグ → スクラブが一瞬発動 → 画面自体が右へスライドしライブラリへ pop (~50pt でも)",
+      "minimal_fix": "app/_layout.tsx Stack.Screen name=\"game/[id]\" に fullScreenGestureEnabled: false",
+      "evidence": "pr12/graph-drag-gui.mov, pr12/graph-drag-gui2.mov",
+      "impact": "「横ドラッグ中の本譜評価ラベル」「離した位置への一度の移動」が iOS 26+ の実ユーザーに届かない (タップ選択は動作)"
+    },
+    {
+      "id": "PR12-IOS-2",
+      "severity": "low",
+      "type": "cosmetic",
+      "title": "accessibility-extra-large で詰め手順モーダルの手数カウンタが右端で切れる",
+      "screen": "詰め手順モーダル (iPhone 17e, OS 最大文字)",
+      "evidence": "pr12/layout/iphone17e/maestro/pr12-layout-accessibility-extra-large/.../layout-05-mate-modal.png",
+      "impact": "a11y 上は '0 / 3手' が存在し assert は通過。視覚的にはみ出しのみ"
+    },
+    {
+      "id": "PR12-IOS-3",
+      "severity": "info",
+      "type": "platform-constraint",
+      "title": "iOS 27 Save to Files ブラウザが automation 下で RemoteUI により提示されない",
+      "screen": "共有シート → Save to Files",
+      "evidence": "suite/manual/export + exported-shogiwars.kifu byte MATCH",
+      "impact": "Files 保存先 UI の遷移先は未確認。export バイト列は Library/Caches 成果物で fixture と一致確認済み"
+    }
+  ],
+  "videos_reviewed": [
+    "suite/final-run/flow.mp4 (full suite, compressed)",
+    "pr12/checks/pr12-piece-sets.mp4",
+    "pr12/checks/pr12-graph.mov",
+    "pr12/layout/main/pr12-layout.mov",
+    "pr12/layout/iphone17e/pr12-layout.mov",
+    "pr12/layout/iphone17e/pr12-layout-accessibility-extra-large.mov",
+    "pr12/layout/ipad-mini/pr12-layout.mov",
+    "pr12/graph-drag-gui.mov",
+    "pr12/graph-drag-gui2.mov"
+  ],
+  "screenshots_reviewed": "all takeScreenshot/*.png under suite/final-run, suite/manual, pr12/checks, pr12/layout (opened and inspected)",
+  "unverified": [
+    "Files 保存ブラウザの遷移先 (RemoteUI constraint)",
+    "横ドラッグのスクラブ/選択確定 (product bug PR12-IOS-1)",
+    "実機性能・FPS (シミュレータのみ。計測していないため達成扱いにしない)",
+    "Pixel 相当端末 (iOS のみ担当。Android は別担当)"
+  ]
+}

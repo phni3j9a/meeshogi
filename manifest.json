@@ -1,0 +1,42 @@
+{
+  "task": "meeshogi PR #12 / Issue #16 native iOS acceptance",
+  "platform": "ios",
+  "source": {
+    "repo": "phni3j9a/meeshogi",
+    "branch": "feat/analysis-design-generated-pieces",
+    "sha": "7f877a25958fe4cd5c08341271e8c7f0cb00259b",
+    "sha_subject": "Merge main into PR #12 and preserve analysis correctness in refreshed screens"
+  },
+  "verify_branch": {
+    "name": "verify/pr12-ios-flows",
+    "sha": "f7458ead061f04dee3ba65ee93c4be6bdf7fc7d5"
+  },
+  "environment": {
+    "host": "macOS 26.5.2 (25F84), Apple Silicon",
+    "xcode": "26.6 (17F113)",
+    "maestro": "2.10.0",
+    "app_build": "Release-iphonesimulator, real sekirei engine (build-ios.sh), ARCHS=arm64",
+    "app": "$RUNNER_TEMP/meeshogi-ios/Build/Products/Release-iphonesimulator/meeshogi.app"
+  },
+  "devices": [
+    {"name": "iPhone 18 Pro", "udid": "1308A109-3EE0-4711-9287-85246639DBC7", "os": "iOS 27.0", "points": "402x874", "role": "primary suite device"},
+    {"name": "iPhone 17e", "udid": "D2F41855-8EB4-4D04-902E-AD87273C0CFA", "os": "iOS 27.0", "role": "small-screen layout + accessibility-extra-large content size"},
+    {"name": "iPad mini (A17 Pro)", "udid": "04E546A6-D66F-4E0B-8B46-D7A16C5EB803", "os": "iOS 27.0", "role": "tablet layout"}
+  ],
+  "engine_tests": "cargo test --locked --manifest-path native/sekirei/Cargo.toml: 24/24 passed",
+  "evidence_layout": {
+    "suite/final-run": "final automated acceptance run 20260923T105327Z-30703 (12 flows; junit.xml per flow, screenshots, flow.mp4 compressed)",
+    "suite/manual": "4 manual reruns after verification-flow fixes (export, background, large-text, search-delete)",
+    "pr12/checks": "PR-specific flows (piece-sets, graph) junit + screenshots + screen recordings",
+    "pr12/layout": "layout sweeps: main (iPhone 18 Pro), iphone17e (normal + accessibility-extra-large), ipad-mini",
+    "pr12/graph-drag-gui.mov": "GUI mouse-drag recording reproducing the iOS 26+ pop-back bug",
+    "pr12/graph-drag-gui2.mov": "second GUI drag reproduction (~50pt drag still pops)",
+    "pr12/frame-*.png": "extracted frames from GUI recordings",
+    "pr12/frames-review": "extracted frames used for frame-by-frame review"
+  },
+  "excluded_from_evidence": [
+    "device-simulator.log (~100MB per flow run; superseded)",
+    "earlier failed suite attempt dirs 20260923T081710Z..20260923T103415Z (flow-fix iterations; see runs-index.txt)",
+    "superseded test-output dirs of reran flows (latest kept)"
+  ]
+}

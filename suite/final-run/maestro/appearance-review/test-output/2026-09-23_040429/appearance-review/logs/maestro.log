@@ -1,0 +1,215 @@
+04:04:36.712 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+04:04:36.713 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+04:04:36.714 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Define variables RUNNING
+04:04:37.087 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Define variables COMPLETED
+04:04:37.089 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Apply configuration RUNNING
+04:04:37.089 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Apply configuration COMPLETED
+04:04:37.089 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Launch app "com.meeshogi.app" RUNNING
+04:04:37.512 [ INFO] maestro.Maestro.launchApp$lambda$5: Launching app com.meeshogi.app
+04:04:37.512 [ INFO] maestro.Maestro.launchApp$lambda$5: Stopping com.meeshogi.app app during launch
+04:04:38.813 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Launch app "com.meeshogi.app" COMPLETED
+04:04:38.814 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: library-screen is visible RUNNING
+04:04:43.419 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: library-screen is visible COMPLETED
+04:04:43.419 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that ".*KeroPona.*" is visible RUNNING
+04:04:43.609 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that ".*KeroPona.*" is visible COMPLETED
+04:04:43.610 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on "設定.*" RUNNING
+04:04:43.788 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=設定, tab, 3 of 3, title=, value=, text=, hintText=, resource-id=tab-settings, bounds=[268,790][402,840], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=268, y=790, width=134, height=50))
+04:04:43.927 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:04:43.929 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (335, 815) using hierarchy based logic for wait
+04:04:43.930 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:04:43.930 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:04:44.588 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:04:44.589 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on "設定.*" COMPLETED
+04:04:44.589 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Scrolling DOWN until ".*表示テーマ.*" is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled RUNNING
+04:04:45.263 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Text matching regex: .*表示テーマ.*
+04:04:45.273 [ INFO] maestro.Maestro.swipeFromCenter: Swiping UP from center
+04:04:47.078 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Scrolling try count: 0, DeviceWidth: 402, DeviceWidth: 874
+04:04:47.078 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Element bounds: Bounds(x=20, y=595, width=361, height=54)
+04:04:47.078 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Visibility Percent: 1.0
+04:04:47.082 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Command centerElement: ScrollUntilVisibleCommand(selector=ElementSelector(textRegex=.*表示テーマ.*, idRegex=null, size=null, below=null, above=null, leftOf=null, rightOf=null, containsChild=null, containsDescendants=null, traits=null, index=null, enabled=null, optional=false, selected=null, checked=null, focused=null, childOf=null, css=null), direction=DOWN, scrollDuration=601, visibilityPercentage=100, timeout=20000, waitToSettleTimeoutMs=null, centerElement=false, originalSpeedValue=40, label=null, optional=false).centerElement
+04:04:47.082 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: visibilityPercentageNormalized: 1.0
+04:04:47.082 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Scrolling DOWN until ".*表示テーマ.*" is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled COMPLETED
+04:04:47.083 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on ".*表示テーマ.*" RUNNING
+04:04:47.255 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=表示テーマ, システム, Forward, title=, value=, text=, hintText=, resource-id=, bounds=[20,595][381,649], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=20, y=595, width=361, height=54))
+04:04:47.386 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via stabilised hierarchy (null settle after a scroll)
+04:04:47.557 [ INFO] maestro.Maestro.refreshElementUntilStable-Hkttul8: Element is still moving (null -> Bounds(x=20, y=595, width=361, height=54)). Waiting for its position to settle.
+04:04:47.833 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (200, 622) using hierarchy based logic for wait
+04:04:47.834 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:04:47.834 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:04:48.863 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:04:48.863 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on ".*表示テーマ.*" COMPLETED
+04:04:48.863 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on "${APPEARANCE_LABEL}" RUNNING
+04:04:49.025 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=ライト, title=, value=, text=, hintText=, resource-id=, bounds=[57,422][345,470], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=57, y=422, width=288, height=48))
+04:04:49.164 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:04:49.165 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (201, 446) using hierarchy based logic for wait
+04:04:49.165 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:04:49.165 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:04:50.042 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:04:50.042 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on "${APPEARANCE_LABEL}" COMPLETED
+04:04:50.042 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot 25-${SHOT_PREFIX}-settings RUNNING
+04:04:50.045 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+04:04:50.046 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:04:50.111 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot 25-${SHOT_PREFIX}-settings COMPLETED
+04:04:50.112 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Scrolling UP until id: player-names-link is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled RUNNING
+04:04:50.799 [ WARN] maestro.orchestra.Orchestra.scrollUntilVisible: Error: maestro.MaestroException$ElementNotFound: Element not found: Id matching regex: player-names-link
+04:04:50.808 [ INFO] maestro.Maestro.swipeFromCenter: Swiping DOWN from center
+04:04:52.595 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Scrolling try count: 0, DeviceWidth: 402, DeviceWidth: 874
+04:04:52.595 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Element bounds: Bounds(x=20, y=228, width=361, height=54)
+04:04:52.595 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Visibility Percent: 1.0
+04:04:52.595 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Command centerElement: ScrollUntilVisibleCommand(selector=ElementSelector(textRegex=null, idRegex=player-names-link, size=null, below=null, above=null, leftOf=null, rightOf=null, containsChild=null, containsDescendants=null, traits=null, index=null, enabled=null, optional=false, selected=null, checked=null, focused=null, childOf=null, css=null), direction=UP, scrollDuration=601, visibilityPercentage=100, timeout=20000, waitToSettleTimeoutMs=null, centerElement=false, originalSpeedValue=40, label=null, optional=false).centerElement
+04:04:52.595 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: visibilityPercentageNormalized: 1.0
+04:04:52.595 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Scrolling UP until id: player-names-link is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled COMPLETED
+04:04:52.595 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot 26-${SHOT_PREFIX}-settings-top RUNNING
+04:04:52.597 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+04:04:52.597 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:04:52.663 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot 26-${SHOT_PREFIX}-settings-top COMPLETED
+04:04:52.664 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on id: player-names-link RUNNING
+04:04:52.831 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Person silhouette, 対局者名, asitaka_y ほか1件, Forward, title=, value=, text=, hintText=, resource-id=player-names-link, bounds=[20,228][381,282], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=20, y=228, width=361, height=54))
+04:04:52.960 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via stabilised hierarchy (null settle after a scroll)
+04:04:53.126 [ INFO] maestro.Maestro.refreshElementUntilStable-Hkttul8: Element is still moving (null -> Bounds(x=20, y=228, width=361, height=54)). Waiting for its position to settle.
+04:04:53.399 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (200, 255) using hierarchy based logic for wait
+04:04:53.399 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:04:53.399 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:04:54.416 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:04:54.416 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on id: player-names-link COMPLETED
+04:04:54.416 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: names-save is visible RUNNING
+04:04:54.587 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: names-save is visible COMPLETED
+04:04:54.588 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot 27-${SHOT_PREFIX}-player-names RUNNING
+04:04:54.590 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+04:04:54.590 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:04:54.658 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot 27-${SHOT_PREFIX}-player-names COMPLETED
+04:04:54.658 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Stop com.meeshogi.app RUNNING
+04:04:54.659 [ INFO] maestro.Maestro.stopApp$lambda$6: Stopping app com.meeshogi.app
+04:04:55.744 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Stop com.meeshogi.app COMPLETED
+04:04:55.745 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Launch app "com.meeshogi.app" RUNNING
+04:04:56.163 [ INFO] maestro.Maestro.launchApp$lambda$5: Launching app com.meeshogi.app
+04:04:56.163 [ INFO] maestro.Maestro.launchApp$lambda$5: Stopping com.meeshogi.app app during launch
+04:04:56.369 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Launch app "com.meeshogi.app" COMPLETED
+04:04:56.370 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: library-screen is visible RUNNING
+04:05:00.661 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: library-screen is visible COMPLETED
+04:05:00.661 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that ".*KeroPona.*" is visible RUNNING
+04:05:00.813 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that ".*KeroPona.*" is visible COMPLETED
+04:05:00.813 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot 28-${SHOT_PREFIX}-library RUNNING
+04:05:00.814 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+04:05:00.815 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:00.878 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot 28-${SHOT_PREFIX}-library COMPLETED
+04:05:00.879 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on ".*KeroPona.*" RUNNING
+04:05:01.023 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=前回の続き, KeroPona との対局, 0手目から再開, plain text document, Forward, title=, value=, text=, hintText=, resource-id=, bounds=[20,241][382,346], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=20, y=241, width=362, height=105))
+04:05:01.145 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:01.146 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (201, 293) using hierarchy based logic for wait
+04:05:01.146 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:01.146 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:01.709 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:01.709 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on ".*KeroPona.*" COMPLETED
+04:05:01.709 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: game-screen is visible RUNNING
+04:05:02.274 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: game-screen is visible COMPLETED
+04:05:02.274 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot 29-${SHOT_PREFIX}-game RUNNING
+04:05:02.276 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+04:05:02.277 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:02.551 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot 29-${SHOT_PREFIX}-game COMPLETED
+04:05:02.551 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on id: move-first RUNNING
+04:05:02.822 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=初期局面へ, title=, value=, text=, hintText=, resource-id=move-first, bounds=[41,793][85,837], enabled=false, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=false, focused=false, checked=false, selected=false), bounds=Bounds(x=41, y=793, width=44, height=44))
+04:05:03.006 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:03.007 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (63, 815) using hierarchy based logic for wait
+04:05:03.007 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:03.007 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:03.648 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:03.648 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on id: move-first COMPLETED
+04:05:03.648 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on id: square-2g RUNNING
+04:05:03.915 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=2七、先手の歩, title=, value=, text=, hintText=, resource-id=square-2g, bounds=[88,248][120,280], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=88, y=248, width=32, height=32))
+04:05:04.086 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:04.086 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (104, 264) using hierarchy based logic for wait
+04:05:04.086 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:04.087 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:04.721 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:04.721 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on id: square-2g COMPLETED
+04:05:04.721 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on id: square-2f RUNNING
+04:05:04.973 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=2六、空きマス、移動できます, title=, value=, text=, hintText=, resource-id=square-2f, bounds=[88,280][120,312], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=88, y=280, width=32, height=32))
+04:05:05.142 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:05.143 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (104, 296) using hierarchy based logic for wait
+04:05:05.143 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:05.143 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:05.971 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:05.971 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on id: square-2f COMPLETED
+04:05:05.971 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that "分岐検討" is visible RUNNING
+04:05:06.234 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that "分岐検討" is visible COMPLETED
+04:05:06.234 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot 30-${SHOT_PREFIX}-branch RUNNING
+04:05:06.236 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+04:05:06.236 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:06.329 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot 30-${SHOT_PREFIX}-branch COMPLETED
+04:05:06.329 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on "本譜に戻る" RUNNING
+04:05:06.592 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=本譜に戻る, title=, value=, text=, hintText=, resource-id=, bounds=[20,60][67,108], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=20, y=60, width=47, height=48))
+04:05:06.767 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:06.767 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (43, 84) using hierarchy based logic for wait
+04:05:06.768 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:06.768 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:07.421 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:07.422 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on "本譜に戻る" COMPLETED
+04:05:07.422 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on id: move-last RUNNING
+04:05:07.684 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=最終局面へ, title=, value=, text=, hintText=, resource-id=move-last, bounds=[317,793][361,837], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=317, y=793, width=44, height=44))
+04:05:07.867 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:07.868 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (339, 815) using hierarchy based logic for wait
+04:05:07.868 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:07.868 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:08.497 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:08.497 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on id: move-last COMPLETED
+04:05:08.497 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap x13 on id: move-prev RUNNING
+04:05:08.780 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element: TapRepeat(repeat=13, delay=800) UiElement(treeNode=TreeNode(attributes={accessibilityText=一手戻る, title=, value=, text=, hintText=, resource-id=move-prev, bounds=[110,793][154,837], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=110, y=793, width=44, height=44))
+04:05:08.958 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:08.959 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (132, 815) using hierarchy based logic for wait
+04:05:08.960 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:08.960 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:19.780 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:19.780 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap x13 on id: move-prev COMPLETED
+04:05:19.780 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Scrolling DOWN until "後手・3手詰め ›" is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled RUNNING
+04:05:20.047 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Scrolling try count: 0, DeviceWidth: 402, DeviceWidth: 874
+04:05:20.047 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Element bounds: Bounds(x=280, y=527, width=110, height=44)
+04:05:20.047 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Visibility Percent: 1.0
+04:05:20.047 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: Command centerElement: ScrollUntilVisibleCommand(selector=ElementSelector(textRegex=後手・3手詰め ›, idRegex=null, size=null, below=null, above=null, leftOf=null, rightOf=null, containsChild=null, containsDescendants=null, traits=null, index=null, enabled=null, optional=false, selected=null, checked=null, focused=null, childOf=null, css=null), direction=DOWN, scrollDuration=601, visibilityPercentage=100, timeout=20000, waitToSettleTimeoutMs=null, centerElement=false, originalSpeedValue=40, label=null, optional=false).centerElement
+04:05:20.047 [ INFO] maestro.orchestra.Orchestra.scrollUntilVisible: visibilityPercentageNormalized: 1.0
+04:05:20.047 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Scrolling DOWN until "後手・3手詰め ›" is visible with speed 40, visibility percentage 100%, timeout 20000 ms, with centering disabled COMPLETED
+04:05:20.047 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on "後手・3手詰め ›" RUNNING
+04:05:20.309 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=後手・3手詰め ›, title=, value=, text=, hintText=, resource-id=, bounds=[280,527][390,571], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=280, y=527, width=110, height=44))
+04:05:20.487 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:20.487 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (335, 549) using hierarchy based logic for wait
+04:05:20.488 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:20.488 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:21.573 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:21.573 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on "後手・3手詰め ›" COMPLETED
+04:05:21.573 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot 31-${SHOT_PREFIX}-mate RUNNING
+04:05:21.575 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+04:05:21.576 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:21.661 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot 31-${SHOT_PREFIX}-mate COMPLETED
+04:05:21.661 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Stop com.meeshogi.app RUNNING
+04:05:21.661 [ INFO] maestro.Maestro.stopApp$lambda$6: Stopping app com.meeshogi.app
+04:05:22.692 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Stop com.meeshogi.app COMPLETED
+04:05:22.692 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Launch app "com.meeshogi.app" RUNNING
+04:05:23.070 [ INFO] maestro.Maestro.launchApp$lambda$5: Launching app com.meeshogi.app
+04:05:23.070 [ INFO] maestro.Maestro.launchApp$lambda$5: Stopping com.meeshogi.app app during launch
+04:05:23.282 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Launch app "com.meeshogi.app" COMPLETED
+04:05:23.282 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: library-screen is visible RUNNING
+04:05:27.493 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: library-screen is visible COMPLETED
+04:05:27.493 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that ".*KeroPona.*" is visible RUNNING
+04:05:27.641 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that ".*KeroPona.*" is visible COMPLETED
+04:05:27.642 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on "戦績.*" RUNNING
+04:05:27.788 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=戦績, tab, 2 of 3, title=, value=, text=, hintText=, resource-id=tab-stats, bounds=[134,790][268,840], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=134, y=790, width=134, height=50))
+04:05:27.913 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:27.914 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (201, 815) using hierarchy based logic for wait
+04:05:27.914 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:27.914 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:28.474 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:28.475 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on "戦績.*" COMPLETED
+04:05:28.475 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Assert that id: statistics-screen is visible RUNNING
+04:05:28.635 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Assert that id: statistics-screen is visible COMPLETED
+04:05:28.636 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Tap on "全期間" RUNNING
+04:05:28.791 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=全期間, title=, value=, text=, hintText=, resource-id=, bounds=[261,183][382,221], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=261, y=183, width=121, height=38))
+04:05:28.908 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tap aimed via trusted pre-wait hierarchy (null settle, no recent scroll)
+04:05:28.908 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (321, 202) using hierarchy based logic for wait
+04:05:28.909 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+04:05:28.909 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:30.534 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+04:05:30.534 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Tap on "全期間" COMPLETED
+04:05:30.534 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandStart: Take screenshot 32-${SHOT_PREFIX}-statistics RUNNING
+04:05:30.536 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+04:05:30.536 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+04:05:30.606 [ INFO] maestro.cli.runner.CliConsoleListener.onCommandFinished: Take screenshot 32-${SHOT_PREFIX}-statistics COMPLETED
