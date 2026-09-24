@@ -2,7 +2,7 @@
 
 ## Current status
 
-Historical staging records cover contract-v3 probes and the pre-W3F W3-fix backend; they do not verify the current local repair. This checkout now contains additional recovery, chunk-cost, proof, failure-accounting, fault-scope, and artifact-identity changes. The staging image must be rebuilt and migration `0004` applied before those changes can be evaluated remotely; neither has been done in this work. Production resources remain absent; on-device analysis remains in the app during evaluation.
+Deployed staging Worker `0f0c33b6` runs the Cost envelope v2 code (`c1adcf9`) on the same pinned image (`sha256:3908907a…`) — driver/helper were unchanged by W3F-02, so no rebuild was required. Migration `0004_chunk_cost_ledger.sql` is applied remotely. A 104-position precision job (`98401ddc`, public Asahi Cup final game) demonstrated live rolling chunk reservations and phase settlement under the restored `$1` daily cap; see the W3F-02 live-verification section. Independent review then reproduced five defect boundaries (R1–R5: cron chunk-transition bypass, lifecycle-settlement failure handling, cancel/DLQ bypass of phase settlement, container-stop coupling to the lifecycle log, and time-budget clipping) — repairs for those are in progress and the live evidence below predates them. Production resources remain absent; on-device analysis remains in the app during evaluation.
 
 The cloud path is an evaluation stage. The app's on-device analysis remains in place until the fixed-SFEN gate, cloud benchmark, and both iOS and Android acceptance complete. Cloud connectivity is not a condition for local game management or analysis during migration.
 
