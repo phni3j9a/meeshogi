@@ -299,14 +299,25 @@ export function estimateContainerCostUsd(
   return Math.ceil(raw * 1_000_000) / 1_000_000;
 }
 
-const MAX_SEARCH_ATTEMPTS = 2;
-const MAX_SEARCH_DEADLINE_MS = 5_000;
-const MAX_PROCESS_CLEANUP_MS = 5_000;
-const MAX_READINESS_ATTEMPTS = 3;
-const MAX_ENGINE_READY_MS = 120_000;
-const MAX_USI_HANDSHAKE_MS = 20_000;
-const MAX_PROOF_RUNTIME_MS = 3_000;
-const CONTAINER_IDLE_SECONDS = 30;
+export const COST_MODEL = Object.freeze({
+  chunkSize: 8,
+  maxSearchAttempts: 2,
+  searchDeadlineMs: 5_000,
+  processCleanupMs: 5_000,
+  readinessAttempts: 3,
+  engineReadyMs: 120_000,
+  usiHandshakeMs: 20_000,
+  maxProofRuntimeMs: 3_000,
+  interPositionMaxMs: 5_000,
+  containerSleepAfterSeconds: 30,
+  /** Per-chunk caps: container/engine readiness, plus the driver's three restarts. */
+  readinessReserveMs: 4 * 140_000,
+  restartReserveMs: 3 * 140_000,
+  serviceJobUsd: 0.003,
+  serviceChunkUsd: 0.0015,
+  servicePositionUsd: 0.0005,
+  dailyServiceUsd: 0.03,
+});
 
 function resourcesFor(instanceType: InstanceType): { vcpu: number; gib: number; diskGb: number } {
   return instanceType === 'standard-3'
@@ -323,30 +334,80 @@ export function estimateAttemptCostUsd(elapsedMs: number, instanceType: Instance
   return Math.ceil(raw * 1_000_000) / 1_000_000;
 }
 
+export function estimateRuntimeCostUsd(elapsedMs: number, instanceType: InstanceType): number {
+  return estimateAttemptCostUsd(elapsedMs, instanceType);
+}
+
+export function estimateProfileIdleUsd(instanceType: InstanceType, seconds = COST_MODEL.containerSleepAfterSeconds): number {
+  return estimateRuntimeCostUsd(seconds * 1000, instanceType);
+}
+
+export function estimateDualContainerIdleUsd(): number {
+  return estimateProfileIdleUsd('standard-2') + estimateProfileIdleUsd('standard-3');
+}
+
 export function estimateWorstCaseAttemptCostUsd(profile: AnalysisProfile): number {
-  const restartReadinessMs = MAX_READINESS_ATTEMPTS * (MAX_USI_HANDSHAKE_MS + MAX_ENGINE_READY_MS);
-  const maxAttemptMs = restartReadinessMs + profile.movetimeMs + MAX_SEARCH_DEADLINE_MS + MAX_PROCESS_CLEANUP_MS;
+  const maxAttemptMs = profile.movetimeMs + COST_MODEL.searchDeadlineMs + COST_MODEL.processCleanupMs + 500;
   return estimateAttemptCostUsd(maxAttemptMs, profile.instanceType);
 }
 
 export function estimatePositionReservationUsd(profile: AnalysisProfile): number {
-  return MAX_SEARCH_ATTEMPTS * estimateWorstCaseAttemptCostUsd(profile) +
-    estimateAttemptCostUsd(MAX_PROOF_RUNTIME_MS, profile.instanceType);
+  return COST_MODEL.maxSearchAttempts * estimateWorstCaseAttemptCostUsd(profile) +
+    estimateAttemptCostUsd(COST_MODEL.maxProofRuntimeMs, profile.instanceType);
 }
 
-export function estimateJobStartupAndIdleUsd(profile: AnalysisProfile): number {
-  const restartReadinessMs = MAX_READINESS_ATTEMPTS * (MAX_USI_HANDSHAKE_MS + MAX_ENGINE_READY_MS);
-  const coldReadiness = estimateAttemptCostUsd(restartReadinessMs, profile.instanceType);
-  const resources = resourcesFor(profile.instanceType);
-  const sharedIdle = CONTAINER_IDLE_SECONDS * (
-    resources.vcpu * 0.00002 + resources.gib * 0.0000025 + resources.diskGb * 0.00000007
-  );
-  return coldReadiness + sharedIdle;
+export function estimateChunkReservationParts(profile: AnalysisProfile, startIndex: number, endIndex: number, firstChunk: boolean): Array<{
+  partKey: string; phase: string; positionIndex: number | null; costKind: 'resource' | 'service'; amountUsd: number;
+}> {
+  if (!Number.isSafeInteger(startIndex) || !Number.isSafeInteger(endIndex) || startIndex < 0 || endIndex <= startIndex || endIndex - startIndex > COST_MODEL.chunkSize) {
+    throw new TypeError('invalid_cost_chunk');
+  }
+  const parts: Array<{ partKey: string; phase: string; positionIndex: number | null; costKind: 'resource' | 'service'; amountUsd: number }> = [];
+  for (let index = startIndex; index < endIndex; index += 1) {
+    for (let attempt = 1; attempt <= COST_MODEL.maxSearchAttempts; attempt += 1) {
+      parts.push({ partKey: `attempt:${index}:${attempt}`, phase: 'engine_attempt', positionIndex: index, costKind: 'resource', amountUsd: estimateWorstCaseAttemptCostUsd(profile) });
+    }
+    parts.push({ partKey: `proof:${index}`, phase: 'mate_proof', positionIndex: index, costKind: 'resource', amountUsd: estimateAttemptCostUsd(COST_MODEL.maxProofRuntimeMs, profile.instanceType) });
+    if (index > startIndex) {
+      parts.push({ partKey: `interposition:${index - 1}`, phase: 'inter_position_runtime', positionIndex: null, costKind: 'resource', amountUsd: estimateRuntimeCostUsd(COST_MODEL.interPositionMaxMs, profile.instanceType) });
+    }
+  }
+  const chunkKey = `chunk:${startIndex}:${endIndex}`;
+  parts.push({ partKey: `readiness:${chunkKey}`, phase: 'container_readiness', positionIndex: null, costKind: 'resource', amountUsd: estimateRuntimeCostUsd(COST_MODEL.readinessReserveMs, profile.instanceType) });
+  parts.push({ partKey: `restart:${chunkKey}`, phase: 'container_restart', positionIndex: null, costKind: 'resource', amountUsd: estimateRuntimeCostUsd(COST_MODEL.restartReserveMs, profile.instanceType) });
+  parts.push({ partKey: `tail:${chunkKey}`, phase: 'final_idle_to_sleep', positionIndex: null, costKind: 'resource', amountUsd: estimateProfileIdleUsd(profile.instanceType) });
+  // The two fixed profile containers may both be inside their 30-second idle
+  // window. Charge the other profile's bounded overlap allowance separately.
+  parts.push({ partKey: `dual-idle:${chunkKey}`, phase: 'dual_container_idle_overlap', positionIndex: null, costKind: 'resource', amountUsd: estimateDualContainerIdleUsd() - estimateProfileIdleUsd(profile.instanceType) });
+  const service = COST_MODEL.serviceChunkUsd + COST_MODEL.servicePositionUsd * (endIndex - startIndex) + (firstChunk ? COST_MODEL.serviceJobUsd : 0);
+  parts.push({ partKey: `service:${chunkKey}`, phase: 'bounded_service_allowance', positionIndex: null, costKind: 'service', amountUsd: ceilUsd(service) });
+  return parts;
 }
 
+function ceilUsd(amount: number): number { return Math.ceil(amount * 1_000_000) / 1_000_000; }
+
+export function estimateChunkReservationUsd(profile: AnalysisProfile, positionCount: number, firstChunk = false): number {
+  return ceilUsd(estimateChunkReservationParts(profile, 0, positionCount, firstChunk).reduce((sum, part) => sum + part.amountUsd, 0));
+}
+
+export function estimateJobReferenceUsd(profile: AnalysisProfile, positions: number): number {
+  if (!Number.isSafeInteger(positions) || positions < 1) throw new TypeError('invalid_position_count');
+  let total = 0;
+  for (let start = 0; start < positions; start += COST_MODEL.chunkSize) {
+    const end = Math.min(start + COST_MODEL.chunkSize, positions);
+    total += estimateChunkReservationParts(profile, start, end, start === 0).reduce((sum, part) => sum + part.amountUsd, 0);
+  }
+  return ceilUsd(total);
+}
+
+/** Backward-compatible name: this is informational full-job reference cost, not a reservation. */
 export function estimateJobReservationUsd(profile: AnalysisProfile, positions: number): number {
-  const raw = positions * estimatePositionReservationUsd(profile) + estimateJobStartupAndIdleUsd(profile);
-  return Math.ceil(raw * 1_000_000) / 1_000_000;
+  return estimateJobReferenceUsd(profile, positions);
+}
+
+/** Retained for existing importers; the active model prices startup/tail as separate chunk phases. */
+export function estimateJobStartupAndIdleUsd(profile: AnalysisProfile): number {
+  return estimateRuntimeCostUsd(COST_MODEL.readinessReserveMs + COST_MODEL.restartReserveMs, profile.instanceType) + estimateProfileIdleUsd(profile.instanceType);
 }
 
 export function encodeResultCursor(resultSeq: number): string {

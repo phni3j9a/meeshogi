@@ -3,8 +3,8 @@ import { ANALYSIS_CONTRACT_VERSION, isCloudAnalysisResultV3, isStrictShogiSfen, 
 import { analyzeWithServerProfile, type DriverClient, type WorkerEnv } from './handler';
 import { JobCoordinator } from './job-coordinator';
 import {
-  ANALYSIS_PROFILES, classifyTerminal, decodeResultCursor, encodeResultCursor, estimateAttemptCostUsd, estimateContainerCostUsd,
-  estimateWorstCaseAttemptCostUsd, executionIdentityComponents, profileFor, runtimeIdentityMatches,
+  ANALYSIS_PROFILES, COST_MODEL, classifyTerminal, decodeResultCursor, encodeResultCursor, estimateContainerCostUsd,
+  estimateRuntimeCostUsd, executionIdentityComponents, profileFor, runtimeIdentityMatches,
   type AdmissionInput, type AnalysisProfile, type AnalysisProfileId,
   type AnalysisTerminal, type ClaimedPosition, type CostSnapshot, type JobChunk, type JobEnvironment,
   type JobIdentity, type JobStatus,
@@ -32,7 +32,7 @@ type JobRow = {
   model_id: string; instance_type: string; label: string | null; position_count: number; epoch: number;
   cancel_requested: number; committed_count: number; failed_count: number; stop_reason: string | null;
   created_at: string; started_at: string | null; completed_at: string | null; execution_identity_hash: string;
-  cost_estimate_usd: number; engine_binary_digest_label: string; vcpu: number;
+  cost_estimate_usd: number; cost_reserved: number; engine_binary_digest_label: string; vcpu: number;
 };
 type JobPayload = { idempotencyKey: string; profile: AnalysisProfile; initialSfen: string; moves: string[]; positions: string[] };
 type JobPayloadParse = { ok: true; payload: JobPayload } | { ok: false; error: 'invalid_request' | 'illegal_move'; moveIndex?: number };
@@ -169,20 +169,54 @@ async function jobIdentity(env: JobEnvironment, profile: AnalysisProfile): Promi
   };
 }
 export type DriverRuntimeCheck = 'ok' | 'unreachable' | 'mismatch';
-export async function verifyDriverRuntime(driver: DriverClient, env: JobEnvironment, identity: JobIdentity): Promise<DriverRuntimeCheck> {
+export type DriverRuntimeResult = { status: DriverRuntimeCheck; elapsedMs: number; unknown: boolean; engineEpoch: string | null; restartCount: number | null };
+export async function verifyDriverRuntime(driver: DriverClient, env: JobEnvironment, identity: JobIdentity): Promise<DriverRuntimeResult> {
+  let elapsedMs = 0;
   for (let probe = 0; probe < 2; probe += 1) {
+    const started = Date.now();
     let health: unknown;
     try {
       const response = await driver.fetch(new Request('http://container/health', { method: 'GET' }));
+      elapsedMs += Math.max(0, Date.now() - started);
       if (!response.ok) { await new Promise((resolve) => setTimeout(resolve, 150)); continue; }
       health = await response.json();
-    } catch { await new Promise((resolve) => setTimeout(resolve, 150)); continue; }
-    return runtimeIdentityMatches(identity, health, env.ANALYSIS_ENGINE_BINARY_DIGEST_LABEL) ? 'ok' : 'mismatch';
+    } catch { elapsedMs += Math.max(0, Date.now() - started); await new Promise((resolve) => setTimeout(resolve, 150)); continue; }
+    const runtime = isRecord(health) ? health : null;
+    return {
+      status: runtimeIdentityMatches(identity, health, env.ANALYSIS_ENGINE_BINARY_DIGEST_LABEL) ? 'ok' : 'mismatch',
+      elapsedMs, unknown: false,
+      engineEpoch: typeof runtime?.engineEpoch === 'string' ? runtime.engineEpoch : null,
+      restartCount: typeof runtime?.restartCount === 'number' && Number.isSafeInteger(runtime.restartCount) ? runtime.restartCount : null,
+    };
   }
-  return 'unreachable';
+  return { status: 'unreachable', elapsedMs, unknown: true, engineEpoch: null, restartCount: null };
 }
 function operationStub(env: JobEnvironment): DurableObjectStub<JobCoordinator> {
   return env.JOB_COORDINATOR.getByName(GLOBAL_COORDINATOR_NAME);
+}
+async function verifyAndRecordRuntime(
+  driver: DriverClient, env: JobEnvironment, position: ClaimedPosition, chunk: JobChunk, phase: 'pre' | 'post-analysis' | 'post-proof',
+): Promise<DriverRuntimeResult> {
+  const result = await verifyDriverRuntime(driver, env, position.identity);
+  const chunkKey = `chunk:${chunk.start_idx}:${chunk.end_idx}`;
+  await operationStub(env).recordCostObservation({
+    jobId: position.jobId, epoch: position.epoch, partKey: chunkKey,
+    eventKey: `observation:${position.jobId}:${position.epoch}:readiness:${position.index}:${position.deliveryCount}:${phase}`,
+    phase: 'container_readiness', durationMs: result.unknown ? null : result.elapsedMs,
+    evidence: {
+      unknown: result.unknown, probePhase: phase, measuredElapsedMs: result.elapsedMs,
+      attemptBoundMs: COST_MODEL.readinessReserveMs, engineEpoch: result.engineEpoch, restartCount: result.restartCount,
+    },
+    now: Date.now(),
+  });
+  if (result.engineEpoch && result.restartCount && result.restartCount > 0) {
+    await operationStub(env).recordEngineRestart({
+      jobId: position.jobId, epoch: position.epoch, profileId: position.identity.profileId,
+      engineEpoch: result.engineEpoch, restartCount: result.restartCount,
+      chunkStart: chunk.start_idx, chunkEnd: chunk.end_idx, now: Date.now(),
+    });
+  }
+  return result;
 }
 function coordinatorFailure(): Response { return json({ error: 'coordinator_unavailable' }, 503); }
 function retryResponse(retryAfter: number): Response {
@@ -277,6 +311,7 @@ async function createJob(request: Request, env: JobEnvironment): Promise<Respons
     jobId: outcome.value.jobId, status: persisted.status, duplicate: outcome.value.duplicate,
     profile: { id: persisted.profile_id, version: persisted.profile_version },
     executionIdentityHash: persisted.execution_identity_hash, positionCount: persisted.position_count,
+    costEnvelopeVersion: 2,
     estimatedCostUsd: persisted.cost_estimate_usd, admissionEstimateUsd: persisted.cost_estimate_usd,
     costWarning: snapshot.costWarning,
   }, status, outcome.value.duplicate ? {} : { location: JOB_PATH + '/' + outcome.value.jobId });
@@ -296,6 +331,7 @@ async function getJobSummary(env: JobEnvironment, jobId: string): Promise<Respon
   ).bind(jobId).first<Record<string, number | null>>();
   const cost = await operationStub(env).costSnapshot(Date.now());
   const engineCost = await getJobEngineCost(env, jobId);
+  const costBreakdown = await getJobCostBreakdown(env, job);
   const profile = profileFor(job.profile_id);
   const instanceType = job.instance_type === 'standard-2' || job.instance_type === 'standard-3' ? job.instance_type : null;
   const cachedPositionCount = Number(counts?.cached ?? 0);
@@ -314,8 +350,10 @@ async function getJobSummary(env: JobEnvironment, jobId: string): Promise<Respon
     executionIdentityHash: job.execution_identity_hash, positionCount: job.position_count,
     cacheStats: { cachedPositionCount, estimatedSavingsUsd: estimatedCacheSavingsUsd },
     createdAt: job.created_at, startedAt: job.started_at, completedAt: job.completed_at,
+    costEnvelopeVersion: 2,
     settledAttemptEstimateUsd: engineCost, estimatedCostUsd: job.cost_estimate_usd,
     costs: {
+      ...costBreakdown,
       admissionEstimateUsd: job.cost_estimate_usd,
       settledAttemptEstimateUsd: engineCost,
       observedEngineCostUsd: null,
@@ -370,6 +408,26 @@ async function getJobEngineCost(env: JobEnvironment, jobId: string): Promise<num
 async function getJobEstimate(env: JobEnvironment, jobId: string): Promise<number> {
   const row = await env.DB.prepare('SELECT cost_estimate_usd FROM jobs WHERE id = ?').bind(jobId).first<{ cost_estimate_usd: number }>();
   return Number(row?.cost_estimate_usd ?? 0);
+}
+
+async function getJobCostBreakdown(env: JobEnvironment, job: JobRow): Promise<{
+  fullJobReferenceEstimateUsd: number;
+  currentOutstandingReservationUsd: number;
+  settledResourceEstimateUsd: number;
+  settledServiceEstimateUsd: number;
+  unobtainedInvoiceUsd: null;
+}> {
+  const settled = await env.DB.prepare(
+    "SELECT SUM(CASE WHEN cost_kind = 'resource' THEN amount_usd ELSE 0 END) AS resource_usd, " +
+    "SUM(CASE WHEN cost_kind = 'service' THEN amount_usd ELSE 0 END) AS service_usd FROM cost_phase_ledger WHERE job_id = ?",
+  ).bind(job.id).first<{ resource_usd: number | null; service_usd: number | null }>();
+  return {
+    fullJobReferenceEstimateUsd: Number(job.cost_estimate_usd),
+    currentOutstandingReservationUsd: Number(job.cost_reserved),
+    settledResourceEstimateUsd: Number(settled?.resource_usd ?? 0),
+    settledServiceEstimateUsd: Number(settled?.service_usd ?? 0),
+    unobtainedInvoiceUsd: null,
+  };
 }
 
 async function cancelJob(request: Request, env: JobEnvironment, ownerId: string, jobId: string, drivers: ProfileDriverRouter): Promise<Response> {
@@ -526,16 +584,25 @@ async function proveMate(driver: DriverClient, sfen: string): Promise<ProofOutco
     return { proof: toStoredProof(parsed), invalid: false, elapsedMs: Math.max(0, Date.now() - started) };
   } catch { return { proof: null, invalid: false, elapsedMs: Math.max(0, Date.now() - started) }; }
 }
-async function recordFailureCost(position: ClaimedPosition, profile: AnalysisProfile, env: JobEnvironment, attempt: number): Promise<void> {
-  const amount = estimateWorstCaseAttemptCostUsd(profile);
-  await recordAttemptCostOrThrow(env, position, attempt, amount, null);
-}
 async function recordAttemptCostOrThrow(
-  env: JobEnvironment, position: ClaimedPosition, attempt: number, amountUsd: number, engineMs: number | null,
+  env: JobEnvironment, position: ClaimedPosition, attempt: number, amountUsd: number, engineMs: number | null, durationMs: number | null = null,
 ): Promise<void> {
-  if (!await operationStub(env).recordAttemptCost(position, attempt, amountUsd, engineMs, Date.now())) {
+  if (!await operationStub(env).recordAttemptCost(position, attempt, amountUsd, engineMs, Date.now(), durationMs)) {
     throw new Error('attempt_cost_settlement_failed');
   }
+}
+
+async function recordProofCostOrThrow(env: JobEnvironment, position: ClaimedPosition, elapsedMs: number): Promise<number> {
+  const boundedElapsedMs = Math.min(Math.max(0, elapsedMs), COST_MODEL.maxProofRuntimeMs);
+  const amount = estimateRuntimeCostUsd(boundedElapsedMs, position.identity.instanceType);
+  const settled = await operationStub(env).settleReservedPhase({
+    jobId: position.jobId, epoch: position.epoch, partKey: `proof:${position.index}`,
+    eventKey: `proof:${position.jobId}:${position.epoch}:${position.index}`,
+    phase: 'mate_proof', costKind: 'resource', amountUsd: amount, durationMs: boundedElapsedMs,
+    evidence: { measured: true, measuredElapsedMs: elapsedMs, boundedByMs: COST_MODEL.maxProofRuntimeMs }, now: Date.now(),
+  });
+  if (!settled) throw new Error('proof_cost_settlement_failed');
+  return amount;
 }
 
 function fencingToken(position: ClaimedPosition, attempt: number): string {
@@ -563,11 +630,10 @@ async function tryDestroyDuringSearch(
 }
 
 async function quarantineUnknownExecution(
-  position: ClaimedPosition, profile: AnalysisProfile, env: JobEnvironment, driver: DriverClient,
+  position: ClaimedPosition, env: JobEnvironment, driver: DriverClient,
   attempt: number, detail: string,
 ): Promise<'done' | 'redeliver'> {
   const coordinator = operationStub(env);
-  await recordFailureCost(position, profile, env, attempt);
   try {
     if (!driver.destroy) throw new Error('container_destroy_unavailable');
     await driver.destroy();
@@ -582,15 +648,15 @@ async function quarantineUnknownExecution(
   return 'done';
 }
 
-async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironment, driver: DriverClient): Promise<'done' | 'skipped' | 'redeliver' | 'busy' | 'cancelled'> {
+async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironment, driver: DriverClient, chunk: JobChunk): Promise<'done' | 'skipped' | 'redeliver' | 'busy' | 'cancelled'> {
   const coordinator = operationStub(env);
   const profile = ANALYSIS_PROFILES[initial.identity.profileId];
-  const preDispatchRuntime = await verifyDriverRuntime(driver, env, initial.identity);
-  if (preDispatchRuntime === 'mismatch') {
+  const preDispatchRuntime = await verifyAndRecordRuntime(driver, env, initial, chunk, 'pre');
+  if (preDispatchRuntime.status === 'mismatch') {
     await coordinator.failPosition(initial, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
     return 'done';
   }
-  if (preDispatchRuntime === 'unreachable') {
+  if (preDispatchRuntime.status === 'unreachable') {
     // Nothing was dispatched, so the position's engine work provably did not
     // run. Best effort: destroy the suspect container; fall back to releasing
     // the claim so the position can be redelivered without waiting for lease
@@ -644,6 +710,7 @@ async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironm
     await driver.prepareSigstop(fence);
   }
 
+  const analysisStartedAt = Date.now();
   const responsePromise = analyzeWithServerProfile({
     sfen: current.sfen, movetimeMs: profile.movetimeMs, multipv: profile.requestedMultiPv,
     threads: profile.threads, hashMb: profile.hashMb, fenceToken: fence,
@@ -662,10 +729,14 @@ async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironm
   await destroyTask;
   let value: unknown;
   try { value = await response.json() as unknown; } catch { value = null; }
+  const analysisWallMs = Math.max(0, Date.now() - analysisStartedAt);
+  const maxAttemptWallMs = profile.movetimeMs + COST_MODEL.searchDeadlineMs + COST_MODEL.processCleanupMs + 500;
+  const boundedAttemptWallMs = Math.min(analysisWallMs, maxAttemptWallMs);
+  const measuredAttemptCost = estimateRuntimeCostUsd(boundedAttemptWallMs, current.identity.instanceType);
   if (!response.ok) {
     const failure = engineFailure(response.status, value);
-    if (failure.uncertain) return quarantineUnknownExecution(current, profile, env, driver, attempt, failure.code);
-    await recordAttemptCostOrThrow(env, current, attempt, estimateAttemptCostUsd(profile.movetimeMs + 5_500, current.identity.instanceType), null);
+    if (failure.uncertain) return quarantineUnknownExecution(current, env, driver, attempt, failure.code);
+    await recordAttemptCostOrThrow(env, current, attempt, measuredAttemptCost, null, boundedAttemptWallMs);
     if (failure.transient && attempt < 2) {
       await coordinator.releaseForRetry(current, failure.code, Date.now());
       return 'redeliver';
@@ -675,15 +746,21 @@ async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironm
   }
   const normalized = resultWithJobIdentity(value, current.identity, current.sfen, profile.requestedMultiPv);
   if (!normalized) {
-    await recordFailureCost(current, profile, env, attempt);
+    await recordAttemptCostOrThrow(env, current, attempt, measuredAttemptCost, null, boundedAttemptWallMs);
     await coordinator.failPosition(current, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
     return 'done';
   }
   const result = normalized.result;
   const terminal = result.terminal as AnalysisTerminal;
-  const elapsedCost = estimateAttemptCostUsd(result.elapsedMs, current.identity.instanceType);
+  if (result.restartCount > 0) {
+    await coordinator.recordEngineRestart({
+      jobId: current.jobId, epoch: current.epoch, profileId: current.identity.profileId,
+      engineEpoch: result.engineEpoch, restartCount: result.restartCount,
+      chunkStart: chunk.start_idx, chunkEnd: chunk.end_idx, now: Date.now(),
+    });
+  }
   if (result.terminal === 'cancelled') {
-    await recordAttemptCostOrThrow(env, current, attempt, elapsedCost, result.elapsedMs);
+    await recordAttemptCostOrThrow(env, current, attempt, measuredAttemptCost, result.elapsedMs, boundedAttemptWallMs);
     const job = await env.DB.prepare('SELECT status FROM jobs WHERE id = ? AND epoch = ?')
       .bind(current.jobId, current.epoch).first<{ status: string }>();
     if (job?.status === 'cancelling') {
@@ -696,7 +773,7 @@ async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironm
   }
   const disposition = classifyTerminal(terminal);
   if (disposition.evaluationMissing) {
-    await recordAttemptCostOrThrow(env, current, attempt, elapsedCost, result.elapsedMs);
+    await recordAttemptCostOrThrow(env, current, attempt, measuredAttemptCost, result.elapsedMs, boundedAttemptWallMs);
     await coordinator.failPosition(current, terminal === 'resign' ? 'evaluation_missing:resign' : 'incomplete', Date.now(), {
       evaluationMissing: true, resultJson: JSON.stringify(result), statsJson: normalized.statsJson,
     });
@@ -706,7 +783,7 @@ async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironm
     const transient = terminal === 'position_failed:engine_timeout' || terminal === 'position_failed:engine_exit' ||
       terminal === 'position_failed:engine_restart_failed';
     const fatalProtocol = !transient;
-    await recordAttemptCostOrThrow(env, current, attempt, elapsedCost, result.elapsedMs);
+    await recordAttemptCostOrThrow(env, current, attempt, measuredAttemptCost, result.elapsedMs, boundedAttemptWallMs);
     if (transient && attempt < 2) {
       await coordinator.releaseForRetry(current, terminal, Date.now());
       return 'redeliver';
@@ -716,31 +793,32 @@ async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironm
     });
     return 'done';
   }
-  const postAnalysisRuntime = await verifyDriverRuntime(driver, env, current.identity);
-  if (postAnalysisRuntime !== 'ok') {
-    if (postAnalysisRuntime === 'mismatch') {
-      await recordAttemptCostOrThrow(env, current, attempt, elapsedCost, result.elapsedMs);
+  await recordAttemptCostOrThrow(env, current, attempt, measuredAttemptCost, result.elapsedMs, boundedAttemptWallMs);
+  const postAnalysisRuntime = await verifyAndRecordRuntime(driver, env, current, chunk, 'post-analysis');
+  if (postAnalysisRuntime.status !== 'ok') {
+    if (postAnalysisRuntime.status === 'mismatch') {
       await coordinator.failPosition(current, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
       return 'done';
     }
-    return quarantineUnknownExecution(current, profile, env, driver, attempt, 'position_failed:driver_unreachable');
+    return quarantineUnknownExecution(current, env, driver, attempt, 'position_failed:driver_unreachable');
   }
   const proofOutcome = terminal === 'ok' || terminal === 'mate'
     ? await proveMate(driver, current.sfen)
     : { proof: null, invalid: false, elapsedMs: 0 } satisfies ProofOutcome;
-  const totalAmount = estimateAttemptCostUsd(result.elapsedMs + proofOutcome.elapsedMs, current.identity.instanceType);
-  await recordAttemptCostOrThrow(env, current, attempt, totalAmount, result.elapsedMs);
-  const postProofRuntime = await verifyDriverRuntime(driver, env, current.identity);
-  if (proofOutcome.invalid || postProofRuntime === 'mismatch') {
+  const proofAmount = terminal === 'ok' || terminal === 'mate'
+    ? await recordProofCostOrThrow(env, current, proofOutcome.elapsedMs)
+    : 0;
+  const postProofRuntime = await verifyAndRecordRuntime(driver, env, current, chunk, 'post-proof');
+  if (proofOutcome.invalid || postProofRuntime.status === 'mismatch') {
     await coordinator.failPosition(current, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
     return 'done';
   }
-  if (postProofRuntime === 'unreachable') {
-    return quarantineUnknownExecution(current, profile, env, driver, attempt, 'position_failed:driver_unreachable');
+  if (postProofRuntime.status === 'unreachable') {
+    return quarantineUnknownExecution(current, env, driver, attempt, 'position_failed:driver_unreachable');
   }
   const seq = await coordinator.commitPosition(
     current, JSON.stringify(result), normalized.statsJson, proofOutcome.proof ? JSON.stringify(proofOutcome.proof) : null,
-    disposition.cacheEligible, false, totalAmount, result.elapsedMs, Date.now(),
+    disposition.cacheEligible, false, measuredAttemptCost + proofAmount, result.elapsedMs, Date.now(),
   );
   return seq === null ? 'skipped' : 'done';
 }
@@ -752,6 +830,24 @@ function validChunk(value: unknown): value is JobChunk {
     Number.isSafeInteger(value.epoch) && Number.isSafeInteger(value.start_idx) && Number.isSafeInteger(value.end_idx) &&
     value.start_idx >= 0 && value.end_idx > value.start_idx && value.end_idx <= MAX_JOB_POSITIONS && value.end_idx - value.start_idx <= 8;
 }
+
+async function settleInterPositionRuntime(position: ClaimedPosition, previousIndex: number, now: number, env: JobEnvironment): Promise<void> {
+  const previous = await env.DB.prepare('SELECT updated_at FROM positions WHERE job_id = ? AND position_index = ?')
+    .bind(position.jobId, previousIndex).first<{ updated_at: string }>();
+  if (!previous) throw new Error('inter_position_previous_missing');
+  const measuredElapsedMs = Math.max(0, now - Date.parse(previous.updated_at));
+  if (!Number.isFinite(measuredElapsedMs)) throw new Error('inter_position_timestamp_invalid');
+  const durationMs = Math.min(measuredElapsedMs, COST_MODEL.interPositionMaxMs);
+  const settled = await operationStub(env).settleReservedPhase({
+    jobId: position.jobId, epoch: position.epoch, partKey: `interposition:${previousIndex}`,
+    eventKey: `interposition:${position.jobId}:${position.epoch}:${previousIndex}`,
+    phase: 'inter_position_runtime', costKind: 'resource',
+    amountUsd: estimateRuntimeCostUsd(durationMs, position.identity.instanceType), durationMs,
+    evidence: { measuredElapsedMs, boundedByMs: COST_MODEL.interPositionMaxMs, fromPosition: previousIndex, toPosition: position.index }, now,
+  });
+  if (!settled) throw new Error('inter_position_cost_settlement_failed');
+}
+
 async function processChunk(message: JobChunk, env: JobEnvironment, drivers: ProfileDriverRouter): Promise<'ack' | 'retry'> {
   if (!validChunk(message)) throw new TypeError('invalid_queue_message');
   const coordinator = operationStub(env);
@@ -763,7 +859,8 @@ async function processChunk(message: JobChunk, env: JobEnvironment, drivers: Pro
       return 'ack';
     }
     if (claim.kind !== 'claimed') continue;
-    const result = await processClaimedPosition(claim.value, env, drivers(claim.value.identity.profileId));
+    if (index > message.start_idx) await settleInterPositionRuntime(claim.value, index - 1, Date.now(), env);
+    const result = await processClaimedPosition(claim.value, env, drivers(claim.value.identity.profileId), message);
     if (result === 'redeliver' || result === 'busy') return 'retry';
     if (result === 'cancelled') return 'ack';
   }

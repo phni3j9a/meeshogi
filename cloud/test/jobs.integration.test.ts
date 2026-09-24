@@ -6,7 +6,8 @@ import type { JobChunk } from '../src/job-types';
 import initMigration from '../migrations/0001_init.sql?raw';
 import hardeningMigration from '../migrations/0002_async_jobs_hardening.sql?raw';
 import recoveryMigration from '../migrations/0003_recovery_cost_identity_faults.sql?raw';
-import { ANALYSIS_PROFILES, estimateAttemptCostUsd, estimateJobReservationUsd, executionIdentityComponents, type AnalysisProfile, type ArtifactProvenance, type JobIdentity } from '../src/job-types';
+import costMigration from '../migrations/0004_chunk_cost_ledger.sql?raw';
+import { ANALYSIS_PROFILES, COST_MODEL, estimateAttemptCostUsd, estimateChunkReservationParts, estimateChunkReservationUsd, estimateJobReferenceUsd, estimateRuntimeCostUsd, executionIdentityComponents, type AnalysisProfile, type ArtifactProvenance, type JobIdentity } from '../src/job-types';
 
 const OWNER_TOKEN = 'local-owner-token-a';
 const OTHER_TOKEN = 'local-owner-token-b';
@@ -22,6 +23,7 @@ const MIGRATIONS = [
   { name: '0001_init.sql', queries: initMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
   { name: '0002_async_jobs_hardening.sql', queries: hardeningMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
   { name: '0003_recovery_cost_identity_faults.sql', queries: recoveryMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
+  { name: '0004_chunk_cost_ledger.sql', queries: costMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
 ];
 
 const FIXTURE_MOVES: Record<number, string[]> = {
@@ -82,23 +84,110 @@ function executionIdentityComponentsFor(profile: AnalysisProfile, engineId: stri
   return executionIdentityComponents(profile, engineId, modelId, digest, artifacts);
 }
 
-async function seedQueuedPosition(ownerId = 'owner-a'): Promise<{ jobId: string; identity: JobIdentity }> {
+async function seedQueuedPosition(ownerId = 'owner-a', withReservation = false): Promise<{ jobId: string; identity: JobIdentity }> {
   const jobId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const jobIdentity = await identity('free-v1');
-  await env.DB.batch([
+  const parts = withReservation ? estimateChunkReservationParts(ANALYSIS_PROFILES['free-v1'], 0, 1, true) : [];
+  const reservation = parts.reduce((sum, part) => sum + part.amountUsd, 0);
+  const positionReservation = parts.filter((part) => part.positionIndex === 0).reduce((sum, part) => sum + part.amountUsd, 0);
+  const statements = [
     env.DB.prepare(
       'INSERT INTO jobs (id, owner_id, status, profile_id, profile_version, engine_id, model_id, instance_type, position_count, epoch, created_at, updated_at, execution_identity_hash, cost_reserved, cost_day_utc, result_seq_next, engine_binary_digest_label, vcpu, cost_estimate_usd, execution_identity_json) ' +
-      "VALUES (?, ?, 'queued', 'free-v1', 2, ?, ?, 'standard-2', 1, 1, ?, ?, ?, 0, ?, 0, ?, ?, 0, ?)",
+      "VALUES (?, ?, 'queued', 'free-v1', 2, ?, ?, 'standard-2', 1, 1, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?)",
     ).bind(jobId, ownerId, jobIdentity.engineId, jobIdentity.modelId, createdAt, createdAt, jobIdentity.executionIdentityHash,
-      createdAt.slice(0, 10), jobIdentity.engineBinaryDigestLabel, jobIdentity.vcpu, JSON.stringify(jobIdentity)),
+      reservation, createdAt.slice(0, 10), jobIdentity.engineBinaryDigestLabel, jobIdentity.vcpu, JSON.stringify(jobIdentity)),
     env.DB.prepare(
       'INSERT INTO positions (job_id, position_index, sfen, profile_id, profile_version, engine_id, model_id, updated_at, execution_identity_hash, cost_reserved) ' +
       "VALUES (?, 0, ?, 'free-v1', 2, ?, ?, ?, ?, 0)",
     ).bind(jobId, SFEN, jobIdentity.engineId, jobIdentity.modelId, createdAt, jobIdentity.executionIdentityHash),
-    env.DB.prepare('INSERT INTO outbox (job_id, epoch, start_idx, end_idx, created_at, sent_at) VALUES (?, 1, 0, 1, ?, ?)')
-      .bind(jobId, createdAt, createdAt),
+    env.DB.prepare('INSERT INTO outbox (job_id, epoch, start_idx, end_idx, created_at, sent_at, dispatchable) VALUES (?, 1, 0, 1, ?, ?, ?)')
+      .bind(jobId, createdAt, createdAt, withReservation ? 1 : 0),
+  ];
+  if (withReservation) {
+    const reservationKey = `job:${jobId}:1:0:1`;
+    const day = createdAt.slice(0, 10);
+    statements[1] = env.DB.prepare(
+      'INSERT INTO positions (job_id, position_index, sfen, profile_id, profile_version, engine_id, model_id, updated_at, execution_identity_hash, cost_reserved) ' +
+      "VALUES (?, 0, ?, 'free-v1', 2, ?, ?, ?, ?, ?)",
+    ).bind(jobId, SFEN, jobIdentity.engineId, jobIdentity.modelId, createdAt, jobIdentity.executionIdentityHash, positionReservation);
+    statements.push(
+      env.DB.prepare('INSERT INTO cost_reservation_batches(reservation_key, job_id, epoch, start_idx, end_idx, amount_usd, reserved_day_utc, created_at) VALUES (?, ?, 1, 0, 1, ?, ?, ?)')
+        .bind(reservationKey, jobId, reservation, day, createdAt),
+      env.DB.prepare('INSERT INTO daily_cost(day_utc, spent_usd, reserved_usd, updated_at) VALUES (?, 0, ?, ?) ON CONFLICT(day_utc) DO UPDATE SET reserved_usd = reserved_usd + excluded.reserved_usd, updated_at = excluded.updated_at')
+        .bind(day, reservation, createdAt),
+      env.DB.prepare(
+        `INSERT INTO cost_reservation_parts(part_key, reservation_key, job_id, epoch, start_idx, end_idx, position_index, phase, cost_kind, amount_usd, remaining_usd, reserved_day_utc, created_at) VALUES ${parts.map(() => '(?, ?, ?, 1, 0, 1, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+      ).bind(...parts.flatMap((part) => [part.partKey, reservationKey, jobId, part.positionIndex, part.phase, part.costKind, part.amountUsd, part.amountUsd, day, createdAt])),
+    );
+  }
+  await env.DB.batch(statements);
+  return { jobId, identity: jobIdentity };
+}
+
+async function markChunkTerminal(jobId: string, start: number, end: number, status: 'done' | 'failed' = 'done'): Promise<void> {
+  const now = new Date().toISOString();
+  const terminal = status === 'done' ? 'ok' : 'incomplete';
+  await env.DB.batch([
+    env.DB.prepare(
+      'UPDATE positions SET status = ?, engine_terminal = ?, error_detail = ?, result_json = ?, result_seq = position_index + 1, updated_at = ? ' +
+      'WHERE job_id = ? AND position_index >= ? AND position_index < ?',
+    ).bind(status, terminal, status === 'done' ? null : 'incomplete', JSON.stringify({ terminal }), now, jobId, start, end),
+    env.DB.prepare(
+      "UPDATE jobs SET status = 'running', started_at = COALESCE(started_at, ?), result_seq_next = MAX(result_seq_next, ?), " +
+      "committed_count = (SELECT COUNT(*) FROM positions WHERE job_id = ? AND status = 'done'), updated_at = ? WHERE id = ?",
+    ).bind(now, end, jobId, now, jobId),
   ]);
+}
+
+async function seedSyntheticChunkJob(positionCount: number): Promise<{ jobId: string; identity: JobIdentity }> {
+  const jobId = crypto.randomUUID();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const day = now.slice(0, 10);
+  const jobIdentity = await identity('free-v1');
+  const headEnd = Math.min(8, positionCount);
+  const reservationKey = `job:${jobId}:1:0:${headEnd}`;
+  const parts = estimateChunkReservationParts(ANALYSIS_PROFILES['free-v1'], 0, headEnd, true);
+  const reservation = parts.reduce((sum, part) => sum + part.amountUsd, 0);
+  const positionRows = Array.from({ length: positionCount }, (_, index) => {
+    const costReserved = parts.filter((part) => part.positionIndex === index).reduce((sum, part) => sum + part.amountUsd, 0);
+    return [jobId, index, SFEN, 'free-v1', 2, jobIdentity.engineId, jobIdentity.modelId, now, jobIdentity.executionIdentityHash, costReserved];
+  });
+  const statements = [
+    env.DB.prepare(
+      'INSERT INTO jobs (id, owner_id, status, profile_id, profile_version, engine_id, model_id, instance_type, position_count, epoch, created_at, updated_at, execution_identity_hash, cost_reserved, cost_day_utc, result_seq_next, engine_binary_digest_label, vcpu, cost_estimate_usd, execution_identity_json) ' +
+      "VALUES (?, 'owner-a', 'queued', 'free-v1', 2, ?, ?, 'standard-2', ?, 1, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+    ).bind(jobId, jobIdentity.engineId, jobIdentity.modelId, positionCount, now, now, jobIdentity.executionIdentityHash,
+      reservation, day, jobIdentity.engineBinaryDigestLabel, jobIdentity.vcpu, estimateJobReferenceUsd(ANALYSIS_PROFILES['free-v1'], positionCount), JSON.stringify(jobIdentity)),
+    env.DB.prepare('INSERT INTO cost_reservation_batches(reservation_key, job_id, epoch, start_idx, end_idx, amount_usd, reserved_day_utc, created_at) VALUES (?, ?, 1, 0, ?, ?, ?, ?)')
+      .bind(reservationKey, jobId, headEnd, reservation, day, now),
+    env.DB.prepare('INSERT INTO daily_cost(day_utc, spent_usd, reserved_usd, updated_at) VALUES (?, 0, ?, ?) ON CONFLICT(day_utc) DO UPDATE SET reserved_usd = reserved_usd + excluded.reserved_usd, updated_at = excluded.updated_at')
+      .bind(day, reservation, now),
+    env.DB.prepare('INSERT INTO quota_usage(owner_id, day_utc, profile_id, jobs_reserved, positions_reserved, updated_at) VALUES (\'owner-a\', ?, \'free-v1\', 1, ?, ?)')
+      .bind(day, positionCount, now),
+    ...Array.from({ length: Math.ceil(positionCount / 8) }, (_, chunkIndex) => {
+      const start = chunkIndex * 8;
+      const end = Math.min(start + 8, positionCount);
+      return env.DB.prepare(
+        'INSERT INTO outbox(job_id, epoch, start_idx, end_idx, created_at, sent_at, dispatchable) VALUES (?, 1, ?, ?, ?, NULL, ?)',
+      ).bind(jobId, start, end, now, start === 0 ? 1 : 0);
+    }),
+    ...Array.from({ length: Math.ceil(positionRows.length / 9) }, (_, batchIndex) => {
+      const rows = positionRows.slice(batchIndex * 9, batchIndex * 9 + 9);
+      return env.DB.prepare(
+        `INSERT INTO positions(job_id, position_index, sfen, profile_id, profile_version, engine_id, model_id, updated_at, execution_identity_hash, cost_reserved) VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+      ).bind(...rows.flat());
+    }),
+    ...Array.from({ length: Math.ceil(parts.length / 7) }, (_, batchIndex) => {
+      const rows = parts.slice(batchIndex * 7, batchIndex * 7 + 7);
+      return env.DB.prepare(
+        `INSERT INTO cost_reservation_parts(part_key, reservation_key, job_id, epoch, start_idx, end_idx, position_index, phase, cost_kind, amount_usd, remaining_usd, reserved_day_utc, created_at) VALUES ${rows.map(() => '(?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+      ).bind(...rows.flatMap((part) => [part.partKey, reservationKey, jobId, headEnd, part.positionIndex, part.phase, part.costKind, part.amountUsd, part.amountUsd, day, now]));
+    }),
+  ];
+  await env.DB.batch(statements);
+  await env.JOB_COORDINATOR.getByName('staging-global').costSnapshot(nowMs);
   return { jobId, identity: jobIdentity };
 }
 
@@ -237,10 +326,15 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
       committedCount: 1,
       profile: { id: 'free-v1', version: 2, engineId: 'YaneuraOu NNUE 9.70git 64AVX2', modelId: 'local-test-model', instanceType: 'standard-2', vcpu: 1 },
       counts: { pending: 0, running: 0, processed: 1, succeeded: 1, incompleteOrMissing: 0, failed: 0, terminal: 0 },
-      costWarning: false,
+      costEnvelopeVersion: 2, costWarning: false,
     });
     expect(typeof statusBody.estimatedCostUsd).toBe('number');
-    expect(statusBody.costs).toMatchObject({ observedEngineCostUsd: null, invoice: false });
+    expect(statusBody.costs).toMatchObject({
+      observedEngineCostUsd: null, invoice: false,
+      currentOutstandingReservationUsd: 0, unobtainedInvoiceUsd: null,
+    });
+    expect((statusBody.costs as Record<string, number>).settledResourceEstimateUsd).toBeGreaterThan(0);
+    expect((statusBody.costs as Record<string, number>).settledServiceEstimateUsd).toBeGreaterThan(0);
     const resultsResponse = await SELF.fetch(request(`/v1/jobs/${jobId}/results?limit=1`, OWNER_TOKEN));
     const resultsBody = await resultsResponse.json() as { results: Array<Record<string, unknown>>; costWarning: boolean; resumeCursor: string; hasMore: boolean };
     expect(resultsResponse.status).toBe(200);
@@ -260,7 +354,9 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     const settledAttempt = await env.DB.prepare('SELECT amount_usd, engine_ms FROM cost_attempt_ledger WHERE job_id = ? AND position_index = 0 AND attempt = 1')
       .bind(jobId).first<{ amount_usd: number; engine_ms: number }>();
     expect(settledAttempt?.engine_ms).toBe(result.elapsedMs);
-    expect(settledAttempt?.amount_usd).toBeGreaterThan(estimateAttemptCostUsd(Number(result.elapsedMs), 'standard-2'));
+    const phaseAttempt = await env.DB.prepare("SELECT amount_usd, duration_ms FROM cost_phase_ledger WHERE job_id = ? AND phase = 'engine_attempt'")
+      .bind(jobId).first<{ amount_usd: number; duration_ms: number }>();
+    expect(phaseAttempt?.amount_usd).toBeCloseTo(estimateRuntimeCostUsd(Number(phaseAttempt?.duration_ms), 'standard-2'), 8);
     expect(resultsBody.costWarning).toBe(false);
     expect(resultsBody.hasMore).toBe(false);
     expect(resultsBody.resumeCursor).toBeTruthy();
@@ -697,7 +793,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
   });
 
   it('keeps global slot and position claim atomic across injected D1 failures', async () => {
-    const seeded = await seedQueuedPosition();
+    const seeded = await seedQueuedPosition('owner-a', true);
     const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
     await env.DB.prepare(
       "CREATE TRIGGER fail_position_claim BEFORE UPDATE ON positions WHEN NEW.status = 'running' BEGIN SELECT RAISE(ABORT, 'injected_position_claim_failure'); END",
@@ -723,8 +819,9 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
   });
 
   it('settles attempt spend atomically with its idempotency ledger row', async () => {
-    const seeded = await seedQueuedPosition();
+    const seeded = await seedQueuedPosition('owner-a', true);
     const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const amount = estimateAttemptCostUsd(300, 'standard-2');
     const position = {
       jobId: seeded.jobId, ownerId: 'owner-a', epoch: 1, index: 0, sfen: SFEN, attempts: 1,
       deliveryCount: 1, leaseId: crypto.randomUUID(), cancelRequested: false, identity: seeded.identity,
@@ -732,21 +829,36 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     await env.DB.prepare(
       "CREATE TRIGGER fail_attempt_ledger BEFORE INSERT ON cost_attempt_ledger BEGIN SELECT RAISE(ABORT, 'injected_attempt_ledger_failure'); END",
     ).run();
-    await expect(coordinator.recordAttemptCost(position, 1, 0.01, 800, Date.now())).resolves.toBe(false);
+    await expect(coordinator.recordAttemptCost(position, 1, amount, 300, Date.now(), 300)).resolves.toBe(false);
     await env.DB.prepare('DROP TRIGGER fail_attempt_ledger').run();
-    const spent = await env.DB.prepare('SELECT COALESCE((SELECT spent_usd FROM daily_cost WHERE day_utc = ?), 0) AS spent')
+    let spent = await env.DB.prepare('SELECT spent_usd AS spent FROM daily_cost WHERE day_utc = ?')
       .bind(new Date().toISOString().slice(0, 10)).first<{ spent: number }>();
+    let held = await env.DB.prepare("SELECT remaining_usd FROM cost_reservation_parts WHERE job_id = ? AND epoch = 1 AND part_key = 'attempt:0:1'")
+      .bind(seeded.jobId).first<{ remaining_usd: number }>();
+    expect(spent?.spent).toBe(0);
+    expect(held?.remaining_usd).toBeGreaterThan(amount);
+
+    await expect(coordinator.recordAttemptCost(position, 1, amount, 300, Date.now(), 300)).resolves.toBe(true);
+    spent = await env.DB.prepare('SELECT spent_usd AS spent FROM daily_cost WHERE day_utc = ?')
+      .bind(new Date().toISOString().slice(0, 10)).first<{ spent: number }>();
+    const once = Number(spent?.spent ?? 0);
+    await expect(coordinator.recordAttemptCost(position, 1, amount, 300, Date.now(), 300)).resolves.toBe(true);
+    spent = await env.DB.prepare('SELECT spent_usd AS spent FROM daily_cost WHERE day_utc = ?')
+      .bind(new Date().toISOString().slice(0, 10)).first<{ spent: number }>();
+    held = await env.DB.prepare("SELECT remaining_usd FROM cost_reservation_parts WHERE job_id = ? AND epoch = 1 AND part_key = 'attempt:0:1'")
+      .bind(seeded.jobId).first<{ remaining_usd: number }>();
     const ledger = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_attempt_ledger WHERE job_id = ?').bind(seeded.jobId)
       .first<{ count: number }>();
-    expect(spent?.spent).toBe(0);
-    expect(ledger?.count).toBe(0);
+    expect(spent?.spent).toBe(once);
+    expect(held?.remaining_usd).toBeLessThan(estimateAttemptCostUsd(11_500, 'standard-2'));
+    expect(ledger?.count).toBe(1);
   });
 
   it('carries an outstanding reservation across UTC midnight into the next-day cap', async () => {
     await holdLocalSearchSlot();
     const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
     const profile = ANALYSIS_PROFILES['free-v1'];
-    const reservation = estimateJobReservationUsd(profile, 1);
+    const reservation = estimateChunkReservationUsd(profile, 1, true);
     const midnight = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
     const previousDay = midnight - 60_000;
     const nextDay = midnight + 60_000;
@@ -762,7 +874,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
       'INSERT INTO daily_cost(day_utc, spent_usd, reserved_usd, updated_at) VALUES (?, ?, 0, ?)'
     ).bind(new Date(nextDay).toISOString().slice(0, 10), nextDaySpend, new Date(nextDay).toISOString()).run();
     const snapshot = await coordinator.costSnapshot(nextDay);
-    expect(snapshot.estimatedCostUsd).toBeCloseTo(nextDaySpend + reservation, 8);
+    expect(snapshot.estimatedCostUsd).toBeCloseTo(nextDaySpend + COST_MODEL.dailyServiceUsd + reservation, 8);
 
     const nextAdmission = await coordinator.admit({
       ownerId: 'owner-b', idempotencyKey: 'after-midnight', payloadSha256: '2'.repeat(64),
@@ -775,8 +887,8 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     await holdLocalSearchSlot();
     const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
     const profile = ANALYSIS_PROFILES['free-v1'];
-    const reservation = estimateJobReservationUsd(profile, 1);
-    await seedCost(1 - reservation * 1.5);
+    const reservation = estimateChunkReservationUsd(profile, 1, true);
+    await seedCost(1 - reservation * 1.5 - COST_MODEL.dailyServiceUsd);
     const jobIdentity = await identity('free-v1');
     const now = Date.now();
     const admit = (ownerId: string, key: string) => coordinator.admit({
@@ -940,24 +1052,129 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     ]);
   });
 
-  it('caps admissions at one dollar and stops an active job after its in-flight position', async () => {
+  it('rejects a head-chunk admission when the daily one-dollar cap is exhausted', async () => {
     await seedCost(1);
     const capped = await createJob([SFEN]);
     expect(capped.response.status).toBe(503);
     expect(capped.body.error).toBe('daily_cost_cap');
+  });
 
-    await env.DB.prepare('DELETE FROM daily_cost').run();
-    const reservation = estimateJobReservationUsd(ANALYSIS_PROFILES['free-v1'], 3);
-    await seedCost(1 - reservation * 1.1);
-    const created = await createJob(sfenAt(908), { moves: ['1c1d', '2g2f'] });
-    expect(created.response.status).toBe(202);
-    const jobId = String(created.body.jobId);
-    await waitForPosition(jobId, 0, 'done');
-    await waitForPosition(jobId, 1, 'running');
-    await seedCost(0.2);
-    const finished = await waitForJob(jobId, ['partial']);
-    expect(finished.stopReason).toBe('cost_cap');
-    expect(finished.counts).toEqual({ pending: 1, running: 0, done: 2, failed: 0 });
+  it('admits a 151-position job under the one-dollar cap and rolls one reservation across every chunk', async () => {
+    await holdLocalSearchSlot();
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const jobIdentity = await identity('free-v1');
+    const positions = Array.from({ length: 151 }, () => SFEN);
+    const admitted = await coordinator.admit({
+      ownerId: 'owner-a', idempotencyKey: 'long-rolling-cost', payloadSha256: '3'.repeat(64),
+      profile: 'free-v1', positions, label: null, identity: jobIdentity, now: Date.now(),
+    });
+    expect(admitted.ok).toBe(true);
+    if (!admitted.ok) return;
+    const jobId = admitted.value.jobId;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const initial = await env.DB.prepare('SELECT cost_reserved, cost_estimate_usd FROM jobs WHERE id = ?').bind(jobId)
+      .first<{ cost_reserved: number; cost_estimate_usd: number }>();
+    expect(Number(initial?.cost_reserved)).toBeLessThanOrEqual(estimateChunkReservationUsd(ANALYSIS_PROFILES['free-v1'], 8, true));
+    expect(initial?.cost_estimate_usd).toBeGreaterThan(Number(initial?.cost_reserved ?? 0));
+
+    for (let start = 0; start < positions.length; start += 8) {
+      const end = Math.min(start + 8, positions.length);
+      await markChunkTerminal(jobId, start, end);
+      await coordinator.finishChunk(jobId, 1, Date.now());
+      if (end < positions.length) await new Promise((resolve) => setTimeout(resolve, 250));
+      const outstanding = await env.DB.prepare(
+        'SELECT COUNT(*) AS count FROM cost_reservation_batches b WHERE b.job_id = ? AND EXISTS (SELECT 1 FROM cost_reservation_parts p WHERE p.reservation_key = b.reservation_key AND p.remaining_usd > 0)',
+      ).bind(jobId).first<{ count: number }>();
+      const reservation = await env.DB.prepare('SELECT cost_reserved FROM jobs WHERE id = ?').bind(jobId)
+        .first<{ cost_reserved: number }>();
+      const dispatchable = await env.DB.prepare('SELECT COUNT(*) AS count FROM outbox WHERE job_id = ? AND dispatchable = 1 AND completed_at IS NULL')
+        .bind(jobId).first<{ count: number }>();
+      expect(Number(outstanding?.count ?? 0)).toBe(end < positions.length ? 1 : 0);
+      expect(Number(dispatchable?.count ?? 0)).toBe(end < positions.length ? 1 : 0);
+      if (end < positions.length) {
+        expect(Number(reservation?.cost_reserved ?? 0)).toBeCloseTo(estimateChunkReservationUsd(ANALYSIS_PROFILES['free-v1'], Math.min(8, positions.length - end)), 8);
+      } else {
+        expect(Number(reservation?.cost_reserved ?? 0)).toBeCloseTo(0, 8);
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const final = await env.DB.prepare('SELECT status, committed_count, stop_reason FROM jobs WHERE id = ?').bind(jobId)
+      .first<{ status: string; committed_count: number; stop_reason: string | null }>();
+    const batches = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_batches WHERE job_id = ?').bind(jobId)
+      .first<{ count: number }>();
+    const snapshot = await coordinator.costSnapshot(Date.now());
+    expect(final).toEqual({ status: 'completed', committed_count: 151, stop_reason: null });
+    expect(batches?.count).toBe(19);
+    expect(snapshot.estimatedCostUsd).toBeLessThan(1);
+  }, 60_000);
+
+  it('keeps the current chunk reserved before terminalization and tolerates duplicate finishChunk delivery', async () => {
+    await holdLocalSearchSlot();
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const { jobId } = await seedSyntheticChunkJob(16);
+    await coordinator.finishChunk(jobId, 1, Date.now());
+    let dispatchable = await env.DB.prepare('SELECT start_idx FROM outbox WHERE job_id = ? AND dispatchable = 1 AND completed_at IS NULL')
+      .bind(jobId).first<{ start_idx: number }>();
+    let batchCount = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_batches WHERE job_id = ?')
+      .bind(jobId).first<{ count: number }>();
+    expect(dispatchable?.start_idx).toBe(0);
+    expect(batchCount?.count).toBe(1);
+
+    await markChunkTerminal(jobId, 0, 8);
+    await coordinator.finishChunk(jobId, 1, Date.now());
+    dispatchable = await env.DB.prepare('SELECT start_idx FROM outbox WHERE job_id = ? AND dispatchable = 1 AND completed_at IS NULL')
+      .bind(jobId).first<{ start_idx: number }>();
+    batchCount = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_batches WHERE job_id = ?')
+      .bind(jobId).first<{ count: number }>();
+    const outstanding = await env.DB.prepare('SELECT cost_reserved FROM jobs WHERE id = ?').bind(jobId)
+      .first<{ cost_reserved: number }>();
+    expect(dispatchable?.start_idx).toBe(8);
+    expect(batchCount?.count).toBe(2);
+    expect(outstanding?.cost_reserved).toBeCloseTo(estimateChunkReservationUsd(ANALYSIS_PROFILES['free-v1'], 8), 8);
+    await coordinator.finishChunk(jobId, 1, Date.now());
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    batchCount = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_batches WHERE job_id = ?')
+      .bind(jobId).first<{ count: number }>();
+    expect(batchCount?.count).toBe(2);
+  });
+
+  it('terminalizes cost_cap atomically after keeping results and quota when the next reservation will not fit', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const { jobId } = await seedSyntheticChunkJob(16);
+    const headReservation = estimateChunkReservationUsd(ANALYSIS_PROFILES['free-v1'], 8, true);
+    await seedCost(1 - COST_MODEL.dailyServiceUsd - headReservation - 0.002);
+    await coordinator.finishChunk(jobId, 1, Date.now());
+    let job = await env.DB.prepare('SELECT status, stop_reason, cost_reserved FROM jobs WHERE id = ?').bind(jobId)
+      .first<{ status: string; stop_reason: string | null; cost_reserved: number }>();
+    expect(job?.stop_reason).toBeNull();
+    expect(Number(job?.cost_reserved)).toBeGreaterThan(0);
+    await markChunkTerminal(jobId, 0, 8);
+    await coordinator.finishChunk(jobId, 1, Date.now());
+    await coordinator.finishChunk(jobId, 1, Date.now());
+    job = await env.DB.prepare('SELECT status, stop_reason, cost_reserved FROM jobs WHERE id = ?').bind(jobId)
+      .first<{ status: string; stop_reason: string | null; cost_reserved: number }>();
+    const positionsState = await env.DB.prepare('SELECT status, COUNT(*) AS count FROM positions WHERE job_id = ? GROUP BY status ORDER BY status')
+      .bind(jobId).all<{ status: string; count: number }>();
+    const quota = await env.DB.prepare('SELECT jobs_reserved, positions_reserved FROM quota_usage WHERE owner_id = ? AND day_utc = ? AND profile_id = ?')
+      .bind('owner-a', new Date().toISOString().slice(0, 10), 'free-v1').first<{ jobs_reserved: number; positions_reserved: number }>();
+    const dispatchable = await env.DB.prepare('SELECT start_idx FROM outbox WHERE job_id = ? AND dispatchable = 1 AND completed_at IS NULL')
+      .bind(jobId).first<{ start_idx: number }>();
+    expect(job).toMatchObject({ status: 'partial', stop_reason: 'cost_cap', cost_reserved: 0 });
+    expect(positionsState.results).toEqual([{ status: 'done', count: 8 }, { status: 'failed', count: 8 }]);
+    expect(quota).toEqual({ jobs_reserved: 1, positions_reserved: 16 });
+    expect(dispatchable).toBeNull();
+  });
+
+  it('marks a cost-capped job failed when its earlier terminal rows contain no valid results', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const { jobId } = await seedSyntheticChunkJob(16);
+    const headReservation = estimateChunkReservationUsd(ANALYSIS_PROFILES['free-v1'], 8, true);
+    await seedCost(1 - COST_MODEL.dailyServiceUsd - headReservation - 0.002);
+    await markChunkTerminal(jobId, 0, 8, 'failed');
+    await coordinator.finishChunk(jobId, 1, Date.now());
+    const job = await env.DB.prepare('SELECT status, stop_reason, committed_count FROM jobs WHERE id = ?').bind(jobId)
+      .first<{ status: string; stop_reason: string | null; committed_count: number }>();
+    expect(job).toEqual({ status: 'failed', stop_reason: 'cost_cap', committed_count: 0 });
   });
 
   it('pages more than 100 terminal rows in stable order including an interleaved failure', async () => {
