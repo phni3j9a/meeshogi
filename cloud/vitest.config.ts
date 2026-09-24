@@ -71,9 +71,11 @@ async function analysisEngine(request: Request): Promise<Response> {
     return Response.json({
     ready: true,
     engineId: 'YaneuraOu NNUE 9.70git 64AVX2',
-    artifactProvenance: runtimeMismatch
+      artifactProvenance: runtimeMismatch
       ? { ...ARTIFACT_PROVENANCE, helperBinarySha256: 'f'.repeat(64) }
       : ARTIFACT_PROVENANCE,
+    engineEpoch: 'synthetic-engine-epoch',
+    restartCount: 0,
     activeFence: activeSearch?.fence ?? null,
     searchStarted: activeSearch !== null,
     });

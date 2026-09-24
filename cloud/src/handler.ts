@@ -41,7 +41,7 @@ type BenchAnalyzeInput = AnalyzeInput & {
 
 export type DriverResolver = (profile: InternalProfile) => DriverClient;
 
-export type ServerProfileAnalyzeInput = AnalyzeInput & { threads?: number; hashMb?: number; fenceToken?: string };
+export type ServerProfileAnalyzeInput = AnalyzeInput & { threads?: number; hashMb?: number; fenceToken?: string; timeoutMs?: number };
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -200,21 +200,24 @@ export async function analyzeWithServerProfile(
     !isStrictShogiSfen(input.sfen) ||
     !Number.isSafeInteger(input.movetimeMs) || input.movetimeMs < 50 || input.movetimeMs > 30_000 ||
     !Number.isSafeInteger(input.multipv) || input.multipv < 1 || input.multipv > 8 ||
+    (input.timeoutMs !== undefined && (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > 60_000)) ||
     (input.threads !== undefined && (!Number.isSafeInteger(input.threads) || input.threads < 1 || input.threads > 2)) ||
     (input.hashMb !== undefined && (!Number.isSafeInteger(input.hashMb) || input.hashMb < 16 || input.hashMb > 512))
   ) return json({ error: 'invalid_request' }, 400);
 
   try {
-    const response = await driver.fetch(
-      driverRequest('/analyze', 'POST', {
+    const request = driverRequest('/analyze', 'POST', {
         sfen: input.sfen,
         movetime_ms: input.movetimeMs,
         multipv: input.multipv,
         fence: input.fenceToken ?? crypto.randomUUID(),
         ...(input.threads === undefined ? {} : { threads: input.threads }),
         ...(input.hashMb === undefined ? {} : { hash_mb: input.hashMb }),
-      }),
-    );
+      });
+    const boundedRequest = input.timeoutMs === undefined
+      ? request
+      : new Request(request, { signal: AbortSignal.timeout(input.timeoutMs) });
+    const response = await driver.fetch(boundedRequest);
     if (!response.ok) return mapDriverFailure(response);
     const payload: unknown = await response.json();
     if (!isRecord(payload)) return analysisFailure(500);

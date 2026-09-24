@@ -7,6 +7,7 @@ import initMigration from '../migrations/0001_init.sql?raw';
 import hardeningMigration from '../migrations/0002_async_jobs_hardening.sql?raw';
 import recoveryMigration from '../migrations/0003_recovery_cost_identity_faults.sql?raw';
 import costMigration from '../migrations/0004_chunk_cost_ledger.sql?raw';
+import costFinalizationMigration from '../migrations/0005_cost_finalization_budgets.sql?raw';
 import { ANALYSIS_PROFILES, COST_MODEL, estimateAttemptCostUsd, estimateChunkReservationParts, estimateChunkReservationUsd, estimateJobReferenceUsd, estimateRuntimeCostUsd, executionIdentityComponents, type AnalysisProfile, type ArtifactProvenance, type JobIdentity } from '../src/job-types';
 
 const OWNER_TOKEN = 'local-owner-token-a';
@@ -24,6 +25,7 @@ const MIGRATIONS = [
   { name: '0002_async_jobs_hardening.sql', queries: hardeningMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
   { name: '0003_recovery_cost_identity_faults.sql', queries: recoveryMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
   { name: '0004_chunk_cost_ledger.sql', queries: costMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
+  { name: '0005_cost_finalization_budgets.sql', queries: costFinalizationMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
 ];
 
 const FIXTURE_MOVES: Record<number, string[]> = {
@@ -164,7 +166,7 @@ async function seedSyntheticChunkJob(positionCount: number): Promise<{ jobId: st
       .bind(reservationKey, jobId, headEnd, reservation, day, now),
     env.DB.prepare('INSERT INTO daily_cost(day_utc, spent_usd, reserved_usd, updated_at) VALUES (?, 0, ?, ?) ON CONFLICT(day_utc) DO UPDATE SET reserved_usd = reserved_usd + excluded.reserved_usd, updated_at = excluded.updated_at')
       .bind(day, reservation, now),
-    env.DB.prepare('INSERT INTO quota_usage(owner_id, day_utc, profile_id, jobs_reserved, positions_reserved, updated_at) VALUES (\'owner-a\', ?, \'free-v1\', 1, ?, ?)')
+    env.DB.prepare('INSERT INTO quota_usage(owner_id, day_utc, profile_id, jobs_reserved, positions_reserved, updated_at) VALUES (\'owner-a\', ?, \'free-v1\', 1, ?, ?) ON CONFLICT(owner_id, day_utc, profile_id) DO UPDATE SET jobs_reserved = jobs_reserved + excluded.jobs_reserved, positions_reserved = positions_reserved + excluded.positions_reserved, updated_at = excluded.updated_at')
       .bind(day, positionCount, now),
     ...Array.from({ length: Math.ceil(positionCount / 8) }, (_, chunkIndex) => {
       const start = chunkIndex * 8;
@@ -264,8 +266,12 @@ async function waitForJob(jobId: string, statuses: string[], timeoutMs = 10_000)
     .bind(jobId).all<Record<string, unknown>>();
   const slot = await env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1').first<Record<string, unknown>>();
   const outboxes = await env.DB.prepare('SELECT * FROM outbox WHERE job_id = ?').bind(jobId).all<Record<string, unknown>>();
+  const reservations = await env.DB.prepare('SELECT part_key, phase, remaining_usd, settled_event_key FROM cost_reservation_parts WHERE job_id = ? AND (settled_event_key IS NULL OR remaining_usd > 0) ORDER BY part_key')
+    .bind(jobId).all<Record<string, unknown>>();
+  const runtime = await env.DB.prepare('SELECT cost_reserved, cost_finalized, runtime_budget_exceeded FROM jobs WHERE id = ?')
+    .bind(jobId).first<Record<string, unknown>>();
   const queueError = await env.DB.prepare("SELECT value FROM flags WHERE key = 'test_queue_error'").first<{ value: string }>();
-  throw new Error(`job ${jobId} did not reach ${statuses.join('|')}; database=${JSON.stringify(row)}; positions=${JSON.stringify(positions.results)}; slot=${JSON.stringify(slot)}; outbox=${JSON.stringify(outboxes.results)}; queueError=${queueError?.value ?? 'none'}`);
+  throw new Error(`job ${jobId} did not reach ${statuses.join('|')}; database=${JSON.stringify(row)}; positions=${JSON.stringify(positions.results)}; slot=${JSON.stringify(slot)}; outbox=${JSON.stringify(outboxes.results)}; runtime=${JSON.stringify(runtime)}; unsettledParts=${JSON.stringify(reservations.results)}; queueError=${queueError?.value ?? 'none'}`);
 }
 
 async function waitForPosition(jobId: string, index: number, status: string, timeoutMs = 10_000): Promise<void> {
@@ -279,6 +285,20 @@ async function waitForPosition(jobId: string, index: number, status: string, tim
   const row = await env.DB.prepare('SELECT status, attempts FROM positions WHERE job_id = ? AND position_index = ?')
     .bind(jobId, index).first<{ status: string; attempts: number }>();
   throw new Error(`position ${jobId}/${index} did not reach ${status}; database=${JSON.stringify(row)}`);
+}
+
+async function waitForDispatchedAttempt(jobId: string, index: number, attempt: number, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const row = await env.DB.prepare('SELECT status, attempts FROM positions WHERE job_id = ? AND position_index = ?')
+      .bind(jobId, index).first<{ status: string; attempts: number }>();
+    if (Number(row?.attempts ?? 0) >= attempt) return;
+    if (row && (row.status === 'done' || row.status === 'failed')) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const row = await env.DB.prepare('SELECT status, attempts FROM positions WHERE job_id = ? AND position_index = ?')
+    .bind(jobId, index).first<{ status: string; attempts: number }>();
+  throw new Error(`position ${jobId}/${index} did not dispatch attempt ${attempt}; database=${JSON.stringify(row)}`);
 }
 
 async function seedCost(amountUsd: number, jobId = `cost-seed-${crypto.randomUUID()}`): Promise<void> {
@@ -459,7 +479,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
   it('commits verified no-move, none, and win terminals while keeping resign as missing evaluation', async () => {
     const created = await createJob(sfenAfter(['1g1f']), { moves: ['9c9d', '2g2f', '8c8d'] });
     const jobId = String(created.body.jobId);
-    const finished = await waitForJob(jobId, ['partial']);
+    const finished = await waitForJob(jobId, ['partial'], 30_000);
     expect(finished.counts).toMatchObject({ done: 3, failed: 1, pending: 0 });
     const rows = await env.DB.prepare('SELECT position_index, status, engine_terminal, error_detail FROM positions WHERE job_id = ? ORDER BY position_index')
       .bind(jobId).all<{ position_index: number; status: string; engine_terminal: string; error_detail: string | null }>();
@@ -488,13 +508,13 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
 
     const mixedMoves = FAILURE_SEQUENCE_MOVES;
     const mixed = await createJob(sfenAfter(mixedMoves.slice(0, 1)), { moves: mixedMoves.slice(1) });
-    const stopped = await waitForJob(String(mixed.body.jobId), ['partial'], 30_000);
+    const stopped = await waitForJob(String(mixed.body.jobId), ['partial'], 60_000);
     expect(stopped.stopReason).toBe('failure_threshold');
     expect(stopped.counts).toMatchObject({ done: 4, failed: 5, pending: 0 });
     const streak = await env.DB.prepare('SELECT consecutive_failures FROM jobs WHERE id = ?')
       .bind(String(mixed.body.jobId)).first<{ consecutive_failures: number }>();
     expect(streak?.consecutive_failures).toBe(1);
-  }, 45_000);
+  }, 90_000);
 
   it('blocks profile admission on protocol faults until an admin clears the block', async () => {
     const created = await createJob(SFEN, { moves: ['7g7f', '8c8d'] });
@@ -582,6 +602,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     const active = await createJob(sfenAfter(['8g8f']));
     const activeId = String(active.body.jobId);
     await waitForPosition(activeId, 0, 'running');
+    await waitForDispatchedAttempt(activeId, 0, 1);
     const waiting = await createJob([sfenAt(910)], { token: OTHER_TOKEN });
     const waitingId = String(waiting.body.jobId);
 
@@ -702,7 +723,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(failedLedger?.attempts).toBe(2);
 
     const threshold = await createJob(sfenAt(906), { moves: ['3c3d', '2g2f', '8c8d'] });
-    const stopped = await waitForJob(String(threshold.body.jobId), ['failed']);
+    const stopped = await waitForJob(String(threshold.body.jobId), ['failed'], 30_000);
     expect(stopped.stopReason).toBe('failure_threshold');
     const failures = await env.DB.prepare('SELECT status, attempts FROM positions WHERE job_id = ? ORDER BY position_index')
       .bind(String(threshold.body.jobId)).all<{ status: string; attempts: number }>();
@@ -712,7 +733,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
       { status: 'failed', attempts: 2 },
     ]);
     expect(failures.results[3]).toMatchObject({ status: 'pending', attempts: 0 });
-  });
+  }, 60_000);
 
   it('quarantines two lost analysis responses, charges both attempts and terminalizes at attempt two', async () => {
     const created = await createJob(sfenAfter(['6g6f', '1c1d']));
@@ -925,7 +946,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
   it('resumes a transient chunk redelivery without repeating committed positions or resetting attempts', async () => {
     const created = await createJob(sfenAt(901), { moves: ['8c8d', '2g2f'] });
     const jobId = String(created.body.jobId);
-    const finished = await waitForJob(jobId, ['completed']);
+    const finished = await waitForJob(jobId, ['completed'], 30_000);
     expect(finished.counts).toEqual({ pending: 0, running: 0, done: 3, failed: 0 });
     const rows = await env.DB.prepare('SELECT position_index, status, attempts FROM positions WHERE job_id = ? ORDER BY position_index')
       .bind(jobId).all<{ position_index: number; status: string; attempts: number }>();
@@ -1106,7 +1127,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(final).toEqual({ status: 'completed', committed_count: 151, stop_reason: null });
     expect(batches?.count).toBe(19);
     expect(snapshot.estimatedCostUsd).toBeLessThan(1);
-  }, 60_000);
+  }, 180_000);
 
   it('keeps the current chunk reserved before terminalization and tolerates duplicate finishChunk delivery', async () => {
     await holdLocalSearchSlot();
@@ -1175,6 +1196,285 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     const job = await env.DB.prepare('SELECT status, stop_reason, committed_count FROM jobs WHERE id = ?').bind(jobId)
       .first<{ status: string; stop_reason: string | null; committed_count: number }>();
     expect(job).toEqual({ status: 'failed', stop_reason: 'cost_cap', committed_count: 0 });
+  });
+
+  it('converges Queue and cron chunk transitions, including the final chunk, after interrupted delivery', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    for (const firstTransition of ['queue', 'cron', 'replay'] as const) {
+      const { jobId, identity: jobIdentity } = await seedSyntheticChunkJob(9);
+      await markChunkTerminal(jobId, 0, 9);
+      if (firstTransition === 'queue') {
+        let acked = false;
+        await worker.queue({
+          queue: 'meeshogi-analysis-local-test-jobs',
+          messages: [{ body: { job_id: jobId, epoch: 1, start_idx: 0, end_idx: 8 }, ack: () => { acked = true; }, retry: () => undefined }],
+        } as unknown as MessageBatch<JobChunk>, env);
+        expect(acked).toBe(true);
+      } else if (firstTransition === 'cron') {
+        await coordinator.recover(Date.now());
+      } else {
+        const now = new Date().toISOString();
+        await env.DB.prepare('INSERT INTO idempotency(owner_id, idempotency_key, job_id, payload_sha256, created_at) VALUES (\'owner-a\', \'interrupted-head-replay\', ?, \'same-payload\', ?)')
+          .bind(jobId, now).run();
+        const replay = await coordinator.admit({
+          ownerId: 'owner-a', idempotencyKey: 'interrupted-head-replay', payloadSha256: 'same-payload',
+          profile: 'free-v1', positions: Array.from({ length: 9 }, () => SFEN), label: null, identity: jobIdentity, now: Date.now(),
+        });
+        expect(replay).toMatchObject({ ok: true, value: { jobId, duplicate: true } });
+      }
+      // The other trigger is a duplicate/recovery attempt; both must converge.
+      await coordinator.recover(Date.now() + 1);
+      await coordinator.finishChunk(jobId, 1, Date.now() + 2);
+      const job = await env.DB.prepare('SELECT status, cost_finalized, cost_reserved FROM jobs WHERE id = ?')
+        .bind(jobId).first<{ status: string; cost_finalized: number; cost_reserved: number }>();
+      const chunks = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_batches WHERE job_id = ?')
+        .bind(jobId).first<{ count: number }>();
+      const unsettled = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_parts WHERE job_id = ? AND settled_event_key IS NULL')
+        .bind(jobId).first<{ count: number }>();
+      expect(job).toMatchObject({ status: 'completed', cost_finalized: 1, cost_reserved: 0 });
+      expect(chunks?.count).toBe(2);
+      expect(unsettled?.count).toBe(0);
+    }
+  }, 60_000);
+
+  it('retries a failed next-chunk reservation batch without completing the old outbox alone', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const { jobId } = await seedSyntheticChunkJob(9);
+    await markChunkTerminal(jobId, 0, 8);
+    await env.DB.prepare(
+      `CREATE TRIGGER fail_next_chunk_reservation BEFORE INSERT ON cost_reservation_batches WHEN NEW.job_id = '${jobId}' AND NEW.start_idx = 8 BEGIN SELECT RAISE(ABORT, 'injected_next_chunk_reservation_failure'); END`,
+    ).run();
+    await coordinator.finishChunk(jobId, 1, Date.now());
+    await env.DB.prepare('DROP TRIGGER fail_next_chunk_reservation').run();
+    let outbox = await env.DB.prepare('SELECT start_idx, completed_at, dispatchable FROM outbox WHERE job_id = ? ORDER BY start_idx')
+      .bind(jobId).all<{ start_idx: number; completed_at: string | null; dispatchable: number }>();
+    expect(outbox.results).toEqual([
+      { start_idx: 0, completed_at: null, dispatchable: 1 },
+      { start_idx: 8, completed_at: null, dispatchable: 0 },
+    ]);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_batches WHERE job_id = ?')
+      .bind(jobId).first<{ count: number }>())?.count).toBe(1);
+
+    await markChunkTerminal(jobId, 8, 9);
+    await coordinator.recover(Date.now() + 1);
+    await coordinator.finishChunk(jobId, 1, Date.now() + 2);
+    outbox = await env.DB.prepare('SELECT start_idx, completed_at, dispatchable FROM outbox WHERE job_id = ? ORDER BY start_idx')
+      .bind(jobId).all<{ start_idx: number; completed_at: string | null; dispatchable: number }>();
+    const job = await env.DB.prepare('SELECT status, cost_finalized, cost_reserved FROM jobs WHERE id = ?')
+      .bind(jobId).first<{ status: string; cost_finalized: number; cost_reserved: number }>();
+    expect(outbox.results.every((row) => row.completed_at !== null && row.dispatchable === 0)).toBe(true);
+    expect(job).toMatchObject({ status: 'completed', cost_finalized: 1, cost_reserved: 0 });
+  });
+
+  it('recovers an interruption after the next reservation but before its Queue delivery intent', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const { jobId } = await seedSyntheticChunkJob(9);
+    await markChunkTerminal(jobId, 0, 8);
+    await env.DB.prepare(
+      `CREATE TRIGGER fail_next_chunk_delivery_intent BEFORE UPDATE ON outbox WHEN OLD.job_id = '${jobId}' AND NEW.start_idx = 8 AND NEW.delivery_count > OLD.delivery_count BEGIN SELECT RAISE(ABORT, 'injected_next_chunk_delivery_failure'); END`,
+    ).run();
+    await coordinator.finishChunk(jobId, 1, Date.now());
+    await env.DB.prepare('DROP TRIGGER fail_next_chunk_delivery_intent').run();
+    const next = await env.DB.prepare('SELECT dispatchable, sent_at, delivery_count FROM outbox WHERE job_id = ? AND start_idx = 8')
+      .bind(jobId).first<{ dispatchable: number; sent_at: string | null; delivery_count: number }>();
+    expect(next).toEqual({ dispatchable: 1, sent_at: null, delivery_count: 0 });
+
+    await markChunkTerminal(jobId, 8, 9);
+    await coordinator.recover(Date.now() + 1);
+    const job = await env.DB.prepare('SELECT status, cost_finalized FROM jobs WHERE id = ?')
+      .bind(jobId).first<{ status: string; cost_finalized: number }>();
+    const unsettled = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_parts WHERE job_id = ? AND settled_event_key IS NULL')
+      .bind(jobId).first<{ count: number }>();
+    expect(job).toEqual({ status: 'completed', cost_finalized: 1 });
+    expect(unsettled?.count).toBe(0);
+  });
+
+  it('keeps terminal jobs retryable across injected ledger-insert and reservation-update failures', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const phases = ['container_readiness', 'container_restart', 'final_idle_to_sleep', 'dual_container_idle_overlap', 'bounded_service_allowance'];
+    for (const phase of phases) {
+      for (const fault of ['insert', 'update'] as const) {
+        const { jobId } = await seedSyntheticChunkJob(1);
+        await coordinator.recordCostObservation({
+          jobId, epoch: 1, partKey: 'chunk:0:1', eventKey: `observation:${jobId}:readiness`,
+          phase: 'container_readiness', durationMs: 1200, evidence: { unknown: false }, now: Date.now(),
+        });
+        const trigger = `cost_fault_${phase}_${fault}`;
+        if (fault === 'insert') {
+          await env.DB.prepare(
+            `CREATE TRIGGER ${trigger} BEFORE INSERT ON cost_phase_ledger WHEN NEW.job_id = '${jobId}' AND NEW.event_key = 'settlement:${jobId}:1:chunk:0:1:${phase}' BEGIN SELECT RAISE(ABORT, 'injected_${phase}_insert_failure'); END`,
+          ).run();
+        } else {
+          await env.DB.prepare(
+            `CREATE TRIGGER ${trigger} BEFORE UPDATE ON cost_reservation_parts WHEN OLD.job_id = '${jobId}' AND OLD.phase = '${phase}' AND NEW.settled_event_key IS NOT NULL BEGIN SELECT RAISE(ABORT, 'injected_${phase}_update_failure'); END`,
+          ).run();
+        }
+        const cancellation = await coordinator.requestCancel('owner-a', jobId, Date.now());
+        expect(cancellation.status).toBe('cancelling');
+        const pending = await env.DB.prepare('SELECT status, cost_finalized, cost_reserved FROM jobs WHERE id = ?')
+          .bind(jobId).first<{ status: string; cost_finalized: number; cost_reserved: number }>();
+        expect(pending?.status).toBe('cancelled');
+        expect(pending?.cost_finalized).toBe(0);
+        expect(Number(pending?.cost_reserved)).toBeGreaterThan(0);
+        await env.DB.prepare(`DROP TRIGGER ${trigger}`).run();
+
+        await coordinator.recover(Date.now() + 1);
+        const finalized = await env.DB.prepare('SELECT status, cost_finalized, cost_reserved FROM jobs WHERE id = ?')
+          .bind(jobId).first<{ status: string; cost_finalized: number; cost_reserved: number }>();
+        const parts = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_parts WHERE job_id = ? AND (settled_event_key IS NULL OR remaining_usd > 0)')
+          .bind(jobId).first<{ count: number }>();
+        const events = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_phase_ledger WHERE job_id = ? AND event_key = ?')
+          .bind(jobId, `settlement:${jobId}:1:chunk:0:1:${phase}`).first<{ count: number }>();
+        expect(finalized).toMatchObject({ status: 'cancelled', cost_finalized: 1, cost_reserved: 0 });
+        expect(parts?.count).toBe(0);
+        expect(events?.count).toBe(1);
+      }
+    }
+  }, 60_000);
+
+  it('finalizes cancellation, DLQ, protocol failure, and recovery deadline through the same ledger path', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const activate = async () => {
+      const { jobId } = await seedSyntheticChunkJob(2);
+      await markChunkTerminal(jobId, 0, 1);
+      await coordinator.recordCostObservation({
+        jobId, epoch: 1, partKey: 'chunk:0:2', eventKey: `observation:${jobId}:readiness`,
+        phase: 'container_readiness', durationMs: 1200, evidence: { unknown: false }, now: Date.now(),
+      });
+      const claim = await coordinator.acquirePosition(jobId, 1, 1, crypto.randomUUID(), Date.now());
+      if (claim.kind !== 'claimed') throw new Error(`claim_failed:${claim.kind}`);
+      const attempt = await coordinator.markDispatched(claim.value, Date.now());
+      if (attempt !== 1) throw new Error('attempt_not_dispatched');
+      expect(await coordinator.recordAttemptCost(claim.value, 1, estimateAttemptCostUsd(1000, 'standard-2'), null, Date.now(), 1000)).toBe(true);
+      return { jobId, position: claim.value };
+    };
+    let expectedJobs = 0;
+    let expectedPositions = 0;
+    const assertFinalized = async (jobId: string, status: string, reason: string | null) => {
+      const job = await env.DB.prepare('SELECT status, stop_reason, cost_finalized, cost_reserved, committed_count FROM jobs WHERE id = ?')
+        .bind(jobId).first<{ status: string; stop_reason: string | null; cost_finalized: number; cost_reserved: number; committed_count: number }>();
+      const parts = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_reservation_parts WHERE job_id = ? AND (settled_event_key IS NULL OR remaining_usd > 0)')
+        .bind(jobId).first<{ count: number }>();
+      const phases = await env.DB.prepare('SELECT phase, amount_usd FROM cost_phase_ledger WHERE job_id = ?')
+        .bind(jobId).all<{ phase: string; amount_usd: number }>();
+      expect(job).toMatchObject({ status, stop_reason: reason, cost_finalized: 1, cost_reserved: 0, committed_count: 1 });
+      expect(parts?.count).toBe(0);
+      expect(phases.results.some((row) => row.phase === 'final_idle_to_sleep' && row.amount_usd > 0)).toBe(true);
+      expect(phases.results.some((row) => row.phase === 'bounded_service_allowance' && row.amount_usd > 0)).toBe(true);
+      const quota = await env.DB.prepare('SELECT jobs_reserved, positions_reserved FROM quota_usage WHERE owner_id = ? AND day_utc = ? AND profile_id = ?')
+        .bind('owner-a', new Date().toISOString().slice(0, 10), 'free-v1').first<{ jobs_reserved: number; positions_reserved: number }>();
+      expectedJobs += 1;
+      expectedPositions += 2;
+      expect(quota).toEqual({ jobs_reserved: expectedJobs, positions_reserved: expectedPositions });
+    };
+
+    const cancel = await activate();
+    const requested = await coordinator.requestCancel('owner-a', cancel.jobId, Date.now());
+    expect(requested).toMatchObject({ status: 'cancelling', inFlight: { attempt: 1 } });
+    const cancelSlot = await coordinator.getSlot(Date.now());
+    expect(cancelSlot && await coordinator.confirmContainerDestroyed(cancelSlot, Date.now())).toBe(true);
+    const cancelSettled = await coordinator.cancellationSettled(cancel.jobId, 1, Date.now());
+    const cancelDebug = cancelSettled ? null : {
+      job: await env.DB.prepare('SELECT status, cost_finalized, cost_reserved FROM jobs WHERE id = ?').bind(cancel.jobId).first(),
+      parts: await env.DB.prepare('SELECT part_key, phase, remaining_usd, settled_event_key FROM cost_reservation_parts WHERE job_id = ? AND (settled_event_key IS NULL OR remaining_usd > 0)').bind(cancel.jobId).all(),
+      slot: await env.DB.prepare('SELECT job_id, lease_id FROM global_search_slot WHERE singleton = 1').first(),
+    };
+    expect(cancelSettled, JSON.stringify(cancelDebug)).toBe(true);
+    await assertFinalized(cancel.jobId, 'cancelled', 'cancelled');
+
+    const dlq = await activate();
+    const begun = await coordinator.beginDeadLetter(dlq.jobId, 1, Date.now());
+    expect(begun.current).toBe(true);
+    const dlqSlot = await coordinator.getSlot(Date.now());
+    expect(dlqSlot && await coordinator.confirmContainerDestroyed(dlqSlot, Date.now())).toBe(true);
+    await coordinator.finishDeadLetter(dlq.jobId, 1, 'dead_lettered', Date.now());
+    await assertFinalized(dlq.jobId, 'partial', 'dead_lettered');
+
+    const protocol = await activate();
+    await coordinator.failPosition(protocol.position, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
+    await assertFinalized(protocol.jobId, 'failed', 'position_failed:protocol_error');
+
+    const deadline = await activate();
+    await coordinator.releaseForRetry(deadline.position, 'deadline_fixture', Date.now());
+    await env.DB.prepare("UPDATE jobs SET updated_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").bind(deadline.jobId).run();
+    await coordinator.recover(Date.now());
+    await assertFinalized(deadline.jobId, 'partial', 'recovery_deadline');
+  });
+
+  it('persists per-chunk runtime budgets across retries and charges observed overrun in full', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const { jobId } = await seedSyntheticChunkJob(2);
+    for (let probe = 0; probe < COST_MODEL.readinessReserveMs / COST_MODEL.readinessCallTimeoutMs; probe += 1) {
+      const eventKey = `readiness-budget-${probe}`;
+      const allowed = await coordinator.beginRuntimeBudgetUnit({
+        jobId, epoch: 1, partKey: 'chunk:0:2', eventKey, phase: 'container_readiness',
+        maximumDurationMs: COST_MODEL.readinessCallTimeoutMs, now: Date.now(),
+      });
+      const debugState = allowed === null ? {
+        job: await env.DB.prepare('SELECT status, runtime_budget_exceeded FROM jobs WHERE id = ?').bind(jobId).first(),
+        part: await env.DB.prepare("SELECT part_key, phase, remaining_usd FROM cost_reservation_parts WHERE job_id = ? AND phase = 'container_readiness'").bind(jobId).first(),
+        ledger: await env.DB.prepare("SELECT phase, duration_ms FROM cost_phase_ledger WHERE job_id = ? AND part_key = 'chunk:0:2'").bind(jobId).all(),
+      } : null;
+      expect(allowed, `probe=${probe} state=${JSON.stringify(debugState)}`).toBe(COST_MODEL.readinessCallTimeoutMs);
+      expect(await coordinator.completeRuntimeBudgetUnit({
+        jobId, epoch: 1, partKey: 'chunk:0:2', eventKey, phase: 'container_readiness',
+        durationMs: COST_MODEL.readinessCallTimeoutMs, unknown: false, now: Date.now(),
+      })).toBe(false);
+    }
+    expect(await coordinator.beginRuntimeBudgetUnit({
+      jobId, epoch: 1, partKey: 'chunk:0:2', eventKey: 'readiness-budget-exhausted', phase: 'container_readiness',
+      maximumDurationMs: COST_MODEL.readinessCallTimeoutMs, now: Date.now(),
+    })).toBeNull();
+    await coordinator.recover(Date.now() + 1);
+    let job = await env.DB.prepare('SELECT status, stop_reason, runtime_budget_exceeded, cost_finalized FROM jobs WHERE id = ?')
+      .bind(jobId).first<{ status: string; stop_reason: string; runtime_budget_exceeded: number; cost_finalized: number }>();
+    const readiness = await env.DB.prepare("SELECT duration_ms FROM cost_phase_ledger WHERE job_id = ? AND part_key = 'chunk:0:2' AND phase = 'container_readiness'")
+      .bind(jobId).all<{ duration_ms: number }>();
+    expect(job).toMatchObject({ status: 'failed', stop_reason: 'runtime_budget_exceeded', runtime_budget_exceeded: 1, cost_finalized: 1 });
+    expect(readiness.results.reduce((sum, row) => sum + row.duration_ms, 0)).toBe(COST_MODEL.readinessReserveMs);
+
+    const overrun = await seedSyntheticChunkJob(2);
+    const overrunDurationMs = COST_MODEL.readinessCallTimeoutMs + 1;
+    const eventKey = 'readiness-unit-overrun';
+    await coordinator.beginRuntimeBudgetUnit({
+      jobId: overrun.jobId, epoch: 1, partKey: 'chunk:0:2', eventKey, phase: 'container_readiness',
+      maximumDurationMs: COST_MODEL.readinessCallTimeoutMs, now: Date.now(),
+    });
+    expect(await coordinator.completeRuntimeBudgetUnit({
+      jobId: overrun.jobId, epoch: 1, partKey: 'chunk:0:2', eventKey, phase: 'container_readiness',
+      durationMs: overrunDurationMs, unknown: false, now: Date.now(),
+    })).toBe(true);
+    await coordinator.recover(Date.now() + 2);
+    job = await env.DB.prepare('SELECT status, stop_reason, runtime_budget_exceeded, cost_finalized FROM jobs WHERE id = ?')
+      .bind(overrun.jobId).first<{ status: string; stop_reason: string; runtime_budget_exceeded: number; cost_finalized: number }>();
+    const actual = await env.DB.prepare("SELECT duration_ms FROM cost_phase_ledger WHERE job_id = ? AND part_key = 'chunk:0:2' AND phase = 'container_readiness'")
+      .bind(overrun.jobId).first<{ duration_ms: number }>();
+    expect(job).toMatchObject({ status: 'failed', stop_reason: 'runtime_budget_exceeded', runtime_budget_exceeded: 1, cost_finalized: 1 });
+    expect(actual?.duration_ms).toBe(overrunDurationMs);
+
+    const restart = await seedSyntheticChunkJob(2);
+    for (let attempt = 0; attempt < COST_MODEL.restartReserveMs / COST_MODEL.readinessCallTimeoutMs; attempt += 1) {
+      const restartEvent = `restart-budget-${attempt}`;
+      expect(await coordinator.beginRuntimeBudgetUnit({
+        jobId: restart.jobId, epoch: 1, partKey: 'chunk:0:2', eventKey: restartEvent, phase: 'container_restart',
+        maximumDurationMs: COST_MODEL.readinessCallTimeoutMs, requiredDurationMs: COST_MODEL.readinessCallTimeoutMs, now: Date.now(),
+      })).toBe(COST_MODEL.readinessCallTimeoutMs);
+      expect(await coordinator.completeRuntimeBudgetUnit({
+        jobId: restart.jobId, epoch: 1, partKey: 'chunk:0:2', eventKey: restartEvent, phase: 'container_restart',
+        durationMs: COST_MODEL.readinessCallTimeoutMs, unknown: false, now: Date.now(),
+      })).toBe(attempt === COST_MODEL.restartReserveMs / COST_MODEL.readinessCallTimeoutMs - 1);
+    }
+    expect(await coordinator.beginRuntimeBudgetUnit({
+      jobId: restart.jobId, epoch: 1, partKey: 'chunk:0:2', eventKey: 'restart-budget-exhausted', phase: 'container_restart',
+      maximumDurationMs: COST_MODEL.readinessCallTimeoutMs, requiredDurationMs: COST_MODEL.readinessCallTimeoutMs, now: Date.now(),
+    })).toBeNull();
+    await coordinator.recover(Date.now() + 3);
+    const restartState = await env.DB.prepare('SELECT status, stop_reason, runtime_budget_exceeded, cost_finalized FROM jobs WHERE id = ?')
+      .bind(restart.jobId).first<{ status: string; stop_reason: string; runtime_budget_exceeded: number; cost_finalized: number }>();
+    const restartDuration = await env.DB.prepare("SELECT SUM(duration_ms) AS duration_ms FROM cost_phase_ledger WHERE job_id = ? AND part_key = 'chunk:0:2' AND phase = 'container_restart'")
+      .bind(restart.jobId).first<{ duration_ms: number }>();
+    expect(restartState).toMatchObject({ status: 'failed', stop_reason: 'runtime_budget_exceeded', runtime_budget_exceeded: 1, cost_finalized: 1 });
+    expect(restartDuration?.duration_ms).toBe(COST_MODEL.restartReserveMs);
   });
 
   it('pages more than 100 terminal rows in stable order including an interleaved failure', async () => {

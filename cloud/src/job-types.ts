@@ -309,8 +309,12 @@ export const COST_MODEL = Object.freeze({
   usiHandshakeMs: 20_000,
   maxProofRuntimeMs: 3_000,
   interPositionMaxMs: 5_000,
+  /** A single health round trip is bounded independently from its shared chunk budget. */
+  readinessCallTimeoutMs: 140_000,
+  containerStopTimeoutMs: 5_000,
+  containerDestroyTimeoutMs: 10_000,
   containerSleepAfterSeconds: 30,
-  /** Per-chunk caps: container/engine readiness, plus the driver's three restarts. */
+  /** Persisted per-chunk budgets: four bounded readiness calls and three restarts. */
   readinessReserveMs: 4 * 140_000,
   restartReserveMs: 3 * 140_000,
   serviceJobUsd: 0.003,
