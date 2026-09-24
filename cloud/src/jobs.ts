@@ -490,6 +490,14 @@ function engineFailure(responseStatus: number, payload: unknown): EngineFailure 
   if (responseStatus === 409 || responseStatus === 503 || reason.includes('container_unreachable') || reason.includes('container_not_ready')) {
     return { code: terminal === 'position_failed:engine_restart_failed' ? terminal : 'position_failed:engine_exit', transient: true, fatalProtocol: false, uncertain: true };
   }
+  // A 5xx without a driver-reported reason is transport loss (e.g. the container
+  // died mid-request or was destroyed by a fault arm): execution state is
+  // unknown, so it must take the quarantine path rather than fail closed as a
+  // protocol violation. Real protocol failures always arrive with a reason
+  // (driver 502 + ProtocolError.reason) or as an invalid 200 contract body.
+  if (responseStatus >= 500 && !reason) {
+    return { code: 'position_failed:driver_unreachable', transient: false, fatalProtocol: false, uncertain: true };
+  }
   return { code: 'position_failed:protocol_error', transient: false, fatalProtocol: true, uncertain: false };
 }
 function resultWithJobIdentity(value: unknown, identity: JobIdentity, sfen: string, requestedMultiPv: number): {

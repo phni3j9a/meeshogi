@@ -31,6 +31,7 @@ const persistentFailureRequests = new Set(Array.from({ length: 5 }, (_, index) =
 ));
 const retryOnceRequests = new Set([sfenAfter(['3g3f', '8c8d'])]);
 const destroyDuringRequests = new Set([sfenAfter(['4g4f'])]);
+const destroyDuring500Requests = new Set([sfenAfter(['5g5f'])]);
 const slowRequests = new Set([
   sfenAfter(['7g7f']), sfenAfter(['5g5f', '4c4d']), sfenAfter(['9g9f', '1c1d']),
 ]);
@@ -165,14 +166,17 @@ async function analysisEngine(request: Request): Promise<Response> {
     if (attempts === 1) return Response.json({ reason: 'engine_exit' }, { status: 503 });
   }
   if (slowRequests.has(input.sfen)) await new Promise((resolve) => setTimeout(resolve, 250));
-  if (busyRequests.has(input.sfen) || destroyDuringRequests.has(input.sfen)) {
+  if (busyRequests.has(input.sfen) || destroyDuringRequests.has(input.sfen) || destroyDuring500Requests.has(input.sfen)) {
     let release!: () => void;
     const search = { fence: input.fence ?? '', destroyed: false, release: () => release() };
     const destroyed = new Promise<void>((resolve) => { release = resolve; });
     activeSearch = search;
     try {
       await Promise.race([new Promise<void>((resolve) => setTimeout(resolve, 1500)), destroyed]);
-      if (search.destroyed) throw new Error('synthetic_search_destroyed');
+      if (search.destroyed) {
+        if (destroyDuring500Requests.has(input.sfen)) return Response.json({}, { status: 500 });
+        throw new Error('synthetic_search_destroyed');
+      }
     } finally {
       if (activeSearch === search) activeSearch = null;
     }

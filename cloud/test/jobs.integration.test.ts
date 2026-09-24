@@ -662,6 +662,31 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(arms?.count).toBe(0);
   });
 
+  it('treats a bare 5xx transport loss during active search as uncertain, not a protocol failure', async () => {
+    const blocker = await createJob(sfenAfter(['8g8f']), { token: OTHER_TOKEN });
+    await waitForPosition(String(blocker.body.jobId), 0, 'running');
+    const created = await createJob(sfenAfter(['5g5f']));
+    const jobId = String(created.body.jobId);
+    const armed = await SELF.fetch(request('/v1/internal/fault/arm', 'local-analysis-admin-token', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'destroy-during', job_id: jobId, epoch: 1, position_index: 0, attempt: 1 }),
+    }));
+    expect(armed.status).toBe(201);
+    await waitForJob(String(blocker.body.jobId), ['completed']);
+    await env.DB.prepare('UPDATE outbox SET last_sent_at = ? WHERE job_id = ?').bind('2000-01-01T00:00:00.000Z', jobId).run();
+    await worker.scheduled({ cron: '* * * * *', scheduledTime: Date.now() } as ScheduledController, env);
+    const finished = await waitForJob(jobId, ['completed'], 15_000);
+    expect(finished.counts).toMatchObject({ pending: 0, running: 0, failed: 0, done: 1 });
+    const position = await env.DB.prepare('SELECT status, attempts, error_detail FROM positions WHERE job_id = ? AND position_index = 0')
+      .bind(jobId).first<{ status: string; attempts: number; error_detail: string | null }>();
+    expect(position?.status).toBe('done');
+    expect(position?.attempts).toBe(2);
+    const block = await env.DB.prepare("SELECT value FROM flags WHERE key = 'profile_blocked:free-v1'").first<{ value: string }>();
+    expect(block?.value ?? '0').toBe('0');
+    const slot = await env.DB.prepare('SELECT job_id FROM global_search_slot WHERE singleton = 1').first<{ job_id: string | null }>();
+    expect(slot?.job_id).toBeNull();
+  });
+
   it('keeps global slot and position claim atomic across injected D1 failures', async () => {
     const seeded = await seedQueuedPosition();
     const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
