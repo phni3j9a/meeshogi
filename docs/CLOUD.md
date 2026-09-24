@@ -82,6 +82,7 @@ Migration `0002_async_jobs_hardening.sql` applied remotely to the existing stagi
 - Kill mode: `{mode:"admission"}` → `503 admission_disabled` on new jobs; `DELETE` restored and the same submission was accepted.
 - Idempotency/authz on the new backend: replay → `duplicate:true`; same key different payload → `idempotency_conflict`; cross-owner → `404`; no token → `401`; `illegal_move` input → `400` with `moveIndex`.
 - Scheduled recovery: `wrangler tail` captured the `* * * * *` cron event invoking `JobCoordinator.recover` and `cleanup` each minute.
+- Full-game observation: one complete public game (`fixtures/kif/kiou.kif`, 77 USI moves → 78 positions) as job `cb1421cf` on `free-v1`/`standard-2` — all 78 positions `done`, zero failures; wall time 3m52s created→completed (~3.0s per position including queue/chunk overhead on top of the 1000 ms engine time); `cost_attempt_ledger` recorded 72 engine attempts totalling 71,024 ms engine time (~987 ms each) and $0.038089 actual vs $0.063749 conservative estimate; 6 opening positions hit the new-identity cache (`attempts:0`, ~$0.0032 recorded savings); `costWarning:false`.
 
 Not exercised live: SIGSTOP no-response injection (container runtime env vars are not settable via the Wrangler containers config; the path is covered by driver unit tests and the live `destroy` arm covers the kill class), and the 6-POST/min admission window (per-owner/global gates reject first). Note the `throw` arm must land before the targeted delivery — an arm placed mid-job only affects deliveries not yet claimed.
 
