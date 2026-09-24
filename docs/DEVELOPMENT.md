@@ -92,7 +92,7 @@ meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機
 
 実行の流れ:
 
-1. 検証したいコミットとスイートをMain（このCLI）へ依頼する。Mainは `scripts/ci/devin-cloud.py` で対象セッションへ指示を送り、`status` で完了を確認する（下記「セッションの駆動」）。
+1. 検証したいコミットとスイートをMain（このCLI）へ依頼する。Mainは `scripts/ci/devin-cloud.py` で対象セッションへ指示を送り、`wait-evidence` でevidenceブランチの更新を待って完了を確認する（下記「セッションの駆動」）。
 2. セッションは `git fetch && git reset --hard <SHA>` で正確なコミットへ合わせ、`npm install`・prebuild・ビルド・受入スクリプトを実行する。永続VMのツールチェーンは再利用するが、VMの状態をソースの正本として扱わない。
 3. 結果は `artifacts/<OS>/` ごと `evidence/<platform>-<yyyymmdd>` のorphanブランチへpushされる。Mainがブランチをfetchしてスクリーンショットを実際に開き、証拠つきで報告する。最終判定は人間が行う。
 4. 失敗時は同じセッションでその場調査できる（liveのadb/xcrun、エミュレーター状態の観察）。これがホスト型ランナーのログだけの運用に対する利点。
@@ -106,13 +106,15 @@ python3 scripts/ci/devin-cloud.py list                    # --all でアーカ�
 python3 scripts/ci/devin-cloud.py new --platform macos --prompt-file prompt.md --wait 60
 python3 scripts/ci/devin-cloud.py send <session-id> --prompt-file prompt.md --wait 60
 python3 scripts/ci/devin-cloud.py status <session-id> --messages 3
+python3 scripts/ci/devin-cloud.py wait-evidence evidence/<platform>-<name> --timeout 5400
 ```
 
 ヘルパーはDevin CLIの `devin acp --cloud`（ACPのcloud relay）を使い、CLIの `devin auth login` の資格情報で動く。`DEVIN_API_KEY` は使わない。
 
 - `new` は既定で `--repo phni3j9a/meeshogi --version devin-swe-2-max` とする。relayが提示しない値は拒否し、作成後のセッションが要求したversionを報告しなければ失敗にする。
 - `--wait` を過ぎても続くターンは失敗ではなく「detached」と表示する。Cloud側の作業は継続するので、長い受入は短い `--wait` で送り、`status` で結果を確認する。
-- `status` は直近のDevinメッセージを再生し、状態・platform・`devinVersionOverride`・URLを出力する。
+- `status` は直近のDevinメッセージを再生し、状態・platform・`devinVersionOverride`・URLを出力する。待機中のセッションも状態は `running` と表示されるため、完了の判定には使わない。
+- 受入の完了は `wait-evidence` で待つ。受入は失敗時もevidenceブランチへpushするので、その先頭の更新を完了の合図にする。既定では60秒ごとに `git ls-remote` で確認し、新しい先頭を表示してexit 0、タイムアウトならexit 2で終わる。まだないブランチは最初のcommitを待つ。待ち始める前にpushされうる場合は `--after <sha>` を指定する。`status` の繰り返しや固定sleepで待たない。
 - Cloud側からのローカル操作要求（ファイル参照や許可確認）には応じない。受入実行にはローカルのツールを使わない。
 
 ACPを使う理由と制約:
@@ -186,7 +188,14 @@ bash scripts/ci/android-acceptance.sh --installed
 bash scripts/ci/ios-acceptance.sh
 # iOSの詳細な操作検証を追加で実行する場合
 IOS_ACCEPTANCE_MODE=full bash scripts/ci/ios-acceptance.sh
+# 修正中に関係するフローだけを流す場合（両OS共通）
+ACCEPTANCE_FLOWS=analysis-review,candidate-review bash scripts/ci/android-acceptance.sh --installed
+IOS_ACCEPTANCE_MODE=full ACCEPTANCE_FLOWS=analysis-review,candidate-review bash scripts/ci/ios-acceptance.sh
 ```
+
+`ACCEPTANCE_FLOWS` はフロー名（`.maestro/` のファイル名から `.yaml` を除いたもの）をカンマ区切りで指定する。準備の `licenses-review` と `import-review` は常に実行し、指定したフローを通常の順番で流す。対局者名のクリップボード準備、KIF出力の照合、文字拡大の設定変更は、対応するフローを選んだときだけ行う。未知の名前はexit 2で止める。後のフローは前のフローが作ったアプリ状態を引き継ぐため、選んだフローが前段の状態に依存する場合はその前段も指定する。指定値は各回の `selected-flows.txt`（未指定なら `all`）に残す。フロー選択の実行は修正中の確認であり、受入の代わりにはしない。受入は未指定で全フローを流す。
+
+iOSの受入はSimulator起動後に `com.apple.keyboard.preferences` の `DidShowContinuousPathIntroduction` を1にし、キーボードの「スライドで入力」初回案内を表示済みにする。成否は `timeline.log` の `keyboard-introduction.*` に残る。
 
 受入フローはアプリのデータを消去して固定サンプルを取り込む。AndroidとiOSのfullモードは、最後にサンプル1局を削除する。両OSで最初にライセンス原文と対象パッケージ一覧を撮影する。iOSの既定visualモードは、その後の取り込みと基本解析を通して、主要9画面と対局情報・ライセンスを撮影する。個人の棋譜を保存したアプリでは実行しない。クリップボード・ファイル共有を確認する補助アプリはCI専用で、製品アプリへ同梱しない。AndroidとiOSのfullモードでは、出力KIFを共有先から回収し、原本とバイト単位で比較する。各回の証拠は `artifacts/<OS>/runs/` の個別ディレクトリへ保存し、実行後にevidenceブランチへpushする。
 
