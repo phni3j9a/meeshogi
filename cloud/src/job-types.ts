@@ -156,6 +156,7 @@ export type JobEnvironment = WorkerEnv & {
   ANALYSIS_DRIVER_SHA256?: string;
   ANALYSIS_FAULT_FIXTURES_ENABLED?: string;
   ANALYSIS_FAULT_TEST_PRINCIPAL_ID?: string;
+  ANALYSIS_DAILY_COST_CAP_USD?: string;
 };
 
 export type AdmissionInput = {

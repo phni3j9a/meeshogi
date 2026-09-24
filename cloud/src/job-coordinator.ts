@@ -105,6 +105,11 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
     return row?.value === 'admission' || row?.value === 'all' ? row.value : null;
   }
 
+  private dailyCostCapUsd(): number {
+    const raw = Number(this.env.ANALYSIS_DAILY_COST_CAP_USD ?? '1');
+    return Number.isFinite(raw) && raw > 0 ? raw : 1;
+  }
+
   private async dailyCost(day: string): Promise<{ spent: number; reserved: number }> {
     const [daily, outstanding] = await Promise.all([
       this.first<{ spent_usd: number }>(this.env.DB.prepare('SELECT spent_usd FROM daily_cost WHERE day_utc = ?').bind(day)),
@@ -172,7 +177,7 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
       const day = dayUtc(input.now);
       const currentCost = await this.dailyCost(day);
       const reservation = estimateJobReservationUsd(profile, input.positions.length);
-      if (currentCost.spent + currentCost.reserved + reservation >= 1) return { ok: false, status: 503, error: 'daily_cost_cap' };
+      if (currentCost.spent + currentCost.reserved + reservation >= this.dailyCostCapUsd()) return { ok: false, status: 503, error: 'daily_cost_cap' };
 
       const activeJobs = await this.first<{ count: number }>(this.env.DB.prepare(
         "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued', 'running', 'cancelling')",
@@ -259,7 +264,8 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
       const day = dayUtc(now);
       const cost = await this.dailyCost(day);
       const estimatedCostUsd = cost.spent + cost.reserved;
-      return { estimatedCostUsd, costWarning: estimatedCostUsd >= 0.5, costCapped: estimatedCostUsd >= 1, dayUtc: day };
+      const cap = this.dailyCostCapUsd();
+      return { estimatedCostUsd, costWarning: estimatedCostUsd >= cap / 2, costCapped: estimatedCostUsd >= cap, dayUtc: day };
     });
   }
 
@@ -394,8 +400,9 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
       if (!job || job.epoch !== epoch || !active(job.status)) return { kind: 'skip' };
       const killMode = await this.currentKillMode();
       const daily = await this.dailyCost(dayUtc(now));
-      if (killMode === 'all' || daily.spent + daily.reserved >= 1) {
-        await this.stopJob(jobId, epoch, daily.spent + daily.reserved >= 1 ? 'cost_cap' : 'admin_kill', now);
+      const overCap = daily.spent + daily.reserved >= this.dailyCostCapUsd();
+      if (killMode === 'all' || overCap) {
+        await this.stopJob(jobId, epoch, overCap ? 'cost_cap' : 'admin_kill', now);
         return { kind: 'stopped' };
       }
       const outbox = await this.first<{ start_idx: number; end_idx: number }>(this.env.DB.prepare(
