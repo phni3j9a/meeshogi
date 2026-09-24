@@ -13,6 +13,26 @@ record_state="$video_dir/current-recording.state"
 record_stop="$video_dir/stop-recording"
 mkdir -p "$maestro_dir" "$video_dir"
 
+# Focused runs: ACCEPTANCE_FLOWS="analysis-review,candidate-review" runs only
+# those flows, in the normal order, after the licenses/import setup flows.
+# Later flows reuse app state from earlier ones, so a focused run is iteration
+# evidence, not acceptance; leave it unset for the full run.
+known_flows=",licenses-review,import-review,player-names,player-names-kiou,analysis-review,analysis-partial-review,candidate-review,file-import,management-review,appearance-review,appearance-dark,export-review,background-review,large-text-review,search-delete-review,"
+if [[ -n "${ACCEPTANCE_FLOWS:-}" ]]; then
+  IFS=, read -r -a requested_flows <<< "$ACCEPTANCE_FLOWS"
+  for requested in "${requested_flows[@]}"; do
+    if [[ "$known_flows" != *",$requested,"* ]]; then
+      echo "ACCEPTANCE_FLOWS has an unknown flow: $requested" >&2
+      exit 2
+    fi
+  done
+fi
+flow_selected() {
+  [[ -z "${ACCEPTANCE_FLOWS:-}" || "$1" == licenses-review || "$1" == import-review ||
+     ",${ACCEPTANCE_FLOWS}," == *",$1,"* ]]
+}
+printf '%s\n' "${ACCEPTANCE_FLOWS:-all}" > "$run_dir/selected-flows.txt"
+
 if [[ ${1:-} != --installed ]]; then
   adb push -Z artifacts/android/meeshogi.apk /data/local/tmp/meeshogi-acceptance.apk
   local_digest="$(sha256sum artifacts/android/meeshogi.apk | cut -d ' ' -f 1)"
@@ -110,6 +130,10 @@ run_flow() {
   local name=$1
   local flow=$2
   local output="$maestro_dir/$name"
+  if ! flow_selected "$name"; then
+    echo "flow.skip $name"
+    return 0
+  fi
   mkdir -p "$output/test-output"
   maestro test \
     --format junit \
@@ -120,9 +144,13 @@ run_flow() {
 
 run_flow licenses-review .maestro/licenses-review.yaml
 run_flow import-review .maestro/import-review.yaml
-bash scripts/ci/android-clipboard.sh "$clipboard_wars"
+if flow_selected player-names; then
+  bash scripts/ci/android-clipboard.sh "$clipboard_wars"
+fi
 run_flow player-names .maestro/player-names.yaml
-bash scripts/ci/android-clipboard.sh "$clipboard_kiou"
+if flow_selected player-names-kiou; then
+  bash scripts/ci/android-clipboard.sh "$clipboard_kiou"
+fi
 run_flow player-names-kiou .maestro/player-names-kiou.yaml
 run_flow analysis-review .maestro/analysis-review.yaml
 run_flow analysis-partial-review .maestro/analysis-partial-review.yaml
@@ -132,14 +160,18 @@ run_flow management-review .maestro/management-review.yaml
 run_flow appearance-review .maestro/appearance-review.yaml
 run_flow appearance-dark .maestro/appearance-dark.yaml
 run_flow export-review .maestro/export-review.yaml
-adb pull /sdcard/Download/meeshogi-export.txt "$run_dir/exported.kifu"
-cmp fixtures/kif/shogiwars.kif "$run_dir/exported.kifu"
+if flow_selected export-review; then
+  adb pull /sdcard/Download/meeshogi-export.txt "$run_dir/exported.kifu"
+  cmp fixtures/kif/shogiwars.kif "$run_dir/exported.kifu"
+fi
 run_flow background-review .maestro/background-review.yaml
-original_font_scale="$(adb shell settings get system font_scale | tr -d '\r')"
-adb shell settings put system font_scale 1.3
-run_flow large-text-review .maestro/large-text-review.yaml
-adb shell settings put system font_scale "$original_font_scale"
-original_font_scale=''
+if flow_selected large-text-review; then
+  original_font_scale="$(adb shell settings get system font_scale | tr -d '\r')"
+  adb shell settings put system font_scale 1.3
+  run_flow large-text-review .maestro/large-text-review.yaml
+  adb shell settings put system font_scale "$original_font_scale"
+  original_font_scale=''
+fi
 
 run_flow search-delete-review .maestro/search-delete-review.yaml
 

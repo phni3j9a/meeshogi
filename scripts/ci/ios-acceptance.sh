@@ -21,6 +21,26 @@ case "$acceptance_mode" in
     ;;
 esac
 mkdir -p "$maestro_dir"
+
+# Focused runs: ACCEPTANCE_FLOWS="analysis-review,candidate-review" runs only
+# those flows, in the normal order, after the licenses/import setup flows.
+# Later flows reuse app state from earlier ones, so a focused run is iteration
+# evidence, not acceptance; leave it unset for the full run.
+known_flows=",licenses-review,import-review,ios-visual-review,player-names,player-names-kiou,analysis-review,analysis-partial-review,candidate-review,file-import,management-review,appearance-review,appearance-dark,export-review-ios,background-review,large-text-review,search-delete-review,"
+if [[ -n "${ACCEPTANCE_FLOWS:-}" ]]; then
+  IFS=, read -r -a requested_flows <<< "$ACCEPTANCE_FLOWS"
+  for requested in "${requested_flows[@]}"; do
+    if [[ "$known_flows" != *",$requested,"* ]]; then
+      echo "ACCEPTANCE_FLOWS has an unknown flow: $requested" >&2
+      exit 2
+    fi
+  done
+fi
+flow_selected() {
+  [[ -z "${ACCEPTANCE_FLOWS:-}" || "$1" == licenses-review || "$1" == import-review ||
+     ",${ACCEPTANCE_FLOWS}," == *",$1,"* ]]
+}
+printf '%s\n' "${ACCEPTANCE_FLOWS:-all}" > "$run_dir/selected-flows.txt"
 record_pid=''
 content_size_original=''
 content_size_changed=0
@@ -92,6 +112,14 @@ import sys
 subprocess.run(["xcrun", "simctl", "bootstatus", sys.argv[1], "-b"], timeout=600, check=True)
 PY
 trace simulator.boot.end
+# Mark the first-use "slide to type" keyboard tip as shown so it cannot cover
+# the keyboard the first time a flow types into a field.
+if xcrun simctl spawn "$device" defaults write com.apple.keyboard.preferences \
+    DidShowContinuousPathIntroduction -int 1; then
+  trace keyboard-introduction.suppressed
+else
+  trace keyboard-introduction.suppress-failed
+fi
 xcrun simctl io "$device" recordVideo "$run_dir/flow.mov" > "$run_dir/recording.log" 2>&1 &
 record_pid=$!
 xcrun simctl status_bar "$device" override --time 9:41 --batteryState charged --batteryLevel 100
@@ -162,6 +190,10 @@ run_flow() {
   local name=$1
   local flow=$2
   local output="$maestro_dir/$name"
+  if ! flow_selected "$name"; then
+    trace "flow.skip $name"
+    return 0
+  fi
   mkdir -p "$output/test-output"
   trace "flow.start $name"
   maestro --device "$device" test \
@@ -178,14 +210,20 @@ run_flow licenses-review .maestro/licenses-review.yaml
 run_flow import-review .maestro/import-review.yaml
 
 if [[ "$acceptance_mode" == visual ]]; then
-  copy_via_helper "$clipboard_wars"
+  if flow_selected ios-visual-review; then
+    copy_via_helper "$clipboard_wars"
+  fi
   run_flow ios-visual-review .maestro/ios-visual-review.yaml
   exit 0
 fi
 
-copy_via_helper "$clipboard_wars"
+if flow_selected player-names; then
+  copy_via_helper "$clipboard_wars"
+fi
 run_flow player-names .maestro/player-names.yaml
-copy_via_helper "$clipboard_kiou"
+if flow_selected player-names-kiou; then
+  copy_via_helper "$clipboard_kiou"
+fi
 run_flow player-names-kiou .maestro/player-names-kiou.yaml
 run_flow analysis-review .maestro/analysis-review.yaml
 run_flow analysis-partial-review .maestro/analysis-partial-review.yaml
@@ -199,6 +237,7 @@ run_flow export-review-ios .maestro/export-review-ios.yaml
 # Save to Files writes into the CI-only helper's public Documents directory.
 # shareKif chooses a game-id-based filename, so identify the one new .kifu
 # rather than coupling this check to the generated id.
+verify_export() {
 helper_documents="$(xcrun simctl get_app_container "$device" com.meeshogi.testfiles data)/Documents"
 exported_paths="$run_dir/exported-kifu-paths.txt"
 exported_count=0
@@ -231,12 +270,17 @@ cp "$exported_kifu" "$run_dir/exported-shogiwars.kifu"
 cmp fixtures/kif/shogiwars.kif "$exported_kifu"
 echo "$export_source" > "$run_dir/export-source.txt"
 echo "iOS KIF export matches fixtures/kif/shogiwars.kif: $exported_kifu (source=$export_source)"
+}
+if flow_selected export-review-ios; then
+  verify_export
+fi
 
 run_flow background-review .maestro/background-review.yaml
 
 # Validate the installed Xcode command vocabulary before changing the
 # Simulator's Dynamic Type setting. Keep this help output with the run so a
 # future Xcode change is diagnosable from CI artifacts.
+run_large_text_review() {
 simctl_ui_help="$run_dir/simctl-ui-help.txt"
 xcrun simctl help ui > "$simctl_ui_help" 2>&1
 if ! rg -q '(^|[^[:alnum:]_-])content_size([^[:alnum:]_-]|$)' "$simctl_ui_help"; then
@@ -272,5 +316,9 @@ xcrun simctl ui "$device" content_size "$content_size_target"
 run_flow large-text-review .maestro/large-text-review.yaml
 restore_content_size
 printf '%s\n' "$content_size_original" > "$run_dir/content-size-restored.txt"
+}
+if flow_selected large-text-review; then
+  run_large_text_review
+fi
 
 run_flow search-delete-review .maestro/search-delete-review.yaml
