@@ -12,7 +12,8 @@
     "summary.json": "machine-readable results",
     "manifest.json": "this file",
     "suite/final-run/": "default visual-mode run 20260924T145028Z-11073 (timeline.log incl. keyboard-introduction line, junit x3, takeScreenshot PNGs, screen-hierarchy, flow.mov 368s, final.png, simulator.log, devices.json, selected-flows.txt, fixture copies, files-helper build)",
-    "logs/": "script stdout logs (ios-acceptance) + full Release xcodebuild log gzipped"
+    "suite/export-run/": "focused export run 20260924T150709Z-13015 on the same built app (licenses+import+export-review-ios pass, exported-shogiwars.kifu sha256-matches fixture via app-cache artifact, flow.mov 169s)",
+    "logs/": "script stdout logs (ios-acceptance visual + export runs) + full Release xcodebuild log gzipped"
   },
   "notes": "per-flow device-simulator.log files are gzip-compressed to keep the branch small; all other artifacts original bytes"
 }

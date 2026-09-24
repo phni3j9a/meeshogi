@@ -2,7 +2,10 @@
 
 ## 結果: PASS
 
-default visual mode (`bash scripts/ci/ios-acceptance.sh`, `ACCEPTANCE_FLOWS` 未設定) の全3フローがスクリプト自動合格。製品ソース・main は未変更。
+- run 1 (default visual mode, `ACCEPTANCE_FLOWS` 未設定): 全3フローがスクリプト自動合格。
+- run 2 (export 追加確認, `IOS_ACCEPTANCE_MODE=full ACCEPTANCE_FLOWS=export-review-ios`, 同一ビルド済み app): licenses/import/export-review-ios 全合格。export KIF は fixture と sha256 一致。
+
+製品ソース・main は未変更。
 
 ## 対象
 
@@ -41,15 +44,32 @@ default visual mode (`bash scripts/ci/ios-acceptance.sh`, `ACCEPTANCE_FLOWS` 未
 timeline.log の keyboard-introduction 行:
 `2026-09-24T14:51:27Z keyboard-introduction.suppressed`
 
+## run 2: export 追加確認 (同一ビルド app・再ビルドなし)
+
+`IOS_ACCEPTANCE_MODE=full ACCEPTANCE_FLOWS=export-review-ios bash scripts/ci/ios-acceptance.sh` → run `artifacts/ios/runs/20260924T150709Z-13015` → 本ブランチ `suite/export-run/`。
+
+| flow | 結果 | 時間 |
+| --- | --- | --- |
+| licenses-review | PASS | 22s |
+| import-review | PASS | 48s |
+| export-review-ios | PASS | 31s |
+| 他11フロー | skip (`flow.skip`、focused run として記録) | — |
+
+`acceptance.end status=0`（exit 0）。export 検証: `verify_export` が `Library/Caches` の shareKif 成果物を fixture `fixtures/kif/shogiwars.kif` と比較 — **sha256 一致** `e527fbd0bd25e88652176ff4e6c572ff638c597b1eacfb902799ea6d202dbf55`（`export-source.txt` = `app-cache-remoteui`、RemoteUI 既知制約により Files 保存ブラウザは自動操作下で提示されず、`Save` 実タップは実行したうえで app cache の同一バイト列を比較）。
+
+timeline.log の keyboard-introduction 行:
+`2026-09-24T15:07:10Z keyboard-introduction.suppressed`
+
 ## 未実行・未確認
 
-- visual mode の設計上、以下は未実行（スキップではなくモード範囲外）: player-names, player-names-kiou, analysis-review, analysis-partial-review, candidate-review, file-import, management-review, appearance-review, appearance-dark, export-review-ios, background-review, large-text-review, search-delete-review。
+- run 1 (visual) の設計上未実行: player-names, player-names-kiou, analysis-review, analysis-partial-review, candidate-review, file-import, management-review, appearance-review, appearance-dark, background-review, large-text-review, search-delete-review（export-review-ios は run 2 で別途実施済み）。
 - 実 iPhone の性能・FPS・発熱: 未確認（Simulator のみ）。
-- Save to Files の保存先 UI: 未確認（iOS 27 RemoteUI が自動操作下で提示されない既知制約。今回の visual スイートは export フローを含まない）。
+- Save to Files の保存先 UI: 未確認（iOS 27 RemoteUI が自動操作下で提示されない既知制約。run 2 でも RemoteUI ブラウザは出ず、app cache 成果物のバイト列一致で検証）。
 
 ## 証拠の内訳
 
-- `suite/final-run/`: timeline.log, junit.xml×3, 各フロー takeScreenshot PNG, screen-hierarchy, flow.mov (368s 録画), final.png, simulator.log, devices.json, selected-flows.txt, fixture コピー (kiou.kif UTF-8/Shift_JIS, clipboard-*.txt), files-helper ビルド成果物, recording.log
-- `logs/ios-acceptance.log`: acceptance スクリプト stdout
+- `suite/final-run/`: run 1 (visual) の成果物 — timeline.log, junit.xml×3, 各フロー takeScreenshot PNG, screen-hierarchy, flow.mov (368s 録画), final.png, simulator.log, devices.json, selected-flows.txt, fixture コピー (kiou.kif UTF-8/Shift_JIS, clipboard-*.txt), files-helper ビルド成果物, recording.log
+- `suite/export-run/`: run 2 (export focused) の成果物 — timeline.log, junit.xml×3, takeScreenshot PNG, export KIF (`exported-shogiwars.kifu`) + `export-source.txt`, flow.mov, final.png, simulator.log
+- `logs/ios-acceptance.log`: run 1 stdout, `logs/ios-acceptance-export.log`: run 2 stdout
 - `logs/xcodebuild.log.gz`: Release ビルド全ログ (gzip)
 - `summary.json`: 機械可読サマリ, `manifest.json`: 本ファイル一覧

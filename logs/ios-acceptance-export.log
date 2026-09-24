@@ -1,0 +1,63 @@
+2026-09-24T15:07:09Z acceptance.start mode=full
+2026-09-24T15:07:09Z simulator.boot.start
+An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=405):
+Unable to boot device in current state: Booted
+Monitoring boot status for iPhone 18 Pro (1308A109-3EE0-4711-9287-85246639DBC7).
+Device already booted, nothing to do.
+
+2026-09-24T15:07:10Z simulator.boot.end
+2026-09-24T15:07:10Z keyboard-introduction.suppressed
+2026-09-24T15:07:10Z app.install.start
+2026-09-24T15:07:11Z app.install.end
+/Users/devin/repos/meeshogi/artifacts/ios/runs/20260924T150709Z-13015/files-helper/MeeshogiFixtures.app: replacing existing signature
+Monitoring boot status for iPhone 18 Pro (1308A109-3EE0-4711-9287-85246639DBC7).
+Device already booted, nothing to do.
+
+Installed /Users/devin/repos/meeshogi/artifacts/ios/runs/20260924T150709Z-13015/files-helper/MeeshogiFixtures.app
+Documents: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/F1E1C4A4-E131-49F9-94D3-8DD66204D7E7/Documents
+Fixture: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/F1E1C4A4-E131-49F9-94D3-8DD66204D7E7/Documents/kiou.kif
+Fixture: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/F1E1C4A4-E131-49F9-94D3-8DD66204D7E7/Documents/kiou-shift-jis.kif
+2026-09-24T15:07:15Z clipboard-helper.start file=fixtures/kif/shogiwars.kif request=912bd540-d33f-4d24-8e5f-fae1b1726c00
+com.meeshogi.testfiles: 13141
+2026-09-24T15:07:17Z clipboard-helper.end file=fixtures/kif/shogiwars.kif request=912bd540-d33f-4d24-8e5f-fae1b1726c00 attempts=2
+2026-09-24T15:07:17Z flow.start licenses-review
+
+Waiting for flows to complete...
+[Passed] licenses-review (22s)
+
+1/1 Flow Passed in 22s
+
+2026-09-24T15:07:51Z flow.end licenses-review
+2026-09-24T15:07:51Z flow.start import-review
+
+Waiting for flows to complete...
+[Passed] import-review (48s)
+
+1/1 Flow Passed in 48s
+
+2026-09-24T15:08:48Z flow.end import-review
+2026-09-24T15:08:48Z flow.skip player-names
+2026-09-24T15:08:48Z flow.skip player-names-kiou
+2026-09-24T15:08:48Z flow.skip analysis-review
+2026-09-24T15:08:48Z flow.skip analysis-partial-review
+2026-09-24T15:08:48Z flow.skip candidate-review
+2026-09-24T15:08:48Z flow.skip file-import
+2026-09-24T15:08:48Z flow.skip management-review
+2026-09-24T15:08:48Z flow.skip appearance-review
+2026-09-24T15:08:48Z flow.skip appearance-dark
+2026-09-24T15:08:48Z flow.start export-review-ios
+
+Waiting for flows to complete...
+[Passed] export-review-ios (31s)
+
+1/1 Flow Passed in 31s
+
+2026-09-24T15:09:28Z flow.end export-review-ios
+iOS KIF export matches fixtures/kif/shogiwars.kif: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/637E53B2-76C5-45FA-90CA-7FF4DE624168/Library/Caches/meeshogi-44dae0de-2278-4372-885c-ff18c3196194.kifu (source=app-cache-remoteui)
+2026-09-24T15:10:00Z flow.skip background-review
+2026-09-24T15:10:00Z flow.skip search-delete-review
+2026-09-24T15:10:00Z acceptance.end status=0
+Detected file type from extension: PNG
+Note: No display specified. Defaulting to display: 76A849C4-9744-4977-9D36-6B29288141FD (screenID: 1, name: LCD)
+Wrote screenshot to: /Users/devin/repos/meeshogi/artifacts/ios/runs/20260924T150709Z-13015/final.png
+getpwuid_r did not find a match for uid 501

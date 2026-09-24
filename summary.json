@@ -65,17 +65,37 @@
     {"name": "ios-visual-review", "status": "pass", "duration_s": 138, "method": "script-automatic"}
   ],
   "flows_not_run": {
-    "reason": "visual mode scope (script exits after ios-visual-review by design)",
-    "names": ["player-names", "player-names-kiou", "analysis-review", "analysis-partial-review", "candidate-review", "file-import", "management-review", "appearance-review", "appearance-dark", "export-review-ios", "background-review", "large-text-review", "search-delete-review"]
+    "reason": "visual mode scope (script exits after ios-visual-review by design); export-review-ios covered separately in export_run",
+    "names": ["player-names", "player-names-kiou", "analysis-review", "analysis-partial-review", "candidate-review", "file-import", "management-review", "appearance-review", "appearance-dark", "background-review", "large-text-review", "search-delete-review"]
+  },
+  "export_run": {
+    "command": "IOS_ACCEPTANCE_MODE=full ACCEPTANCE_FLOWS=export-review-ios bash scripts/ci/ios-acceptance.sh",
+    "app": "same already-built app from the fresh 6d52e2f build (no rebuild)",
+    "run_dir": "artifacts/ios/runs/20260924T150709Z-13015",
+    "acceptance_end_status": 0,
+    "keyboard_introduction": "2026-09-24T15:07:10Z keyboard-introduction.suppressed",
+    "flows": [
+      {"name": "licenses-review", "status": "pass", "duration_s": 22, "method": "script-automatic"},
+      {"name": "import-review", "status": "pass", "duration_s": 48, "method": "script-automatic"},
+      {"name": "export-review-ios", "status": "pass", "duration_s": 31, "method": "script-automatic"}
+    ],
+    "skipped_flows": "11 other flows logged flow.skip (focused-run evidence, not acceptance of those flows)",
+    "export_verify": {
+      "fixture": "fixtures/kif/shogiwars.kif",
+      "exported": "suite/export-run/exported-shogiwars.kifu",
+      "sha256": "e527fbd0bd25e88652176ff4e6c572ff638c597b1eacfb902799ea6d202dbf55",
+      "match": true,
+      "compare_method": "cmp byte-compare of Library/Caches shareKif artifact (export-source.txt=app-cache-remoteui); Save-to-Files RemoteUI browser not presented under automation"
+    }
   },
   "unverified": [
     "physical device performance/FPS/thermals (simulator only)",
-    "Save to Files destination UI (iOS 27 RemoteUI constraint; export flow not in visual scope)"
+    "Save to Files destination UI (iOS 27 RemoteUI constraint; bytes verified via app-cache artifact instead)"
   ],
   "evidence": {
     "branch": "evidence/ios-expo57-patch",
-    "run_artifacts": "suite/final-run/",
-    "video": "suite/final-run/flow.mov (368s)",
-    "logs": ["logs/ios-acceptance.log", "logs/xcodebuild.log.gz"]
+    "run_artifacts": ["suite/final-run/", "suite/export-run/"],
+    "video": ["suite/final-run/flow.mov (368s)", "suite/export-run/flow.mov (169s)"],
+    "logs": ["logs/ios-acceptance.log", "logs/ios-acceptance-export.log", "logs/xcodebuild.log.gz"]
   }
 }
