@@ -14,6 +14,10 @@ type Env = JobEnvironment & {
   ANALYSIS_CONTAINER_PRECISION: DurableObjectNamespace<AnalysisContainerPrecision>;
 };
 
+const LIFECYCLE_RPC_TIMEOUT_MS = 1_000;
+const CONTAINER_STOP_GRACE_MS = 5_000;
+const CONTAINER_DESTROY_TIMEOUT_MS = 10_000;
+
 abstract class CostTrackedAnalysisContainer extends Container<Env> {
   defaultPort = 8080;
   sleepAfter = '30s';
@@ -31,7 +35,7 @@ abstract class CostTrackedAnalysisContainer extends Container<Env> {
     this.ctx.storage.sql.exec('INSERT OR IGNORE INTO cost_lifecycle_state(singleton, instance_key, generation, active, sleep_pending) VALUES (1, ?, 0, 0, 0)', crypto.randomUUID());
   }
 
-  private async recordLifecycle(event: 'first_contact' | 'sleep_timer_elapsed' | 'sleep_confirmed' | 'stop_confirmed' | 'stop_failed', details: Record<string, unknown> = {}): Promise<void> {
+  private recordLifecycle(event: 'first_contact' | 'sleep_timer_elapsed' | 'sleep_confirmed' | 'stop_confirmed' | 'stop_failed', details: Record<string, unknown> = {}): void {
     const row = this.ctx.storage.sql.exec<{ generation: number; instance_key: string }>('SELECT generation, instance_key FROM cost_lifecycle_state WHERE singleton = 1').toArray()[0];
     if (!row) return;
     const lifecycleKey = `${this.profileId}:${row.instance_key}:${row.generation}`;
@@ -40,21 +44,23 @@ abstract class CostTrackedAnalysisContainer extends Container<Env> {
       'INSERT OR IGNORE INTO cost_lifecycle_pending(profile_id, lifecycle_key, event, observed_at, details) VALUES (?, ?, ?, ?, ?)',
       this.profileId, lifecycleKey, event, new Date(now).toISOString(), JSON.stringify(details),
     );
-    await this.flushPendingLifecycle();
   }
 
   private async flushPendingLifecycle(): Promise<void> {
+    const deadline = Date.now() + LIFECYCLE_RPC_TIMEOUT_MS;
     const rows = this.ctx.storage.sql.exec<{ lifecycle_key: string; event: 'first_contact' | 'sleep_timer_elapsed' | 'sleep_confirmed' | 'stop_confirmed' | 'stop_failed'; observed_at: string; details: string }>(
       'SELECT lifecycle_key, event, observed_at, details FROM cost_lifecycle_pending WHERE profile_id = ? ORDER BY observed_at, event',
-      this.profileId,
+    this.profileId,
     ).toArray();
     for (const row of rows) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return;
       try {
-        await this.env.JOB_COORDINATOR.getByName('staging-global').recordContainerLifecycleEvent({
+        await this.withLifecycleTimeout(Promise.resolve().then(() => this.env.JOB_COORDINATOR.getByName('staging-global').recordContainerLifecycleEvent({
           profileId: this.profileId, lifecycleKey: row.lifecycle_key, event: row.event,
           details: JSON.parse(row.details) as Record<string, unknown>, now: Date.parse(row.observed_at),
-        });
-      } catch { continue; }
+        })), remainingMs);
+      } catch { return; }
       this.ctx.storage.sql.exec(
         'DELETE FROM cost_lifecycle_pending WHERE profile_id = ? AND lifecycle_key = ? AND event = ?',
         this.profileId, row.lifecycle_key, row.event,
@@ -62,16 +68,31 @@ abstract class CostTrackedAnalysisContainer extends Container<Env> {
     }
   }
 
-  private async withLifecycleTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
+  private async withLifecycleTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([
+      return await Promise.race([
         promise,
-        new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error('container_lifecycle_timeout')), timeoutMs); }),
+        new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error('container_lifecycle_timeout')), timeoutMs); }),
       ]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
+  }
+
+  private async stopAndConfirmWithinGrace(): Promise<void> {
+    const deadline = Date.now() + CONTAINER_STOP_GRACE_MS;
+    await this.withLifecycleTimeout(this.stop(), Math.max(1, deadline - Date.now()));
+    while (Date.now() < deadline) {
+      const remainingMs = deadline - Date.now();
+      try {
+        const state = await this.withLifecycleTimeout(this.getState(), Math.min(250, remainingMs));
+        if (state.status === 'stopped' || state.status === 'stopped_with_code') return;
+      } catch { /* Keep checking until the stop grace expires. */ }
+      const delayMs = Math.min(100, deadline - Date.now());
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    throw new Error('container_stop_unconfirmed');
   }
 
   override async onStart(): Promise<void> {
@@ -80,31 +101,45 @@ abstract class CostTrackedAnalysisContainer extends Container<Env> {
     if (row.active === 0) {
       this.ctx.storage.sql.exec('UPDATE cost_lifecycle_state SET generation = generation + 1, active = 1, sleep_pending = 0 WHERE singleton = 1');
     }
-    await this.recordLifecycle('first_contact', { startedAt: Date.now() });
+    this.recordLifecycle('first_contact', { startedAt: Date.now() });
+    await this.flushPendingLifecycle();
   }
 
   override async onActivityExpired(): Promise<void> {
-    this.ctx.storage.sql.exec('UPDATE cost_lifecycle_state SET sleep_pending = 1 WHERE singleton = 1');
-    await this.recordLifecycle('sleep_timer_elapsed', { sleepAfterSeconds: 30 }).catch(() => undefined);
     try {
-      await this.withLifecycleTimeout(this.stop(), 5_000);
+      this.ctx.storage.sql.exec('UPDATE cost_lifecycle_state SET sleep_pending = 1 WHERE singleton = 1');
+      this.recordLifecycle('sleep_timer_elapsed', { sleepAfterSeconds: 30 });
+    } catch { /* Continue to stop even when local lifecycle recording fails. */ }
+    void this.flushPendingLifecycle().catch(() => undefined);
+    try {
+      await this.stopAndConfirmWithinGrace();
     } catch {
-      await this.recordLifecycle('stop_failed', { action: 'destroy_after_stop_failure' }).catch(() => undefined);
-      try { await this.withLifecycleTimeout(this.destroy(), 10_000); } catch { await this.recordLifecycle('stop_failed', { action: 'destroy_failed' }).catch(() => undefined); }
+      try { this.recordLifecycle('stop_failed', { action: 'destroy_after_stop_failure' }); } catch { /* Best-effort local evidence. */ }
+      void this.flushPendingLifecycle().catch(() => undefined);
+      try {
+        await this.withLifecycleTimeout(this.destroy(), CONTAINER_DESTROY_TIMEOUT_MS);
+      } catch {
+        try { this.recordLifecycle('stop_failed', { action: 'destroy_failed' }); } catch { /* Best-effort local evidence. */ }
+        void this.flushPendingLifecycle().catch(() => undefined);
+      }
     }
   }
 
   override async onStop(params: StopParams): Promise<void> {
-    const row = this.ctx.storage.sql.exec<{ sleep_pending: number }>('SELECT sleep_pending FROM cost_lifecycle_state WHERE singleton = 1').toArray()[0];
+    let sleepPending = false;
     try {
-      await this.flushPendingLifecycle();
-      await this.recordLifecycle(row?.sleep_pending === 1 ? 'sleep_confirmed' : 'stop_confirmed', {
+      const row = this.ctx.storage.sql.exec<{ sleep_pending: number }>('SELECT sleep_pending FROM cost_lifecycle_state WHERE singleton = 1').toArray()[0];
+      sleepPending = row?.sleep_pending === 1;
+    } catch { /* A failed local read must not delay the stop transition. */ }
+    try {
+      this.recordLifecycle(sleepPending ? 'sleep_confirmed' : 'stop_confirmed', {
         reason: params.reason, exitCode: params.exitCode,
       });
-    } finally {
+    } catch { /* Preserve the SDK stop hook even if durable logging fails. */ }
+    try {
       this.ctx.storage.sql.exec('UPDATE cost_lifecycle_state SET active = 0, sleep_pending = 0 WHERE singleton = 1');
-      await this.flushPendingLifecycle().catch(() => undefined);
-    }
+    } catch { /* The external RPC is never allowed to gate this local transition. */ }
+    await this.flushPendingLifecycle();
   }
 
   async prepareSigstop(fence: string): Promise<void> {

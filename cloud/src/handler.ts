@@ -239,6 +239,7 @@ export async function analyzeWithServerProfile(
 function v3Result(input: AnalyzeInput, payload: Record<string, unknown>, env: WorkerEnv): CloudAnalysisResultV3 | null {
   if (payload.contractVersion !== ANALYSIS_CONTRACT_VERSION) return null;
   if (payload.sfen !== input.sfen || payload.requestedMultiPv !== input.multipv) return null;
+  if (typeof payload.driverEpoch !== 'string' || payload.driverEpoch.length === 0 || payload.driverEpoch.length > 128) return null;
   const profileVersion = Number(env.ANALYSIS_PROFILE_VERSION ?? '2');
   const result: CloudAnalysisResultV3 = {
     contractVersion: ANALYSIS_CONTRACT_VERSION,
@@ -257,6 +258,7 @@ function v3Result(input: AnalyzeInput, payload: Record<string, unknown>, env: Wo
     rootLegalMoveCount: payload.rootLegalMoveCount as number,
     completedAt: new Date().toISOString(),
     terminal: payload.terminal as CloudAnalysisResultV3['terminal'],
+    driverEpoch: payload.driverEpoch as string,
     engineEpoch: payload.engineEpoch as string,
     restartCount: payload.restartCount as number,
     processId: payload.processId as number,
@@ -295,7 +297,10 @@ export async function handleRequest(request: Request, env: WorkerEnv, driverOrRe
     try {
       const response = await driver.fetch(driverRequest('/health', 'GET'));
       const body: unknown = await response.json();
-      if (!response.ok || !isRecord(body) || body.ready !== true) return json(body, 503);
+      if (!response.ok || !isRecord(body) || body.ready !== true ||
+          typeof body.driverEpoch !== 'string' || body.driverEpoch.length === 0 || body.driverEpoch.length > 128 ||
+          typeof body.engineEpoch !== 'string' || body.engineEpoch.length === 0 || body.engineEpoch.length > 128 ||
+          !Number.isSafeInteger(body.restartCount) || Number(body.restartCount) < 0) return json(body, 503);
       return json(body);
     } catch {
       return json({ error: 'container_not_ready' }, 503);

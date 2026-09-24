@@ -287,6 +287,7 @@ def _validate_pv(sfen: str, pv: list[str]) -> None:
 
 class EngineController:
     def __init__(self) -> None:
+        self._driver_epoch = str(uuid.uuid4())
         self._output: queue.Queue[str | None] = queue.Queue()
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -455,6 +456,7 @@ class EngineController:
             },
             "activeFence": self._active_fence if self._active else None,
             "searchStarted": self._search_started,
+            "driverEpoch": self._driver_epoch,
             "engineEpoch": self._epoch,
             "processId": self._proc.pid if self._proc is not None else None,
             "restartCount": self._restart_count,
@@ -869,6 +871,7 @@ class EngineController:
             "effectiveMultiPv": effective_multipv,
             "rootLegalMoveCount": root_legal_move_count,
             "terminal": terminal,
+            "driverEpoch": self._driver_epoch,
             "engineEpoch": epoch,
             "restartCount": self._restart_count,
             "processId": process_id,

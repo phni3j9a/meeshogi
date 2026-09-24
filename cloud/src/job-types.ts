@@ -115,6 +115,9 @@ export function runtimeIdentityMatches(
   const value = health as Record<string, unknown>;
   const artifacts = value.artifactProvenance;
   if (value.ready !== true || value.engineId !== identity.engineId ||
+      typeof value.driverEpoch !== 'string' || value.driverEpoch.length === 0 || value.driverEpoch.length > 128 ||
+      typeof value.engineEpoch !== 'string' || value.engineEpoch.length === 0 || value.engineEpoch.length > 128 ||
+      !Number.isSafeInteger(value.restartCount) || Number(value.restartCount) < 0 || Number(value.restartCount) > 32 ||
       configuredEngineDigestLabel !== `sha256:${identity.artifacts.engineBinarySha256}` ||
       typeof artifacts !== 'object' || artifacts === null || Array.isArray(artifacts)) return false;
   const runtime = artifacts as Record<string, unknown>;

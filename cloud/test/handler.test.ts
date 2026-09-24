@@ -32,6 +32,7 @@ class FakeDriver implements DriverClient {
     requestedMultiPv: 3,
     effectiveMultiPv: 3,
     rootLegalMoveCount: 30,
+    driverEpoch: 'driver-epoch-1',
     engineEpoch: 'epoch-1',
     restartCount: 0,
     processId: 1234,
@@ -50,6 +51,7 @@ class FakeDriver implements DriverClient {
     weightSha256: 'abcdef012345',
     cpuFlags: ['avx2'],
     avx2: true,
+    driverEpoch: 'driver-epoch-1',
     engineEpoch: 'epoch-1',
     restartCount: 0,
     lastRestartReason: null,
@@ -123,6 +125,7 @@ function validV3Result(overrides: Record<string, unknown> = {}): Record<string, 
     rootLegalMoveCount: 1,
     completedAt: '2026-09-24T00:00:00.000Z',
     terminal: 'ok',
+    driverEpoch: 'driver-epoch-1',
     engineEpoch: 'e2b1d17a',
     restartCount: 1,
     processId: 42,
@@ -143,6 +146,7 @@ describe('staging worker route guards', () => {
     expect(isCloudAnalysisResultV3(validV3Result({
       candidates: [{ move: '7g7f', pvUsi: ['7g7f'], depth: 4, scoreCp: Number.MAX_SAFE_INTEGER + 1 }],
     }))).toBe(false);
+    expect(isCloudAnalysisResultV3(validV3Result({ driverEpoch: '' }))).toBe(false);
   });
 
   it('requires effective MultiPV to match legal count and exact distinct completed candidates', () => {
@@ -396,6 +400,24 @@ describe('staging worker route guards', () => {
     );
     expect(result.status).toBe(503);
     expect(await result.json()).toEqual({ ready: false, reason: 'engine_start_failed' });
+  });
+
+  it('rejects a healthy driver health response without its lifetime identity', async () => {
+    const driver = new FakeDriver();
+    driver.healthBody = { ...(driver.healthBody as Record<string, unknown>), driverEpoch: undefined };
+    const result = await handleRequest(
+      new Request('https://worker.test/v1/internal/health', { headers: authHeaders() }),
+      env,
+      driver,
+    );
+    expect(result.status).toBe(503);
+  });
+
+  it('rejects a driver analysis response without its lifetime identity', async () => {
+    const driver = new FakeDriver();
+    driver.analyzeBody = { ...(driver.analyzeBody as Record<string, unknown>), driverEpoch: undefined };
+    const result = await handleRequest(analyzeRequest({ sfen: SFEN, movetimeMs: 250, multipv: 1 }), env, driver);
+    expect(result.status).toBe(500);
   });
 
   it('validates the explicit stop request and returns the driver result', async () => {

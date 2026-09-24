@@ -725,8 +725,8 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
         .bind(Number(part.remaining_usd), createdAt, input.jobId, input.eventKey),
     ];
     if (part.position_index !== null) {
-      statements.push(this.env.DB.prepare('UPDATE positions SET cost_reserved = MAX(0, ROUND(cost_reserved - ?, 6)), updated_at = ? WHERE job_id = ? AND position_index = ? AND EXISTS (SELECT 1 FROM cost_phase_ledger WHERE event_key = ?)')
-        .bind(Number(part.remaining_usd), createdAt, input.jobId, part.position_index, input.eventKey));
+      statements.push(this.env.DB.prepare('UPDATE positions SET cost_reserved = MAX(0, ROUND(cost_reserved - ?, 6)) WHERE job_id = ? AND position_index = ? AND EXISTS (SELECT 1 FROM cost_phase_ledger WHERE event_key = ?)')
+        .bind(Number(part.remaining_usd), input.jobId, part.position_index, input.eventKey));
     }
     if (input.attemptLedger) {
       const ledger = input.attemptLedger;
@@ -774,18 +774,19 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
   }
 
   async recordEngineRestart(input: {
-    jobId: string; epoch: number; profileId: JobIdentity['profileId']; engineEpoch: string; restartCount: number;
+    jobId: string; epoch: number; profileId: JobIdentity['profileId']; driverEpoch: string; engineEpoch: string; restartCount: number;
     chunkStart: number; chunkEnd: number; now: number; budgetEventKey?: string;
   }): Promise<number> {
-    if (!input.engineEpoch || input.engineEpoch.length > 128 || !Number.isSafeInteger(input.restartCount) || input.restartCount < 1 || input.restartCount > 32) return 0;
+    if (!input.driverEpoch || input.driverEpoch.length > 128 || !input.engineEpoch || input.engineEpoch.length > 128 ||
+        !Number.isSafeInteger(input.restartCount) || input.restartCount < 1 || input.restartCount > 32) return 0;
     return this.serialized(async () => {
       const createdAt = iso(input.now);
       const chunkKey = `chunk:${input.chunkStart}:${input.chunkEnd}`;
       let newlyObserved = 0;
       for (let count = 1; count <= input.restartCount; count += 1) {
-        const eventKey = `engine-restart:${input.profileId}:${input.engineEpoch}:${count}`;
-        const eventInsert = this.env.DB.prepare('INSERT OR IGNORE INTO engine_restart_events(profile_id, engine_epoch, restart_count, job_id, event_key, observed_at) VALUES (?, ?, ?, ?, ?, ?)')
-          .bind(input.profileId, input.engineEpoch, count, input.jobId, eventKey, createdAt);
+        const eventKey = `engine-restart:${input.profileId}:${input.driverEpoch}:${count}`;
+        const eventInsert = this.env.DB.prepare('INSERT OR IGNORE INTO engine_restart_events(profile_id, driver_epoch, engine_epoch, restart_count, job_id, event_key, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(input.profileId, input.driverEpoch, input.engineEpoch, count, input.jobId, eventKey, createdAt);
         if (input.budgetEventKey) {
           const inserted = await eventInsert.run();
           if (inserted.meta.changes === 1) newlyObserved += 1;
@@ -925,15 +926,16 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
       if (!previous || !next) return false;
       const previousAt = Date.parse(previous.updated_at);
       const nextAt = Date.parse(next.updated_at);
-      const started = next.status !== 'pending' || next.attempts > 0 || next.lease_id !== null || nextAt > previousAt;
-      const knownInterval = Number.isFinite(previousAt) && Number.isFinite(nextAt);
-      const durationMs = !started ? 0 : knownInterval ? Math.max(0, nextAt - previousAt) : COST_MODEL.interPositionMaxMs;
+      const unused = next.status === 'pending' && next.attempts === 0 && next.lease_id === null;
+      const started = !unused;
+      const knownInterval = started && Number.isFinite(previousAt) && Number.isFinite(nextAt);
+      const durationMs = unused ? 0 : knownInterval ? Math.max(0, nextAt - previousAt) : COST_MODEL.interPositionMaxMs;
       if (!await this.settleReservationPart({
         jobId, epoch, partKey: part.part_key,
         eventKey: `settlement:${jobId}:${epoch}:${chunkKey}:interposition:${previousIndex}`,
         phase: part.phase, costKind: part.cost_kind,
         amountUsd: estimateRuntimeCostUsd(durationMs, profileType), durationMs, now,
-        evidence: { unknown: started && !knownInterval, measuredElapsedMs: knownInterval ? durationMs : null,
+        evidence: { unknown: started && !knownInterval, unused, measuredElapsedMs: knownInterval ? durationMs : null,
           budgetMs: COST_MODEL.interPositionMaxMs, overrunMs: Math.max(0, durationMs - COST_MODEL.interPositionMaxMs), fromPosition: previousIndex, toPosition: previousIndex + 1 },
         allowOverrun: true, budgetCapMs: COST_MODEL.interPositionMaxMs,
       })) return false;
@@ -1268,8 +1270,8 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
             .bind(reservation, createdAt, day, reservationKey),
           this.env.DB.prepare('UPDATE jobs SET cost_reserved = cost_reserved + ?, updated_at = ? WHERE id = ? AND epoch = ? AND EXISTS (SELECT 1 FROM cost_reservation_batches WHERE reservation_key = ?)')
             .bind(reservation, createdAt, jobId, epoch, reservationKey),
-          ...positionCostRows.map(([index, amount]) => this.env.DB.prepare('UPDATE positions SET cost_reserved = ?, updated_at = ? WHERE job_id = ? AND position_index = ? AND EXISTS (SELECT 1 FROM cost_reservation_batches WHERE reservation_key = ?)')
-            .bind(amount, createdAt, jobId, index, reservationKey)),
+          ...positionCostRows.map(([index, amount]) => this.env.DB.prepare('UPDATE positions SET cost_reserved = ? WHERE job_id = ? AND position_index = ? AND EXISTS (SELECT 1 FROM cost_reservation_batches WHERE reservation_key = ?)')
+            .bind(amount, jobId, index, reservationKey)),
           this.env.DB.prepare('UPDATE outbox SET dispatchable = 1 WHERE id = ? AND completed_at IS NULL AND EXISTS (SELECT 1 FROM cost_reservation_batches WHERE reservation_key = ?)')
             .bind(next.id, reservationKey),
           this.env.DB.prepare(

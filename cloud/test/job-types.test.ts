@@ -120,9 +120,10 @@ describe('async job policy helpers', () => {
       instanceType: profile.instanceType, vcpu: profile.vcpu, artifacts, executionIdentityHash: 'hash',
       executionIdentityComponents: components,
     };
-    const health = { ready: true, engineId: 'engine-a', artifactProvenance: artifacts };
+    const health = { ready: true, engineId: 'engine-a', driverEpoch: 'driver-lifetime-a', engineEpoch: 'engine-process-a', restartCount: 0, artifactProvenance: artifacts };
     expect(runtimeIdentityMatches(identity, health, identity.engineBinaryDigestLabel)).toBe(true);
     expect(runtimeIdentityMatches(identity, { ...health, artifactProvenance: { ...artifacts, driverSha256: 'f'.repeat(64) } }, identity.engineBinaryDigestLabel)).toBe(false);
+    expect(runtimeIdentityMatches(identity, { ...health, driverEpoch: undefined }, identity.engineBinaryDigestLabel)).toBe(false);
     expect(runtimeIdentityMatches(identity, health, `sha256:${'f'.repeat(64)}`)).toBe(false);
   });
 

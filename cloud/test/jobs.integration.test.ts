@@ -2,12 +2,14 @@ import { applyD1Migrations, env, reset, SELF } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Position } from 'tsshogi';
 import worker from '../src/index';
+import { stopForRuntimeBudget } from '../src/jobs';
 import type { JobChunk } from '../src/job-types';
 import initMigration from '../migrations/0001_init.sql?raw';
 import hardeningMigration from '../migrations/0002_async_jobs_hardening.sql?raw';
 import recoveryMigration from '../migrations/0003_recovery_cost_identity_faults.sql?raw';
 import costMigration from '../migrations/0004_chunk_cost_ledger.sql?raw';
 import costFinalizationMigration from '../migrations/0005_cost_finalization_budgets.sql?raw';
+import driverLifetimeMigration from '../migrations/0006_driver_lifetime_restart_identity.sql?raw';
 import { ANALYSIS_PROFILES, COST_MODEL, estimateAttemptCostUsd, estimateChunkReservationParts, estimateChunkReservationUsd, estimateJobReferenceUsd, estimateRuntimeCostUsd, executionIdentityComponents, type AnalysisProfile, type ArtifactProvenance, type JobIdentity } from '../src/job-types';
 
 const OWNER_TOKEN = 'local-owner-token-a';
@@ -26,6 +28,7 @@ const MIGRATIONS = [
   { name: '0003_recovery_cost_identity_faults.sql', queries: recoveryMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
   { name: '0004_chunk_cost_ledger.sql', queries: costMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
   { name: '0005_cost_finalization_budgets.sql', queries: costFinalizationMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
+  { name: '0006_driver_lifetime_restart_identity.sql', queries: driverLifetimeMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
 ];
 
 const FIXTURE_MOVES: Record<number, string[]> = {
@@ -1477,6 +1480,143 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(restartDuration?.duration_ms).toBe(COST_MODEL.restartReserveMs);
   });
 
+  it('dedupes restart observations by driver lifetime and finalizes an over-budget destroyed execution', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const job = await seedSyntheticChunkJob(2);
+    const partKey = 'chunk:0:2';
+    let now = Date.now();
+    const observeRestartCount = async (driverEpoch: string, engineEpoch: string, restartCount: number) => {
+      const eventKey = `restart-observation-${crypto.randomUUID()}`;
+      expect(await coordinator.beginRuntimeBudgetUnit({
+        jobId: job.jobId, epoch: 1, partKey, eventKey, phase: 'container_restart',
+        maximumDurationMs: COST_MODEL.readinessCallTimeoutMs, requiredDurationMs: COST_MODEL.readinessCallTimeoutMs, now,
+      })).toBe(COST_MODEL.readinessCallTimeoutMs);
+      const newlyObserved = await coordinator.recordEngineRestart({
+        jobId: job.jobId, epoch: 1, profileId: 'free-v1', driverEpoch, engineEpoch, restartCount,
+        chunkStart: 0, chunkEnd: 2, now, budgetEventKey: eventKey,
+      });
+      const budgetExceeded = await coordinator.completeRuntimeBudgetUnit({
+        jobId: job.jobId, epoch: 1, partKey, eventKey, phase: 'container_restart',
+        durationMs: newlyObserved * COST_MODEL.readinessCallTimeoutMs, unknown: false,
+        evidence: { source: 'restart_identity_regression', driverEpoch, engineEpoch, restartCount, newlyObserved }, now,
+      });
+      now += 1;
+      return { newlyObserved, budgetExceeded };
+    };
+
+    expect(await observeRestartCount('driver-a', 'engine-before-restart', 1)).toEqual({ newlyObserved: 1, budgetExceeded: false });
+    expect(await observeRestartCount('driver-a', 'engine-after-first-restart', 1)).toEqual({ newlyObserved: 0, budgetExceeded: false });
+    expect(await observeRestartCount('driver-a', 'engine-after-first-restart', 2)).toEqual({ newlyObserved: 1, budgetExceeded: false });
+    expect(await observeRestartCount('driver-a', 'engine-after-second-restart', 2)).toEqual({ newlyObserved: 0, budgetExceeded: false });
+    expect(await observeRestartCount('driver-a', 'engine-after-first-restart', 2)).toEqual({ newlyObserved: 0, budgetExceeded: false });
+    const beforeThird = await env.DB.prepare("SELECT SUM(duration_ms) AS duration_ms FROM cost_phase_ledger WHERE job_id = ? AND phase = 'container_restart'")
+      .bind(job.jobId).first<{ duration_ms: number }>();
+    expect(beforeThird?.duration_ms).toBe(2 * COST_MODEL.readinessCallTimeoutMs);
+
+    const switched = await seedSyntheticChunkJob(2);
+    const switchedObservation = await coordinator.recordEngineRestart({
+      jobId: switched.jobId, epoch: 1, profileId: 'free-v1', driverEpoch: 'driver-b',
+      engineEpoch: 'engine-after-first-restart', restartCount: 1, chunkStart: 0, chunkEnd: 2, now,
+    });
+    expect(switchedObservation).toBe(1);
+
+    const leaseId = crypto.randomUUID();
+    const timestamp = new Date(now).toISOString();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?")
+        .bind(timestamp, timestamp, job.jobId),
+      env.DB.prepare("UPDATE positions SET status = 'running', attempts = 1, lease_id = ?, lease_expires_at = ?, updated_at = ? WHERE job_id = ? AND position_index = 0")
+        .bind(leaseId, now + 60_000, timestamp, job.jobId),
+      env.DB.prepare("UPDATE global_search_slot SET job_id = ?, epoch = 1, position_index = 0, attempt = 1, lease_id = ?, lease_expires_at = ?, profile_id = 'free-v1', quarantine_required = 0, updated_at = ? WHERE singleton = 1")
+        .bind(job.jobId, leaseId, now + 60_000, timestamp),
+    ]);
+    const readinessKey = 'unresolved-readiness-before-budget-stop';
+    expect(await coordinator.beginRuntimeBudgetUnit({
+      jobId: job.jobId, epoch: 1, partKey, eventKey: readinessKey, phase: 'container_readiness',
+      maximumDurationMs: COST_MODEL.readinessCallTimeoutMs, now,
+    })).toBe(COST_MODEL.readinessCallTimeoutMs);
+
+    expect(await observeRestartCount('driver-a', 'engine-after-third-restart', 3)).toEqual({
+      newlyObserved: 1, budgetExceeded: true,
+    });
+    const thirdRestartDuration = await env.DB.prepare("SELECT SUM(duration_ms) AS duration_ms FROM cost_phase_ledger WHERE job_id = ? AND phase = 'container_restart'")
+      .bind(job.jobId).first<{ duration_ms: number }>();
+    expect(thirdRestartDuration?.duration_ms).toBe(COST_MODEL.restartReserveMs);
+
+    let destroyed = 0;
+    const stopped = await stopForRuntimeBudget({
+      jobId: job.jobId, ownerId: 'owner-a', epoch: 1, index: 0, sfen: SFEN, attempts: 1,
+      deliveryCount: 1, leaseId, cancelRequested: false, identity: job.identity,
+    }, env, {
+      fetch: async () => Response.json({ ready: true }),
+      destroy: async () => { destroyed += 1; },
+    });
+    expect(stopped).toBe('done');
+    expect(destroyed).toBe(1);
+
+    const finalJob = await env.DB.prepare('SELECT status, stop_reason, runtime_budget_exceeded, cost_finalized, cost_reserved FROM jobs WHERE id = ?')
+      .bind(job.jobId).first<Record<string, number | string>>();
+    const readiness = await env.DB.prepare("SELECT phase, duration_ms, evidence FROM cost_phase_ledger WHERE job_id = ? AND event_key = ?")
+      .bind(job.jobId, `settlement:${job.jobId}:1:${partKey}:container_readiness`).first<{ phase: string; duration_ms: number; evidence: string }>();
+    const unknownAttempt = await env.DB.prepare("SELECT engine_ms, evidence FROM cost_phase_ledger WHERE job_id = ? AND phase = 'engine_attempt' AND part_key = 'attempt:0:1'")
+      .bind(job.jobId).first<{ engine_ms: number | null; evidence: string }>();
+    expect(finalJob).toMatchObject({ status: 'failed', stop_reason: 'runtime_budget_exceeded', runtime_budget_exceeded: 1, cost_finalized: 1, cost_reserved: 0 });
+    expect(readiness?.phase).toBe('container_readiness');
+    expect(readiness?.duration_ms).toBe(COST_MODEL.readinessCallTimeoutMs);
+    expect(JSON.parse(readiness?.evidence ?? '{}')).toMatchObject({ unknown: true });
+    expect(unknownAttempt?.engine_ms).toBeNull();
+    expect(JSON.parse(unknownAttempt?.evidence ?? '{}')).toMatchObject({ reason: 'unknown_execution_destroy_confirmed' });
+  });
+
+  it('settles inter-position cost as unused for an unclaimed position and preserves started intervals', async () => {
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const startAt = Date.parse('2026-09-24T08:00:00.000Z');
+    const unstarted = await seedSyntheticChunkJob(2);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?")
+        .bind(new Date(startAt).toISOString(), new Date(startAt).toISOString(), unstarted.jobId),
+      env.DB.prepare("UPDATE positions SET status = 'done', attempts = 1, updated_at = ? WHERE job_id = ? AND position_index = 0")
+        .bind(new Date(startAt + 1).toISOString(), unstarted.jobId),
+      env.DB.prepare("UPDATE positions SET status = 'pending', attempts = 0, lease_id = NULL, updated_at = ? WHERE job_id = ? AND position_index = 1")
+        .bind(new Date(startAt).toISOString(), unstarted.jobId),
+    ]);
+    expect((await coordinator.requestCancel('owner-a', unstarted.jobId, startAt + 10 * 60_000)).status).toBe('cancelled');
+    const unusedLedger = await env.DB.prepare("SELECT amount_usd, duration_ms, evidence FROM cost_phase_ledger WHERE job_id = ? AND phase = 'inter_position_runtime'")
+      .bind(unstarted.jobId).first<{ amount_usd: number; duration_ms: number; evidence: string }>();
+    const unstartedPosition = await env.DB.prepare('SELECT updated_at FROM positions WHERE job_id = ? AND position_index = 1')
+      .bind(unstarted.jobId).first<{ updated_at: string }>();
+    const unstartedJob = await env.DB.prepare('SELECT runtime_budget_exceeded, cost_finalized FROM jobs WHERE id = ?')
+      .bind(unstarted.jobId).first<{ runtime_budget_exceeded: number; cost_finalized: number }>();
+    expect(unusedLedger?.amount_usd).toBe(0);
+    expect(unusedLedger?.duration_ms).toBe(0);
+    expect(JSON.parse(unusedLedger?.evidence ?? '{}')).toMatchObject({ unknown: false, unused: true, measuredElapsedMs: null });
+    expect(unstartedPosition?.updated_at).toBe(new Date(startAt).toISOString());
+    expect(unstartedJob).toEqual({ runtime_budget_exceeded: 0, cost_finalized: 1 });
+    await coordinator.cancellationSettled(unstarted.jobId, 1, startAt + 10 * 60_000 + 1);
+    const repeatedUnused = await env.DB.prepare("SELECT amount_usd, duration_ms FROM cost_phase_ledger WHERE job_id = ? AND phase = 'inter_position_runtime'")
+      .bind(unstarted.jobId).first<{ amount_usd: number; duration_ms: number }>();
+    expect(repeatedUnused).toEqual({ amount_usd: 0, duration_ms: 0 });
+
+    const started = await seedSyntheticChunkJob(2);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?")
+        .bind(new Date(startAt).toISOString(), new Date(startAt).toISOString(), started.jobId),
+      env.DB.prepare("UPDATE positions SET status = 'done', attempts = 1, updated_at = ? WHERE job_id = ? AND position_index = 0")
+        .bind(new Date(startAt).toISOString(), started.jobId),
+      env.DB.prepare("UPDATE positions SET status = 'pending', attempts = 1, lease_id = NULL, updated_at = ? WHERE job_id = ? AND position_index = 1")
+        .bind(new Date(startAt + 3_000).toISOString(), started.jobId),
+    ]);
+    expect((await coordinator.requestCancel('owner-a', started.jobId, startAt + 4_000)).status).toBe('cancelled');
+    const startedLedger = await env.DB.prepare("SELECT amount_usd, duration_ms, evidence FROM cost_phase_ledger WHERE job_id = ? AND phase = 'inter_position_runtime'")
+      .bind(started.jobId).first<{ amount_usd: number; duration_ms: number; evidence: string }>();
+    const startedJob = await env.DB.prepare('SELECT runtime_budget_exceeded, cost_finalized FROM jobs WHERE id = ?')
+      .bind(started.jobId).first<{ runtime_budget_exceeded: number; cost_finalized: number }>();
+    expect(startedLedger?.duration_ms).toBe(3_000);
+    expect(startedLedger?.amount_usd).toBeGreaterThan(0);
+    expect(JSON.parse(startedLedger?.evidence ?? '{}')).toMatchObject({ unknown: false, unused: false, measuredElapsedMs: 3_000 });
+    expect(startedJob).toEqual({ runtime_budget_exceeded: 0, cost_finalized: 1 });
+  });
+
   it('pages more than 100 terminal rows in stable order including an interleaved failure', async () => {
     const jobId = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -1497,6 +1637,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
       rootLegalMoveCount: 0,
       completedAt: now,
       terminal: 'incomplete',
+      driverEpoch: 'synthetic-page-driver',
       engineEpoch: 'synthetic-page-fixture',
       restartCount: 0,
       processId: 1,

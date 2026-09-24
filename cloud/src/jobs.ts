@@ -49,6 +49,12 @@ function json(body: unknown, status = 200, extraHeaders: HeadersInit = {}): Resp
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+function driverLifetimeEpoch(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : null;
+}
+function engineRestartCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 32 ? value : null;
+}
 function hasExactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   const keys = Object.keys(value).sort();
   const expected = [...allowed].sort();
@@ -239,21 +245,23 @@ async function verifyAndRecordRuntime(
       evidence: { probePhase: phase, probeIndex: probe, timeoutMs }, now: Date.now(),
     });
     let newlyObservedRestarts = 0;
-    if (isRecord(health) && typeof health.engineEpoch === 'string' && typeof health.restartCount === 'number' &&
-        Number.isSafeInteger(health.restartCount) && health.restartCount > 0) {
+    const runtime = isRecord(health) ? health : null;
+    const driverEpoch = driverLifetimeEpoch(runtime?.driverEpoch);
+    const engineEpoch = driverLifetimeEpoch(runtime?.engineEpoch);
+    const restartCount = engineRestartCount(runtime?.restartCount);
+    const restartKnown = driverEpoch !== null && engineEpoch !== null && restartCount !== null;
+    if (driverEpoch !== null && engineEpoch !== null && restartCount !== null && restartCount > 0) {
       newlyObservedRestarts = await coordinator.recordEngineRestart({
         jobId: position.jobId, epoch: position.epoch, profileId: position.identity.profileId,
-        engineEpoch: health.engineEpoch, restartCount: health.restartCount,
+        driverEpoch, engineEpoch, restartCount,
         chunkStart: chunk.start_idx, chunkEnd: chunk.end_idx, now: Date.now(), budgetEventKey: restartEventKey,
       });
     }
-    const restartKnown = isRecord(health) && typeof health.restartCount === 'number' && Number.isSafeInteger(health.restartCount);
     const restartOverrun = await coordinator.completeRuntimeBudgetUnit({
       jobId: position.jobId, epoch: position.epoch, partKey: chunkKey, eventKey: restartEventKey,
-      phase: 'container_restart', durationMs: restartKnown ? newlyObservedRestarts * COST_MODEL.readinessCallTimeoutMs
-        : healthResponseReceived ? 0 : COST_MODEL.readinessCallTimeoutMs,
-      unknown: !restartKnown && !healthResponseReceived,
-      evidence: { probePhase: phase, probeIndex: probe, newlyObservedRestarts, restartCount: isRecord(health) ? health.restartCount : null,
+      phase: 'container_restart', durationMs: restartKnown ? newlyObservedRestarts * COST_MODEL.readinessCallTimeoutMs : COST_MODEL.readinessCallTimeoutMs,
+      unknown: !restartKnown,
+      evidence: { probePhase: phase, probeIndex: probe, newlyObservedRestarts, driverEpoch, engineEpoch, restartCount,
         healthResponseReceived }, now: Date.now(),
     });
     if (readinessOverrun || restartOverrun || await coordinator.runtimeBudgetExceeded(position.jobId, position.epoch)) return {
@@ -622,7 +630,8 @@ function resultWithJobIdentity(value: unknown, identity: JobIdentity, sfen: stri
   if (
     result.sfen !== sfen || result.requestedMultiPv !== requestedMultiPv || result.engineId !== identity.engineId ||
     result.analysisProfileId !== identity.profileId || result.profileVersion !== identity.profileVersion ||
-    result.modelId !== identity.modelId || result.contractVersion !== ANALYSIS_CONTRACT_VERSION || !isCloudAnalysisResultV3(result)
+    result.modelId !== identity.modelId || driverLifetimeEpoch(result.driverEpoch) === null ||
+    result.contractVersion !== ANALYSIS_CONTRACT_VERSION || !isCloudAnalysisResultV3(result)
   ) return null;
   return { result, statsJson: isRecord(stats) ? JSON.stringify(stats) : null };
 }
@@ -675,7 +684,7 @@ async function withinTimeout<T>(promise: Promise<T>, timeoutMs: number, error: s
   }
 }
 
-async function stopForRuntimeBudget(position: ClaimedPosition, env: JobEnvironment, driver: DriverClient): Promise<'done' | 'redeliver'> {
+export async function stopForRuntimeBudget(position: ClaimedPosition, env: JobEnvironment, driver: DriverClient): Promise<'done' | 'redeliver'> {
   const coordinator = operationStub(env);
   const slot = await coordinator.getSlot(Date.now());
   if (slot?.jobId === position.jobId && slot.epoch === position.epoch && slot.leaseId === position.leaseId) {
@@ -864,7 +873,7 @@ async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironm
   if (result.restartCount > 0) {
     newlyObservedRestarts = await coordinator.recordEngineRestart({
       jobId: current.jobId, epoch: current.epoch, profileId: current.identity.profileId,
-      engineEpoch: result.engineEpoch, restartCount: result.restartCount,
+      driverEpoch: result.driverEpoch!, engineEpoch: result.engineEpoch, restartCount: result.restartCount,
       chunkStart: chunk.start_idx, chunkEnd: chunk.end_idx, now: Date.now(), budgetEventKey: restartEventKey,
     });
   }

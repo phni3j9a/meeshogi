@@ -52,6 +52,8 @@ export type CloudAnalysisResultV3 = {
   rootLegalMoveCount: number;
   completedAt: string;
   terminal: AnalysisTerminalStatus;
+  /** Stable for one Python driver controller lifetime, across engine restarts. Older stored rows may omit it. */
+  driverEpoch?: string;
   /** Process identity that produced this response, even if a restart followed. */
   engineEpoch: string;
   restartCount: number;
@@ -78,6 +80,7 @@ const RESULT_KEYS = new Set([
   'rootLegalMoveCount',
   'completedAt',
   'terminal',
+  'driverEpoch',
   'engineEpoch',
   'restartCount',
   'processId',
@@ -171,6 +174,7 @@ export function isCloudAnalysisResultV3(value: unknown): value is CloudAnalysisR
   const completedAtMs = Date.parse(value.completedAt);
   if (!Number.isFinite(completedAtMs) || new Date(completedAtMs).toISOString() !== value.completedAt) return false;
   if (!validTerminal(value.terminal)) return false;
+  if (value.driverEpoch !== undefined && (typeof value.driverEpoch !== 'string' || value.driverEpoch.length === 0 || value.driverEpoch.length > 128)) return false;
   if (typeof value.engineEpoch !== 'string' || value.engineEpoch.length === 0 || value.engineEpoch.length > 128) return false;
   if (!isSafeIntegerInRange(value.restartCount, 0, Number.MAX_SAFE_INTEGER)) return false;
   if (!isSafeIntegerInRange(value.processId, 1, Number.MAX_SAFE_INTEGER)) return false;

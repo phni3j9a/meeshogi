@@ -460,21 +460,33 @@ class DriverTests(unittest.TestCase):
             driver, "PROCESS_KILL_GRACE_SECONDS", 0.1
         ):
             controller = self.make_controller()
-            first_epoch = controller.health()["engineEpoch"]
-            first_pid = controller.health()["processId"]
+            initial_health = controller.health()
+            first_epoch = initial_health["engineEpoch"]
+            first_driver_epoch = initial_health["driverEpoch"]
+            first_pid = initial_health["processId"]
             status, result = controller.analyze(self.request())
             health = controller.health()
             next_status, next_result = controller.analyze(self.request())
         self.assertEqual(status, 200)
         self.assertEqual(result["terminal"], "position_failed:engine_timeout")
         self.assertEqual(result["engineEpoch"], first_epoch)
+        self.assertEqual(result["driverEpoch"], first_driver_epoch)
         self.assertEqual(result["restartCount"], 1)
         self.assertNotEqual(health["engineEpoch"], first_epoch)
+        self.assertEqual(health["driverEpoch"], first_driver_epoch)
         self.assertNotEqual(health["processId"], first_pid)
         self.assertEqual(health["lastRestartReason"], "engine_timeout")
         self.assertEqual(next_status, 200)
         self.assertEqual(next_result["terminal"], "ok")
         self.assertEqual(next_result["engineEpoch"], health["engineEpoch"])
+        self.assertEqual(next_result["driverEpoch"], first_driver_epoch)
+
+    def test_driver_epoch_changes_for_a_new_controller_lifetime(self) -> None:
+        first = self.make_controller()
+        first_epoch = first.health()["driverEpoch"]
+        second = self.make_controller()
+
+        self.assertNotEqual(second.health()["driverEpoch"], first_epoch)
 
     def test_engine_death_restarts_and_next_request_succeeds(self) -> None:
         with self.scenario("exit-once"):
@@ -541,6 +553,7 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(health["cpuFlags"], sorted(controller._cpu_flags))
         self.assertEqual(health["stats"], synthetic)
         self.assertIn("engineEpoch", health)
+        self.assertEqual(health["driverEpoch"], result["driverEpoch"])
         self.assertIn("restartCount", health)
         provenance = health["artifactProvenance"]
         self.assertEqual(provenance["engineBinarySha256"], hashlib.sha256(self.engine_path.read_bytes()).hexdigest())
