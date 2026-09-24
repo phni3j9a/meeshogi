@@ -9,13 +9,13 @@
     {
       "class_name": "AnalysisContainer",
       // Private digest-pinned image, built from an external 0700 context; engine/weight are never committed.
-      "image": "registry.cloudflare.com/0c28583a22fe4051144d6efdb783d3b0/meeshogi-analysis-staging@sha256:b0818e4f6ebd57fe2e5072c16dc7939d8de9a61717364070dd411dd36e98cf5c",
+      "image": "registry.cloudflare.com/0c28583a22fe4051144d6efdb783d3b0/meeshogi-analysis-staging@sha256:3908907ac5cf3fc35926dab920e14c8672b377f53b653d53894d86bce53f3aed",
       "instance_type": "standard-2",
       "max_instances": 1
     },
     {
       "class_name": "AnalysisContainerPrecision",
-      "image": "registry.cloudflare.com/0c28583a22fe4051144d6efdb783d3b0/meeshogi-analysis-staging@sha256:b0818e4f6ebd57fe2e5072c16dc7939d8de9a61717364070dd411dd36e98cf5c",
+      "image": "registry.cloudflare.com/0c28583a22fe4051144d6efdb783d3b0/meeshogi-analysis-staging@sha256:3908907ac5cf3fc35926dab920e14c8672b377f53b653d53894d86bce53f3aed",
       "instance_type": "standard-3",
       "max_instances": 1
     }
@@ -64,7 +64,12 @@
     "ANALYSIS_MODEL_ID": "analysis-model-staging-v1",
     "ANALYSIS_ENGINE_ID": "YaneuraOu NNUE 9.70git 64AVX2",
     "ANALYSIS_ENGINE_BINARY_DIGEST_LABEL": "sha256:0cb27c8302f6eb357cd360372defe172401519c06fb4bf28eb2bf72ee0f39d80",
-    "ANALYSIS_FAULT_FIXTURES_ENABLED": "0"
+    "ANALYSIS_WEIGHT_SHA256": "a78b7f889843037d344f482623b3febd124ead5c1f34f134d9f1c2c78cd0f829",
+    "ANALYSIS_ENGINE_OPTIONS_SHA256": "9c242cd8820c158292af4a6d58890e37ae060000a9a6344d7a549abf7f44f0b3",
+    "ANALYSIS_HELPER_SHA256": "cfd752f67a1d5be59ada9ad16a8f19a89da874275cf7209104a671f99652311b",
+    "ANALYSIS_DRIVER_SHA256": "daef4423acc094a7ac4bee23f5eadd0a826cdd29851a07aae5b526270437c71d",
+    "ANALYSIS_FAULT_FIXTURES_ENABLED": "1",
+    "ANALYSIS_FAULT_TEST_PRINCIPAL_ID": "prn-verify2"
   },
   "triggers": { "crons": ["* * * * *"] }
 }

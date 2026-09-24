@@ -49,6 +49,7 @@ const transportLossRequests = new Set([sfenAfter(['6g6f', '1c1d'])]);
 const transportLossAttempts = new Map<string, number>();
 let activeSearch: { fence: string; destroyed: boolean; release: () => void } | null = null;
 let runtimeMismatch = false;
+let healthDown = false;
 const moves = ['7g7f', '2g2f', '3g3f'];
 
 async function analysisEngine(request: Request): Promise<Response> {
@@ -61,8 +62,12 @@ async function analysisEngine(request: Request): Promise<Response> {
     return Response.json({ destroyed: true });
   }
   if (path === '/__runtime-mismatch/on') { runtimeMismatch = true; return Response.json({ enabled: true }); }
-  if (path === '/__runtime-mismatch/off' || path === '/__reset') { runtimeMismatch = false; activeSearch = null; return Response.json({ enabled: false }); }
-  if (path === '/health') return Response.json({
+  if (path === '/__runtime-mismatch/off' || path === '/__reset') { runtimeMismatch = false; activeSearch = null; healthDown = false; return Response.json({ enabled: false }); }
+  if (path === '/__health-down/on') { healthDown = true; return Response.json({ enabled: true }); }
+  if (path === '/__health-down/off') { healthDown = false; return Response.json({ enabled: false }); }
+  if (path === '/health') {
+    if (healthDown) return Response.json({ reason: 'driver_down' }, { status: 503 });
+    return Response.json({
     ready: true,
     engineId: 'YaneuraOu NNUE 9.70git 64AVX2',
     artifactProvenance: runtimeMismatch
@@ -70,7 +75,8 @@ async function analysisEngine(request: Request): Promise<Response> {
       : ARTIFACT_PROVENANCE,
     activeFence: activeSearch?.fence ?? null,
     searchStarted: activeSearch !== null,
-  });
+    });
+  }
   if (path === '/stop') return Response.json({ stopped: true });
   if (path === '/prove') {
     const proofRequest = await request.json() as { sfen: string; budget: number };

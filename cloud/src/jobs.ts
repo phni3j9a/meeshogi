@@ -168,13 +168,18 @@ async function jobIdentity(env: JobEnvironment, profile: AnalysisProfile): Promi
     executionIdentityComponents: components,
   };
 }
-export async function verifyDriverRuntime(driver: DriverClient, env: JobEnvironment, identity: JobIdentity): Promise<boolean> {
-  try {
-    const response = await driver.fetch(new Request('http://container/health', { method: 'GET' }));
-    if (!response.ok) return false;
-    const health: unknown = await response.json();
-    return runtimeIdentityMatches(identity, health, env.ANALYSIS_ENGINE_BINARY_DIGEST_LABEL);
-  } catch { return false; }
+export type DriverRuntimeCheck = 'ok' | 'unreachable' | 'mismatch';
+export async function verifyDriverRuntime(driver: DriverClient, env: JobEnvironment, identity: JobIdentity): Promise<DriverRuntimeCheck> {
+  for (let probe = 0; probe < 2; probe += 1) {
+    let health: unknown;
+    try {
+      const response = await driver.fetch(new Request('http://container/health', { method: 'GET' }));
+      if (!response.ok) { await new Promise((resolve) => setTimeout(resolve, 150)); continue; }
+      health = await response.json();
+    } catch { await new Promise((resolve) => setTimeout(resolve, 150)); continue; }
+    return runtimeIdentityMatches(identity, health, env.ANALYSIS_ENGINE_BINARY_DIGEST_LABEL) ? 'ok' : 'mismatch';
+  }
+  return 'unreachable';
 }
 function operationStub(env: JobEnvironment): DurableObjectStub<JobCoordinator> {
   return env.JOB_COORDINATOR.getByName(GLOBAL_COORDINATOR_NAME);
@@ -572,9 +577,25 @@ async function quarantineUnknownExecution(
 async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironment, driver: DriverClient): Promise<'done' | 'skipped' | 'redeliver' | 'busy' | 'cancelled'> {
   const coordinator = operationStub(env);
   const profile = ANALYSIS_PROFILES[initial.identity.profileId];
-  if (!await verifyDriverRuntime(driver, env, initial.identity)) {
+  const preDispatchRuntime = await verifyDriverRuntime(driver, env, initial.identity);
+  if (preDispatchRuntime === 'mismatch') {
     await coordinator.failPosition(initial, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
     return 'done';
+  }
+  if (preDispatchRuntime === 'unreachable') {
+    // Nothing was dispatched, so the position's engine work provably did not
+    // run. Best effort: destroy the suspect container; fall back to releasing
+    // the claim so the position can be redelivered without waiting for lease
+    // expiry. The slot only fences real searches, and none exists here.
+    try {
+      if (!driver.destroy) throw new Error('container_destroy_unavailable');
+      await driver.destroy();
+      const slot = await coordinator.getSlot(Date.now());
+      if (slot?.jobId === initial.jobId && slot.leaseId === initial.leaseId) await coordinator.confirmContainerDestroyed(slot, Date.now());
+    } catch {
+      await coordinator.releaseForRetry(initial, 'position_failed:driver_unreachable', Date.now());
+    }
+    return 'redeliver';
   }
   const cache = await coordinator.findCached(initial.identity, initial.sfen);
   if (cache) {
@@ -687,19 +708,27 @@ async function processClaimedPosition(initial: ClaimedPosition, env: JobEnvironm
     });
     return 'done';
   }
-  if (!await verifyDriverRuntime(driver, env, current.identity)) {
-    await recordAttemptCostOrThrow(env, current, attempt, elapsedCost, result.elapsedMs);
-    await coordinator.failPosition(current, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
-    return 'done';
+  const postAnalysisRuntime = await verifyDriverRuntime(driver, env, current.identity);
+  if (postAnalysisRuntime !== 'ok') {
+    if (postAnalysisRuntime === 'mismatch') {
+      await recordAttemptCostOrThrow(env, current, attempt, elapsedCost, result.elapsedMs);
+      await coordinator.failPosition(current, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
+      return 'done';
+    }
+    return quarantineUnknownExecution(current, profile, env, driver, attempt, 'position_failed:driver_unreachable');
   }
   const proofOutcome = terminal === 'ok' || terminal === 'mate'
     ? await proveMate(driver, current.sfen)
     : { proof: null, invalid: false, elapsedMs: 0 } satisfies ProofOutcome;
   const totalAmount = estimateAttemptCostUsd(result.elapsedMs + proofOutcome.elapsedMs, current.identity.instanceType);
   await recordAttemptCostOrThrow(env, current, attempt, totalAmount, result.elapsedMs);
-  if (proofOutcome.invalid || !await verifyDriverRuntime(driver, env, current.identity)) {
+  const postProofRuntime = await verifyDriverRuntime(driver, env, current.identity);
+  if (proofOutcome.invalid || postProofRuntime === 'mismatch') {
     await coordinator.failPosition(current, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
     return 'done';
+  }
+  if (postProofRuntime === 'unreachable') {
+    return quarantineUnknownExecution(current, profile, env, driver, attempt, 'position_failed:driver_unreachable');
   }
   const seq = await coordinator.commitPosition(
     current, JSON.stringify(result), normalized.statsJson, proofOutcome.proof ? JSON.stringify(proofOutcome.proof) : null,

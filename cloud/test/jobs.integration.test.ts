@@ -280,6 +280,23 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(position).toEqual({ status: 'failed', attempts: 0, cached: 0, error_detail: 'position_failed:protocol_error' });
   });
 
+  it('redelivers instead of failing fatally when the driver health check is unreachable', async () => {
+    const binding = (env as unknown as { ANALYSIS_ENGINE: { fetch(request: Request): Promise<Response> } }).ANALYSIS_ENGINE;
+    await binding.fetch(new Request('http://analysis-engine.test/__health-down/on', { method: 'POST' }));
+    const created = await createJob([SFEN]);
+    const jobId = String(created.body.jobId);
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    const mid = await env.DB.prepare('SELECT status, stop_reason FROM jobs WHERE id = ?').bind(jobId)
+      .first<{ status: string; stop_reason: string | null }>();
+    expect(mid?.status).not.toBe('failed');
+    expect(mid?.stop_reason ?? '').not.toBe('position_failed:protocol_error');
+    const blocked = await env.DB.prepare("SELECT value FROM flags WHERE key = 'profile_blocked:free-v1'").first<{ value: string }>();
+    expect(blocked?.value ?? '0').not.toBe('1');
+    await binding.fetch(new Request('http://analysis-engine.test/__health-down/off', { method: 'POST' }));
+    const done = await waitForJob(jobId, ['completed']) as { counts: { done: number } };
+    expect(done.counts.done).toBe(1);
+  });
+
   it('replays public move input and routes each profile with an identity-scoped cache', async () => {
     const profilesResponse = await SELF.fetch(request('/v1/analysis-profiles', OWNER_TOKEN));
     const profilesBody = await profilesResponse.json() as { profiles: Array<Record<string, unknown>> };
