@@ -329,7 +329,7 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
     if (job?.status !== 'cancelling' || job.stop_reason === 'dead_letter_in_progress') return;
     await this.env.DB.batch([
       this.env.DB.prepare(
-        "UPDATE jobs SET status = 'cancelled', cancel_requested = 1, stop_reason = 'cancelled', completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ? AND epoch = ? AND status = 'cancelling' AND stop_reason <> 'dead_letter_in_progress'",
+        "UPDATE jobs SET status = 'cancelled', cancel_requested = 1, stop_reason = 'cancelled', completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ? AND epoch = ? AND status = 'cancelling' AND COALESCE(stop_reason, '') <> 'dead_letter_in_progress'",
       ).bind(iso(now), iso(now), jobId, epoch),
       this.env.DB.prepare('UPDATE daily_cost SET reserved_usd = MAX(0, reserved_usd - (SELECT cost_reserved FROM jobs WHERE id = ?)), updated_at = ? WHERE day_utc = (SELECT cost_day_utc FROM jobs WHERE id = ?) AND (SELECT cost_reserved FROM jobs WHERE id = ?) > 0')
         .bind(jobId, iso(now), jobId, jobId),

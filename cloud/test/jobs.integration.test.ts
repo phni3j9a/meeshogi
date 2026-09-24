@@ -687,6 +687,15 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(slot?.job_id).toBeNull();
   });
 
+  it('settles a stuck cancelling job with a null stop_reason via scheduled recovery', async () => {
+    const seeded = await seedQueuedPosition();
+    await env.DB.prepare("UPDATE jobs SET status = 'cancelling', cancel_requested = 1, stop_reason = NULL WHERE id = ?").bind(seeded.jobId).run();
+    await worker.scheduled({ cron: '* * * * *', scheduledTime: Date.now() } as ScheduledController, env);
+    const job = await env.DB.prepare('SELECT status, stop_reason FROM jobs WHERE id = ?').bind(seeded.jobId)
+      .first<{ status: string; stop_reason: string | null }>();
+    expect(job).toEqual({ status: 'cancelled', stop_reason: 'cancelled' });
+  });
+
   it('keeps global slot and position claim atomic across injected D1 failures', async () => {
     const seeded = await seedQueuedPosition();
     const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
