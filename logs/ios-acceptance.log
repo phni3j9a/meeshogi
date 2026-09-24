@@ -1,0 +1,121 @@
+2026-09-24T14:50:28Z acceptance.start mode=visual
+2026-09-24T14:50:28Z simulator.boot.start
+Monitoring boot status for iPhone 18 Pro (1308A109-3EE0-4711-9287-85246639DBC7).
+[2026-09-24 14:50:31 +0000] Status=1, isTerminal=NO, Elapsed=00:01.
+	Waiting on BackBoard
+
+[2026-09-24 14:51:02 +0000] Status=2, isTerminal=NO, Elapsed=00:33.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.securityd.KeychainMigrator (KeychainMigrator.migrator, user-agnostic) (Concurrent: Running plugin com.apple.appleaccount.mergebuddyprovisioningresponse.migrator (MergeBuddyProvisioningResponse.migrator, concurrent after com.apple.-0LaunchServicesMigrator))
+		Migration Elapsed:00:01 seconds
+
+[2026-09-24 14:51:03 +0000] Status=2, isTerminal=NO, Elapsed=00:33.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.WebBookmarks.migrator (WebBookmarks.migrator)
+		Migration Elapsed:00:02 seconds
+
+[2026-09-24 14:51:03 +0000] Status=2, isTerminal=NO, Elapsed=00:34.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.MobileSafari.migrator (MobileSafari.migrator)
+		Migration Elapsed:00:03 seconds
+
+[2026-09-24 14:51:03 +0000] Status=2, isTerminal=NO, Elapsed=00:34.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.MobileSafari.migrator (MobileSafari.migrator)
+		Migration Elapsed:00:03 seconds
+
+[2026-09-24 14:51:04 +0000] Status=2, isTerminal=NO, Elapsed=00:35.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.MobileSafari.migrator (MobileSafari.migrator)
+		Migration Elapsed:00:04 seconds
+
+[2026-09-24 14:51:07 +0000] Status=2, isTerminal=NO, Elapsed=00:38.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.MobileSafari.migrator (MobileSafari.migrator)
+		Migration Elapsed:00:05 seconds
+
+[2026-09-24 14:51:08 +0000] Status=2, isTerminal=NO, Elapsed=00:39.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.PassbookDataMigrator (PassbookDataMigrator.migrator)
+		Migration Elapsed:00:07 seconds
+
+[2026-09-24 14:51:09 +0000] Status=2, isTerminal=NO, Elapsed=00:40.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.PreferencesMigrator (PreferencesMigrator.migrator)
+		Migration Elapsed:00:08 seconds
+
+[2026-09-24 14:51:11 +0000] Status=2, isTerminal=NO, Elapsed=00:41.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.PreferencesMigrator (PreferencesMigrator.migrator)
+		Migration Elapsed:00:09 seconds
+
+[2026-09-24 14:51:12 +0000] Status=2, isTerminal=NO, Elapsed=00:43.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.StocksMigrator (StocksMigrator.migrator)
+		Migration Elapsed:00:11 seconds
+
+[2026-09-24 14:51:13 +0000] Status=4294967295, isTerminal=YES, Elapsed=00:44.
+	Finished
+
+2026-09-24T14:51:14Z simulator.boot.end
+2026-09-24T14:51:27Z keyboard-introduction.suppressed
+2026-09-24T14:51:28Z app.install.start
+2026-09-24T14:52:01Z app.install.end
+/Users/devin/repos/meeshogi/artifacts/ios/runs/20260924T145028Z-11073/files-helper/MeeshogiFixtures.app: replacing existing signature
+Monitoring boot status for iPhone 18 Pro (1308A109-3EE0-4711-9287-85246639DBC7).
+Device already booted, nothing to do.
+
+Installed /Users/devin/repos/meeshogi/artifacts/ios/runs/20260924T145028Z-11073/files-helper/MeeshogiFixtures.app
+Documents: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/EC3DC387-CA35-4094-8971-0459AACCA6F3/Documents
+Fixture: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/EC3DC387-CA35-4094-8971-0459AACCA6F3/Documents/kiou.kif
+Fixture: /Users/devin/Library/Developer/CoreSimulator/Devices/1308A109-3EE0-4711-9287-85246639DBC7/data/Containers/Data/Application/EC3DC387-CA35-4094-8971-0459AACCA6F3/Documents/kiou-shift-jis.kif
+2026-09-24T14:52:29Z clipboard-helper.start file=fixtures/kif/shogiwars.kif request=41b6060c-f95e-44b0-8fe5-5c4bb6b9cd97
+com.meeshogi.testfiles: 11552
+2026-09-24T14:52:36Z clipboard-helper.end file=fixtures/kif/shogiwars.kif request=41b6060c-f95e-44b0-8fe5-5c4bb6b9cd97 attempts=2
+2026-09-24T14:52:36Z flow.start licenses-review
+Anonymous analytics enabled. To opt out, set MAESTRO_CLI_NO_ANALYTICS environment variable to any value before running Maestro.
+
+
+Waiting for flows to complete...
+[Passed] licenses-review (31s)
+
+1/1 Flow Passed in 31s
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                         │
+│   Try out our new Analyze with Ai feature.                                                                                              │
+│                                                                                                                                         │
+│   See what's new:                                                                                                                       │
+│   > https://maestro.mobile.dev/cli/test-suites-and-reports#analyze                                                                      │
+│   Analyze command:                                                                                                                      │
+│   $ maestro test flow-file.yaml --analyze | bash                                                                                        │
+│                                                                                                                                         │
+│   To disable this notification, set MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED environment variable to "true" before running Maestro.   │
+│                                                                                                                                         │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+2026-09-24T14:53:58Z flow.end licenses-review
+2026-09-24T14:53:58Z flow.start import-review
+
+Waiting for flows to complete...
+[Passed] import-review (51s)
+
+1/1 Flow Passed in 51s
+
+2026-09-24T14:55:06Z flow.end import-review
+2026-09-24T14:55:06Z clipboard-helper.start file=/Users/devin/repos/meeshogi/artifacts/ios/runs/20260924T145028Z-11073/clipboard-wars.txt request=1e6c7be5-2bd3-4ff0-a359-3a632e20227a
+com.meeshogi.testfiles: 11943
+2026-09-24T14:55:08Z clipboard-helper.end file=/Users/devin/repos/meeshogi/artifacts/ios/runs/20260924T145028Z-11073/clipboard-wars.txt request=1e6c7be5-2bd3-4ff0-a359-3a632e20227a attempts=2
+2026-09-24T14:55:08Z flow.start ios-visual-review
+
+Waiting for flows to complete...
+[Passed] ios-visual-review (2m 18s)
+
+1/1 Flow Passed in 2m 18s
+
+2026-09-24T14:57:37Z flow.end ios-visual-review
+2026-09-24T14:57:37Z acceptance.end status=0
+Detected file type from extension: PNG
+Note: No display specified. Defaulting to display: 76A849C4-9744-4977-9D36-6B29288141FD (screenID: 1, name: LCD)
+Wrote screenshot to: /Users/devin/repos/meeshogi/artifacts/ios/runs/20260924T145028Z-11073/final.png
+getpwuid_r did not find a match for uid 501

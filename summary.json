@@ -1,0 +1,81 @@
+{
+  "scope": "ios-acceptance-expo57-patch",
+  "repo": "phni3j9a/meeshogi",
+  "target_sha": "6d52e2f28f565123598e1087a7137e1b9ad6473f",
+  "target_branch": "feat/expo-57-patch",
+  "change": {
+    "type": "dependency-only",
+    "packages": {
+      "expo": "57.0.25",
+      "expo-build-properties": "57.0.22",
+      "expo-linking": "57.0.11",
+      "expo-router": "57.0.23",
+      "expo-sharing": "57.0.22",
+      "expo-modules-core": "57.0.19 (transitive)",
+      "expo-modules-jsi": "57.1.1 (transitive)"
+    },
+    "app_native_test_source_changed": false
+  },
+  "result": "pass",
+  "environment": {
+    "host": "macOS Apple Silicon (Devin Cloud)",
+    "xcode": "26.6 (17F113)",
+    "sdk": "iphonesimulator26.5",
+    "node": "22.23.2",
+    "cocoapods": "1.17.0",
+    "rust": "1.96.0",
+    "maestro": "2.10.0"
+  },
+  "device": {
+    "name": "iPhone 18 Pro",
+    "os": "iOS 27.0",
+    "udid": "1308A109-3EE0-4711-9287-85246639DBC7"
+  },
+  "build": {
+    "fresh": true,
+    "prior_build_reused": false,
+    "steps": [
+      "git fetch && git reset --hard 6d52e2f28f565123598e1087a7137e1b9ad6473f",
+      "npm ci",
+      "npx expo prebuild --platform ios --no-install",
+      "bash scripts/engine/build-ios.sh",
+      "pod install --project-directory=ios",
+      "xcodebuild -workspace ios/meeshogi.xcworkspace -scheme meeshogi -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath $RUNNER_TEMP/meeshogi-ios CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build"
+    ],
+    "result": "BUILD SUCCEEDED",
+    "app": "Release-iphonesimulator/meeshogi.app",
+    "app_size": "59M",
+    "environment_note": "xcodebuild initially enumerated 0 simulator destinations; fixed via 'xcodebuild -downloadPlatform iOS' (fetched iOS 26.5 Simulator 23F77) before building"
+  },
+  "install_launch": {
+    "installed_via": "scripts/ci/ios-acceptance.sh",
+    "install_end_utc": "2026-09-24T14:52:01Z",
+    "launched_by": "maestro flows (screenshots + flow.mov verified visually)"
+  },
+  "run": {
+    "command": "bash scripts/ci/ios-acceptance.sh",
+    "mode": "visual (IOS_ACCEPTANCE_MODE default; ACCEPTANCE_FLOWS unset)",
+    "run_dir": "artifacts/ios/runs/20260924T145028Z-11073",
+    "acceptance_end_status": 0,
+    "keyboard_introduction": "2026-09-24T14:51:27Z keyboard-introduction.suppressed"
+  },
+  "flows": [
+    {"name": "licenses-review", "status": "pass", "duration_s": 31, "method": "script-automatic"},
+    {"name": "import-review", "status": "pass", "duration_s": 51, "method": "script-automatic"},
+    {"name": "ios-visual-review", "status": "pass", "duration_s": 138, "method": "script-automatic"}
+  ],
+  "flows_not_run": {
+    "reason": "visual mode scope (script exits after ios-visual-review by design)",
+    "names": ["player-names", "player-names-kiou", "analysis-review", "analysis-partial-review", "candidate-review", "file-import", "management-review", "appearance-review", "appearance-dark", "export-review-ios", "background-review", "large-text-review", "search-delete-review"]
+  },
+  "unverified": [
+    "physical device performance/FPS/thermals (simulator only)",
+    "Save to Files destination UI (iOS 27 RemoteUI constraint; export flow not in visual scope)"
+  ],
+  "evidence": {
+    "branch": "evidence/ios-expo57-patch",
+    "run_artifacts": "suite/final-run/",
+    "video": "suite/final-run/flow.mov (368s)",
+    "logs": ["logs/ios-acceptance.log", "logs/xcodebuild.log.gz"]
+  }
+}
