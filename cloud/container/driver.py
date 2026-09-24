@@ -298,6 +298,8 @@ class EngineController:
         self._engine_sha256 = ""
         self._weight_sha256 = ""
         self._engine_options_sha256 = ""
+        self._helper_sha256 = ""
+        self._driver_sha256 = ""
         self._epoch = ""
         self._restart_count = 0
         self._last_restart_reason: str | None = None
@@ -305,6 +307,7 @@ class EngineController:
         self._error_code = "engine_start_failed"
         self._ready = False
         self._active = False
+        self._active_fence = ""
         self._search_started = False
         self._stop_requested = False
         self._stop_requested_at = 0.0
@@ -337,6 +340,8 @@ class EngineController:
         if self._engine_options_sha256 and options_sha256 != self._engine_options_sha256:
             raise DriverError("engine_options_digest_mismatch")
         self._engine_options_sha256 = options_sha256
+        self._helper_sha256 = _sha256(HELPER_PATH)
+        self._driver_sha256 = _sha256(Path(__file__))
         fv_scale = _parse_engine_options(OPTIONS_PATH)
 
         self._output = queue.Queue()
@@ -441,6 +446,15 @@ class EngineController:
             "engineBinarySha256": self._engine_sha256[:12],
             "weightSha256": self._weight_sha256[:12],
             "engineOptionsSha256": self._engine_options_sha256[:12],
+            "artifactProvenance": {
+                "engineBinarySha256": self._engine_sha256,
+                "weightSha256": self._weight_sha256,
+                "engineOptionsSha256": self._engine_options_sha256,
+                "helperBinarySha256": self._helper_sha256,
+                "driverSha256": self._driver_sha256,
+            },
+            "activeFence": self._active_fence if self._active else None,
+            "searchStarted": self._search_started,
             "engineEpoch": self._epoch,
             "processId": self._proc.pid if self._proc is not None else None,
             "restartCount": self._restart_count,
@@ -453,9 +467,9 @@ class EngineController:
             **({} if ready else {"reason": self._error_code}),
         }
 
-    def request_stop(self) -> bool:
+    def request_stop(self, fence: str) -> bool:
         with self._state_lock:
-            if not self._active:
+            if not self._active or not fence or fence != self._active_fence:
                 return False
             self._stop_requested = True
             self._stop_requested_at = time.monotonic()
@@ -476,14 +490,26 @@ class EngineController:
             )
         except ProtocolError as error:
             return 502, {"error": "proof_failed", "reason": error.reason}
+        proof_result = value.get("result")
         proof_plies = value.get("plies")
+        proof_line = value.get("line")
+        valid_proven = (
+            proof_result == "proven"
+            and type(proof_plies) is int
+            and proof_plies in {1, 3}
+            and proof_plies <= request["plies"]
+            and isinstance(proof_line, list)
+            and len(proof_line) == proof_plies
+            and all(isinstance(move, str) and MOVE_RE.fullmatch(move) for move in proof_line)
+        )
+        valid_unproven = isinstance(proof_result, str) and proof_result in {"not-mate", "budget-exceeded", "in-check-invalid"} and proof_plies is None and proof_line is None
         if (
-            value.get("result") not in {"proven", "not-mate", "budget-exceeded", "in-check-invalid"}
-            or not (proof_plies is None or (type(proof_plies) is int and proof_plies in {1, 3}))
+            set(value) != {"result", "plies", "line", "nodesUsed", "budget", "budgetVersion"}
+            or not (valid_proven or valid_unproven)
             or type(value.get("nodesUsed")) is not int
             or not 0 <= value["nodesUsed"] <= request["budget"]
             or value.get("budget") != request["budget"]
-            or value.get("budgetVersion") != "sekirei-proof-ops-v1"
+            or value.get("budgetVersion") != "sekirei-proof-ops-v2"
         ):
             return 502, {"error": "proof_failed", "reason": "helper_invalid_proof"}
         return 200, value
@@ -493,6 +519,7 @@ class EngineController:
             return 409, {"error": "analysis_conflict"}
         with self._state_lock:
             self._active = True
+            self._active_fence = request.get("fence", "internal")
             self._search_started = False
             self._stop_requested = False
         try:
@@ -510,6 +537,7 @@ class EngineController:
         finally:
             with self._state_lock:
                 self._active = False
+                self._active_fence = ""
                 self._search_started = False
                 self._stop_requested = False
                 self._stop_requested_at = 0.0
@@ -553,7 +581,13 @@ class EngineController:
                 )
             self._search_started = True
             self._send(f"go movetime {movetime_ms}")
-            if os.environ.get("MEESHOGI_TEST_SIGSTOP_ENGINE") == "1" and not self._sigstop_fault_injected:
+            test_fence = os.environ.get("MEESHOGI_TEST_SIGSTOP_FENCE", "")
+            if (
+                os.environ.get("MEESHOGI_TEST_SIGSTOP_ENGINE") == "1"
+                and test_fence
+                and request.get("fence") == test_fence
+                and not self._sigstop_fault_injected
+            ):
                 self._sigstop_fault_injected = True
                 try:
                     proc.send_signal(signal.SIGSTOP)
@@ -851,7 +885,7 @@ class EngineController:
         if proc is None:
             return
         if proc.poll() is None and self._analysis_lock.locked():
-            self.request_stop()
+            self.request_stop(self._active_fence)
             if self._analysis_lock.acquire(timeout=5):
                 self._analysis_lock.release()
             else:
@@ -868,9 +902,9 @@ class EngineController:
 
 
 def _validate_driver_request(value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict) or not {"sfen", "movetime_ms", "multipv"}.issubset(value):
+    if not isinstance(value, dict) or not {"sfen", "movetime_ms", "multipv", "fence"}.issubset(value):
         return None
-    if set(value) - {"sfen", "movetime_ms", "multipv", "threads", "hash_mb"}:
+    if set(value) - {"sfen", "movetime_ms", "multipv", "threads", "hash_mb", "fence"}:
         return None
     if not is_valid_sfen(value["sfen"]):
         return None
@@ -878,6 +912,9 @@ def _validate_driver_request(value: Any) -> dict[str, Any] | None:
     multipv = value["multipv"]
     threads = value.get("threads", 1)
     hash_mb = value.get("hash_mb", 256)
+    fence = value["fence"]
+    if not isinstance(fence, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", fence):
+        return None
     if type(movetime) is not int or not 50 <= movetime <= 30_000:
         return None
     if type(multipv) is not int or not 1 <= multipv <= 8:
@@ -886,7 +923,7 @@ def _validate_driver_request(value: Any) -> dict[str, Any] | None:
         return None
     if type(hash_mb) is not int or not 16 <= hash_mb <= 512:
         return None
-    return {"sfen": value["sfen"], "movetime_ms": movetime, "multipv": multipv, "threads": threads, "hash_mb": hash_mb}
+    return {"sfen": value["sfen"], "movetime_ms": movetime, "multipv": multipv, "threads": threads, "hash_mb": hash_mb, "fence": fence}
 
 
 def _validate_proof_request(value: Any) -> dict[str, Any] | None:
@@ -950,10 +987,10 @@ class DriverHandler(BaseHTTPRequestHandler):
             except (json.JSONDecodeError, UnicodeDecodeError):
                 self._send_json(400, {"error": "invalid_request"})
                 return
-            if body != {}:
+            if not isinstance(body, dict) or set(body) != {"fence"} or not isinstance(body["fence"], str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", body["fence"]):
                 self._send_json(400, {"error": "invalid_request"})
                 return
-            self._send_json(200, {"stopped": self.controller.request_stop()})
+            self._send_json(200, {"stopped": self.controller.request_stop(body["fence"])})
             return
         if self.path != "/analyze":
             self._send_json(404, {"error": "not_found"})

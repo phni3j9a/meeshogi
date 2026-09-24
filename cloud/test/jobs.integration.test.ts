@@ -5,16 +5,23 @@ import worker from '../src/index';
 import type { JobChunk } from '../src/job-types';
 import initMigration from '../migrations/0001_init.sql?raw';
 import hardeningMigration from '../migrations/0002_async_jobs_hardening.sql?raw';
-import { ANALYSIS_PROFILES, executionIdentityComponents, type AnalysisProfile, type JobIdentity } from '../src/job-types';
+import recoveryMigration from '../migrations/0003_recovery_cost_identity_faults.sql?raw';
+import { ANALYSIS_PROFILES, estimateAttemptCostUsd, estimateJobReservationUsd, executionIdentityComponents, type AnalysisProfile, type ArtifactProvenance, type JobIdentity } from '../src/job-types';
 
 const OWNER_TOKEN = 'local-owner-token-a';
 const OTHER_TOKEN = 'local-owner-token-b';
 const REVOKED_TOKEN = 'local-owner-token-revoked';
 const SFEN = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1';
+const ARTIFACTS: ArtifactProvenance = {
+  engineBinarySha256: 'a'.repeat(64), weightSha256: 'b'.repeat(64), engineOptionsSha256: 'c'.repeat(64),
+  helperBinarySha256: 'd'.repeat(64), driverSha256: 'e'.repeat(64),
+};
 const OPENING_MOVES = ['7g7f', '3c3d', '2g2f', '8c8d'];
+const FAILURE_SEQUENCE_MOVES = ['2g2f', '3c3d', '8g8f', '8c8d', '5g5f', '4c4d', '3g3f', '6c6d', '4g4f'];
 const MIGRATIONS = [
   { name: '0001_init.sql', queries: initMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
   { name: '0002_async_jobs_hardening.sql', queries: hardeningMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
+  { name: '0003_recovery_cost_identity_faults.sql', queries: recoveryMigration.split(/;\s*(?:\r?\n|$)/).map((query) => query.trim()).filter(Boolean) },
 ];
 
 const FIXTURE_MOVES: Record<number, string[]> = {
@@ -60,19 +67,54 @@ async function identity(profileId: 'free-v1' | 'precision-v1'): Promise<JobIdent
   const profile = ANALYSIS_PROFILES[profileId];
   const engineId = 'YaneuraOu NNUE 9.70git 64AVX2';
   const modelId = 'local-test-model';
-  const engineBinaryDigestLabel = 'sha256:test-engine-digest-label';
-  const executionIdentityComponents = executionIdentityComponentsFor(profile, engineId, modelId, engineBinaryDigestLabel);
+  const engineBinaryDigestLabel = `sha256:${'a'.repeat(64)}`;
+  const executionIdentityComponents = executionIdentityComponentsFor(profile, engineId, modelId, engineBinaryDigestLabel, ARTIFACTS);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(executionIdentityComponents)));
   return {
     profileId, profileVersion: 2, engineId, modelId, engineBinaryDigestLabel,
-    instanceType: profile.instanceType, vcpu: profile.vcpu,
+    instanceType: profile.instanceType, vcpu: profile.vcpu, artifacts: ARTIFACTS,
     executionIdentityHash: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join(''),
     executionIdentityComponents,
   };
 }
 
-function executionIdentityComponentsFor(profile: AnalysisProfile, engineId: string, modelId: string, digest: string) {
-  return executionIdentityComponents(profile, engineId, modelId, digest);
+function executionIdentityComponentsFor(profile: AnalysisProfile, engineId: string, modelId: string, digest: string, artifacts: ArtifactProvenance) {
+  return executionIdentityComponents(profile, engineId, modelId, digest, artifacts);
+}
+
+async function seedQueuedPosition(ownerId = 'owner-a'): Promise<{ jobId: string; identity: JobIdentity }> {
+  const jobId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const jobIdentity = await identity('free-v1');
+  await env.DB.batch([
+    env.DB.prepare(
+      'INSERT INTO jobs (id, owner_id, status, profile_id, profile_version, engine_id, model_id, instance_type, position_count, epoch, created_at, updated_at, execution_identity_hash, cost_reserved, cost_day_utc, result_seq_next, engine_binary_digest_label, vcpu, cost_estimate_usd, execution_identity_json) ' +
+      "VALUES (?, ?, 'queued', 'free-v1', 2, ?, ?, 'standard-2', 1, 1, ?, ?, ?, 0, ?, 0, ?, ?, 0, ?)",
+    ).bind(jobId, ownerId, jobIdentity.engineId, jobIdentity.modelId, createdAt, createdAt, jobIdentity.executionIdentityHash,
+      createdAt.slice(0, 10), jobIdentity.engineBinaryDigestLabel, jobIdentity.vcpu, JSON.stringify(jobIdentity)),
+    env.DB.prepare(
+      'INSERT INTO positions (job_id, position_index, sfen, profile_id, profile_version, engine_id, model_id, updated_at, execution_identity_hash, cost_reserved) ' +
+      "VALUES (?, 0, ?, 'free-v1', 2, ?, ?, ?, ?, 0)",
+    ).bind(jobId, SFEN, jobIdentity.engineId, jobIdentity.modelId, createdAt, jobIdentity.executionIdentityHash),
+    env.DB.prepare('INSERT INTO outbox (job_id, epoch, start_idx, end_idx, created_at, sent_at) VALUES (?, 1, 0, 1, ?, ?)')
+      .bind(jobId, createdAt, createdAt),
+  ]);
+  return { jobId, identity: jobIdentity };
+}
+
+async function holdLocalSearchSlot(): Promise<void> {
+  const seeded = await seedQueuedPosition('local-slot-holder');
+  const now = Date.now();
+  const timestamp = new Date(now).toISOString();
+  const leaseId = crypto.randomUUID();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE jobs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?")
+      .bind(timestamp, timestamp, seeded.jobId),
+    env.DB.prepare("UPDATE positions SET status = 'running', lease_id = ?, lease_expires_at = ?, updated_at = ? WHERE job_id = ? AND position_index = 0")
+      .bind(leaseId, now + 60_000, timestamp, seeded.jobId),
+    env.DB.prepare('UPDATE global_search_slot SET job_id = ?, epoch = 1, position_index = 0, attempt = 1, lease_id = ?, lease_expires_at = ?, profile_id = \'free-v1\', quarantine_required = 0, updated_at = ? WHERE singleton = 1')
+      .bind(seeded.jobId, leaseId, now + 60_000, timestamp),
+  ]);
 }
 
 function request(path: string, token?: string, init: RequestInit = {}): Request {
@@ -159,7 +201,13 @@ async function seedCost(amountUsd: number, jobId = `cost-seed-${crypto.randomUUI
   ).bind(now.slice(0, 10), amountUsd, now).run();
 }
 
+async function resetRuntimeFixture(): Promise<void> {
+  const binding = (env as unknown as { ANALYSIS_ENGINE: { fetch(request: Request): Promise<Response> } }).ANALYSIS_ENGINE;
+  await binding.fetch(new Request('http://analysis-engine.test/__reset', { method: 'POST' }));
+}
+
 beforeEach(async () => {
+  await resetRuntimeFixture();
   await env.JOB_COORDINATOR.getByName('staging-global').clearLocalTestRateWindows();
   await applyD1Migrations(env.DB, MIGRATIONS);
   await seedPrincipal('owner-a', OWNER_TOKEN);
@@ -192,6 +240,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
       costWarning: false,
     });
     expect(typeof statusBody.estimatedCostUsd).toBe('number');
+    expect(statusBody.costs).toMatchObject({ observedEngineCostUsd: null, invoice: false });
     const resultsResponse = await SELF.fetch(request(`/v1/jobs/${jobId}/results?limit=1`, OWNER_TOKEN));
     const resultsBody = await resultsResponse.json() as { results: Array<Record<string, unknown>>; costWarning: boolean; resumeCursor: string; hasMore: boolean };
     expect(resultsResponse.status).toBe(200);
@@ -205,9 +254,30 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(resultsBody.results[0].positionIndex).toBe(0);
     expect(resultsBody.results[0].attempts).toBe(1);
     expect(resultsBody.results[0].status).toBe('done');
+    expect(resultsBody.results[0].proof).toMatchObject({
+      result: 'proven', requestedPlies: 3, plies: 1, line: ['7g7f'], budget: 10_000, budgetVersion: 'sekirei-proof-ops-v2',
+    });
+    const settledAttempt = await env.DB.prepare('SELECT amount_usd, engine_ms FROM cost_attempt_ledger WHERE job_id = ? AND position_index = 0 AND attempt = 1')
+      .bind(jobId).first<{ amount_usd: number; engine_ms: number }>();
+    expect(settledAttempt?.engine_ms).toBe(result.elapsedMs);
+    expect(settledAttempt?.amount_usd).toBeGreaterThan(estimateAttemptCostUsd(Number(result.elapsedMs), 'standard-2'));
     expect(resultsBody.costWarning).toBe(false);
     expect(resultsBody.hasMore).toBe(false);
     expect(resultsBody.resumeCursor).toBeTruthy();
+  });
+
+  it('fails closed on runtime artifact mismatch before even serving a cache hit', async () => {
+    const first = await createJob([SFEN]);
+    await waitForJob(String(first.body.jobId), ['completed']);
+    const binding = (env as unknown as { ANALYSIS_ENGINE: { fetch(request: Request): Promise<Response> } }).ANALYSIS_ENGINE;
+    await binding.fetch(new Request('http://analysis-engine.test/__runtime-mismatch/on', { method: 'POST' }));
+
+    const second = await createJob([SFEN]);
+    const failed = await waitForJob(String(second.body.jobId), ['failed']);
+    expect(failed.stopReason).toBe('position_failed:protocol_error');
+    const position = await env.DB.prepare('SELECT status, attempts, cached, error_detail FROM positions WHERE job_id = ?')
+      .bind(String(second.body.jobId)).first<{ status: string; attempts: number; cached: number; error_detail: string }>();
+    expect(position).toEqual({ status: 'failed', attempts: 0, cached: 0, error_detail: 'position_failed:protocol_error' });
   });
 
   it('replays public move input and routes each profile with an identity-scoped cache', async () => {
@@ -258,7 +328,7 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     const proofRow = await env.DB.prepare('SELECT proof_json FROM positions WHERE job_id = ? AND position_index = 0')
       .bind(String(mate.body.jobId)).first<{ proof_json: string | null }>();
     expect(JSON.parse(proofRow?.proof_json ?? 'null')).toMatchObject({
-      revision: 'sekirei-proof-ops-v1', result: 'not-mate', plies: 3, budget: 10_000, cost: 1,
+      requestedPlies: 3, result: 'not-mate', plies: null, line: null, budget: 10_000, budgetVersion: 'sekirei-proof-ops-v2',
     });
 
     const incompleteSfen = sfenAfter(['7g7f', '3c3d']);
@@ -273,10 +343,58 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(cache?.count).toBe(0);
   });
 
+  it('commits verified no-move, none, and win terminals while keeping resign as missing evaluation', async () => {
+    const created = await createJob(sfenAfter(['1g1f']), { moves: ['9c9d', '2g2f', '8c8d'] });
+    const jobId = String(created.body.jobId);
+    const finished = await waitForJob(jobId, ['partial']);
+    expect(finished.counts).toMatchObject({ done: 3, failed: 1, pending: 0 });
+    const rows = await env.DB.prepare('SELECT position_index, status, engine_terminal, error_detail FROM positions WHERE job_id = ? ORDER BY position_index')
+      .bind(jobId).all<{ position_index: number; status: string; engine_terminal: string; error_detail: string | null }>();
+    expect(rows.results).toEqual([
+      { position_index: 0, status: 'done', engine_terminal: 'no_legal_moves', error_detail: null },
+      { position_index: 1, status: 'done', engine_terminal: 'none', error_detail: null },
+      { position_index: 2, status: 'done', engine_terminal: 'win', error_detail: null },
+      { position_index: 3, status: 'failed', engine_terminal: 'resign', error_detail: 'evaluation_missing:resign' },
+    ]);
+    const summaryResponse = await SELF.fetch(request(`/v1/jobs/${jobId}`, OWNER_TOKEN));
+    const summary = await summaryResponse.json() as { counts: Record<string, number> };
+    expect(summary.counts).toMatchObject({ processed: 3, succeeded: 0, incompleteOrMissing: 1, failed: 0, terminal: 3 });
+  });
+
+  it('continues after a missing evaluation and counts failures independently of the reset streak', async () => {
+    const incompleteSfen = sfenAfter(['7g7f', '3c3d']);
+    const missingThenSuccess = await createJob(incompleteSfen, { moves: ['2g2f'] });
+    const partial = await waitForJob(String(missingThenSuccess.body.jobId), ['partial']);
+    expect(partial.counts).toMatchObject({ done: 1, failed: 1, pending: 0 });
+    const missingRows = await env.DB.prepare('SELECT position_index, status, error_detail FROM positions WHERE job_id = ? ORDER BY position_index')
+      .bind(String(missingThenSuccess.body.jobId)).all<{ position_index: number; status: string; error_detail: string | null }>();
+    expect(missingRows.results).toMatchObject([
+      { position_index: 0, status: 'failed', error_detail: 'incomplete' },
+      { position_index: 1, status: 'done', error_detail: null },
+    ]);
+
+    const mixedMoves = FAILURE_SEQUENCE_MOVES;
+    const mixed = await createJob(sfenAfter(mixedMoves.slice(0, 1)), { moves: mixedMoves.slice(1) });
+    const stopped = await waitForJob(String(mixed.body.jobId), ['partial'], 30_000);
+    expect(stopped.stopReason).toBe('failure_threshold');
+    expect(stopped.counts).toMatchObject({ done: 4, failed: 5, pending: 0 });
+    const streak = await env.DB.prepare('SELECT consecutive_failures FROM jobs WHERE id = ?')
+      .bind(String(mixed.body.jobId)).first<{ consecutive_failures: number }>();
+    expect(streak?.consecutive_failures).toBe(1);
+  }, 45_000);
+
   it('blocks profile admission on protocol faults until an admin clears the block', async () => {
     const created = await createJob(SFEN, { moves: ['7g7f', '8c8d'] });
-    const job = await waitForJob(String(created.body.jobId), ['partial']);
+    const job = await waitForJob(String(created.body.jobId), ['failed']);
     expect(job.stopReason).toBe('position_failed:protocol_error');
+    expect(job.counts).toMatchObject({ done: 2, failed: 1, pending: 0 });
+    const committed = await env.DB.prepare('SELECT position_index, status FROM positions WHERE job_id = ? ORDER BY position_index')
+      .bind(String(created.body.jobId)).all<{ position_index: number; status: string }>();
+    expect(committed.results).toEqual([
+      { position_index: 0, status: 'done' },
+      { position_index: 1, status: 'done' },
+      { position_index: 2, status: 'failed' },
+    ]);
     const blocked = await createJob(SFEN, { key: 'blocked-profile-attempt' });
     expect(blocked.response.status).toBe(503);
     expect(blocked.body.error).toBe('profile_admission_blocked');
@@ -345,6 +463,48 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     } as unknown as MessageBatch<JobChunk>, env);
     expect(staleAck).toBe(true);
     expect(staleRetry).toBe(false);
+  });
+
+  it('recovers interrupted explicit cancellation, charges the in-flight attempt and dispatches the next job', async () => {
+    const active = await createJob(sfenAfter(['8g8f']));
+    const activeId = String(active.body.jobId);
+    await waitForPosition(activeId, 0, 'running');
+    const waiting = await createJob([sfenAt(910)], { token: OTHER_TOKEN });
+    const waitingId = String(waiting.body.jobId);
+
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const requested = await coordinator.requestCancel('owner-a', activeId, Date.now());
+    expect(requested).toMatchObject({ found: true, status: 'cancelling', inFlight: { attempt: 1 } });
+    await worker.scheduled({ cron: '* * * * *', scheduledTime: Date.now() } as ScheduledController, env);
+
+    await waitForJob(activeId, ['cancelled']);
+    await waitForJob(waitingId, ['completed']);
+    const cost = await env.DB.prepare('SELECT COUNT(*) AS count, SUM(amount_usd) AS amount FROM cost_attempt_ledger WHERE job_id = ?')
+      .bind(activeId).first<{ count: number; amount: number }>();
+    const reservation = await env.DB.prepare('SELECT cost_reserved FROM jobs WHERE id = ?').bind(activeId)
+      .first<{ cost_reserved: number }>();
+    expect(cost?.count).toBe(1);
+    expect(cost?.amount).toBeGreaterThan(0);
+    expect(reservation?.cost_reserved).toBe(0);
+  });
+
+  it('resumes an interrupted DLQ marker from scheduled recovery and unblocks the next job', async () => {
+    const active = await createJob(sfenAfter(['8g8f']));
+    const activeId = String(active.body.jobId);
+    await waitForPosition(activeId, 0, 'running');
+    const waiting = await createJob([sfenAt(910)], { token: OTHER_TOKEN });
+    const waitingId = String(waiting.body.jobId);
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const started = await coordinator.beginDeadLetter(activeId, 1, Date.now());
+    expect(started.current).toBe(true);
+    expect(started.slot?.jobId).toBe(activeId);
+
+    await worker.scheduled({ cron: '* * * * *', scheduledTime: Date.now() } as ScheduledController, env);
+    await waitForJob(activeId, ['failed']);
+    await waitForJob(waitingId, ['completed']);
+    const row = await env.DB.prepare('SELECT status, stop_reason, cost_reserved FROM jobs WHERE id = ?')
+      .bind(activeId).first<{ status: string; stop_reason: string; cost_reserved: number }>();
+    expect(row).toMatchObject({ status: 'failed', stop_reason: 'dead_lettered', cost_reserved: 0 });
   });
 
   it('returns the original job on idempotent replay and rejects a payload conflict', async () => {
@@ -441,6 +601,164 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(failures.results[3]).toMatchObject({ status: 'pending', attempts: 0 });
   });
 
+  it('quarantines two lost analysis responses, charges both attempts and terminalizes at attempt two', async () => {
+    const created = await createJob(sfenAfter(['6g6f', '1c1d']));
+    const jobId = String(created.body.jobId);
+    const finished = await waitForJob(jobId, ['failed'], 15_000);
+    expect(finished.counts).toMatchObject({ pending: 0, running: 0, failed: 1 });
+    const position = await env.DB.prepare('SELECT status, attempts, error_detail FROM positions WHERE job_id = ? AND position_index = 0')
+      .bind(jobId).first<{ status: string; attempts: number; error_detail: string }>();
+    expect(position).toEqual({ status: 'failed', attempts: 2, error_detail: 'position_failed:engine_exit' });
+    const attempts = await env.DB.prepare('SELECT COUNT(*) AS count, SUM(amount_usd) AS amount FROM cost_attempt_ledger WHERE job_id = ?')
+      .bind(jobId).first<{ count: number; amount: number }>();
+    expect(attempts?.count).toBe(2);
+    expect(attempts?.amount).toBeGreaterThan(0);
+    const slot = await env.DB.prepare('SELECT job_id FROM global_search_slot WHERE singleton = 1').first<{ job_id: string | null }>();
+    expect(slot?.job_id).toBeNull();
+  });
+
+  it('destroys only the armed job search after go starts and consumes the arm once', async () => {
+    const blocker = await createJob(sfenAfter(['8g8f']), { token: OTHER_TOKEN });
+    await waitForPosition(String(blocker.body.jobId), 0, 'running');
+    const target = await createJob(sfenAfter(['4g4f']));
+    const jobId = String(target.body.jobId);
+    const armed = await SELF.fetch(request('/v1/internal/fault/arm', 'local-analysis-admin-token', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'destroy-during', job_id: jobId, epoch: 1, position_index: 0, attempt: 1 }),
+    }));
+    expect(armed.status).toBe(201);
+    const wrongOwner = await SELF.fetch(request('/v1/internal/fault/arm', 'local-analysis-admin-token', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'destroy-during', job_id: String(blocker.body.jobId), epoch: 1, position_index: 0, attempt: 1 }),
+    }));
+    expect(wrongOwner.status).toBe(400);
+
+    await waitForJob(String(blocker.body.jobId), ['completed']);
+    await env.DB.prepare('UPDATE outbox SET last_sent_at = ? WHERE job_id = ?').bind('2000-01-01T00:00:00.000Z', jobId).run();
+    await worker.scheduled({ cron: '* * * * *', scheduledTime: Date.now() } as ScheduledController, env);
+    await waitForJob(jobId, ['completed'], 15_000);
+    const row = await env.DB.prepare('SELECT status, attempts FROM positions WHERE job_id = ? AND position_index = 0')
+      .bind(jobId).first<{ status: string; attempts: number }>();
+    expect(row).toEqual({ status: 'done', attempts: 2 });
+    const arms = await env.DB.prepare('SELECT COUNT(*) AS count FROM fault_arms WHERE job_id = ?').bind(jobId)
+      .first<{ count: number }>();
+    expect(arms?.count).toBe(0);
+  });
+
+  it('keeps global slot and position claim atomic across injected D1 failures', async () => {
+    const seeded = await seedQueuedPosition();
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    await env.DB.prepare(
+      "CREATE TRIGGER fail_position_claim BEFORE UPDATE ON positions WHEN NEW.status = 'running' BEGIN SELECT RAISE(ABORT, 'injected_position_claim_failure'); END",
+    ).run();
+    await expect(coordinator.acquirePosition(seeded.jobId, 0, 1, crypto.randomUUID(), Date.now())).resolves.toMatchObject({ kind: 'busy' });
+    await env.DB.prepare('DROP TRIGGER fail_position_claim').run();
+
+    await env.DB.prepare(
+      'CREATE TRIGGER fail_slot_claim BEFORE UPDATE ON global_search_slot WHEN NEW.job_id IS NOT NULL BEGIN SELECT RAISE(ABORT, \'injected_slot_claim_failure\'); END',
+    ).run();
+    await expect(coordinator.acquirePosition(seeded.jobId, 0, 1, crypto.randomUUID(), Date.now())).resolves.toMatchObject({ kind: 'busy' });
+    await env.DB.prepare('DROP TRIGGER fail_slot_claim').run();
+
+    const slot = await env.DB.prepare('SELECT job_id FROM global_search_slot WHERE singleton = 1').first<{ job_id: string | null }>();
+    const position = await env.DB.prepare('SELECT status, lease_id FROM positions WHERE job_id = ? AND position_index = 0')
+      .bind(seeded.jobId).first<{ status: string; lease_id: string | null }>();
+    expect(slot?.job_id).toBeNull();
+    expect(position).toEqual({ status: 'pending', lease_id: null });
+
+    const claim = await coordinator.acquirePosition(seeded.jobId, 0, 1, crypto.randomUUID(), Date.now());
+    expect(claim.kind).toBe('claimed');
+    if (claim.kind === 'claimed') await coordinator.failPosition(claim.value, 'position_failed:protocol_error', Date.now(), { fatalProtocol: true });
+  });
+
+  it('settles attempt spend atomically with its idempotency ledger row', async () => {
+    const seeded = await seedQueuedPosition();
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const position = {
+      jobId: seeded.jobId, ownerId: 'owner-a', epoch: 1, index: 0, sfen: SFEN, attempts: 1,
+      deliveryCount: 1, leaseId: crypto.randomUUID(), cancelRequested: false, identity: seeded.identity,
+    };
+    await env.DB.prepare(
+      "CREATE TRIGGER fail_attempt_ledger BEFORE INSERT ON cost_attempt_ledger BEGIN SELECT RAISE(ABORT, 'injected_attempt_ledger_failure'); END",
+    ).run();
+    await expect(coordinator.recordAttemptCost(position, 1, 0.01, 800, Date.now())).resolves.toBe(false);
+    await env.DB.prepare('DROP TRIGGER fail_attempt_ledger').run();
+    const spent = await env.DB.prepare('SELECT COALESCE((SELECT spent_usd FROM daily_cost WHERE day_utc = ?), 0) AS spent')
+      .bind(new Date().toISOString().slice(0, 10)).first<{ spent: number }>();
+    const ledger = await env.DB.prepare('SELECT COUNT(*) AS count FROM cost_attempt_ledger WHERE job_id = ?').bind(seeded.jobId)
+      .first<{ count: number }>();
+    expect(spent?.spent).toBe(0);
+    expect(ledger?.count).toBe(0);
+  });
+
+  it('carries an outstanding reservation across UTC midnight into the next-day cap', async () => {
+    await holdLocalSearchSlot();
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const profile = ANALYSIS_PROFILES['free-v1'];
+    const reservation = estimateJobReservationUsd(profile, 1);
+    const midnight = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
+    const previousDay = midnight - 60_000;
+    const nextDay = midnight + 60_000;
+    const jobIdentity = await identity('free-v1');
+    const admitted = await coordinator.admit({
+      ownerId: 'owner-a', idempotencyKey: 'before-midnight', payloadSha256: '1'.repeat(64),
+      profile: 'free-v1', positions: [SFEN], label: null, identity: jobIdentity, now: previousDay,
+    });
+    expect(admitted.ok).toBe(true);
+
+    const nextDaySpend = 1 - reservation * 1.5;
+    await env.DB.prepare(
+      'INSERT INTO daily_cost(day_utc, spent_usd, reserved_usd, updated_at) VALUES (?, ?, 0, ?)'
+    ).bind(new Date(nextDay).toISOString().slice(0, 10), nextDaySpend, new Date(nextDay).toISOString()).run();
+    const snapshot = await coordinator.costSnapshot(nextDay);
+    expect(snapshot.estimatedCostUsd).toBeCloseTo(nextDaySpend + reservation, 8);
+
+    const nextAdmission = await coordinator.admit({
+      ownerId: 'owner-b', idempotencyKey: 'after-midnight', payloadSha256: '2'.repeat(64),
+      profile: 'free-v1', positions: [SFEN], label: null, identity: jobIdentity, now: nextDay,
+    });
+    expect(nextAdmission).toMatchObject({ ok: false, status: 503, error: 'daily_cost_cap' });
+  });
+
+  it('serializes concurrent admissions against the same daily cost headroom', async () => {
+    await holdLocalSearchSlot();
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const profile = ANALYSIS_PROFILES['free-v1'];
+    const reservation = estimateJobReservationUsd(profile, 1);
+    await seedCost(1 - reservation * 1.5);
+    const jobIdentity = await identity('free-v1');
+    const now = Date.now();
+    const admit = (ownerId: string, key: string) => coordinator.admit({
+      ownerId, idempotencyKey: key, payloadSha256: key.padEnd(64, '0').slice(0, 64),
+      profile: 'free-v1', positions: [SFEN], label: null, identity: jobIdentity, now,
+    });
+
+    const outcomes = await Promise.all([admit('owner-a', 'parallel-a'), admit('owner-b', 'parallel-b')]);
+    expect(outcomes.filter((outcome) => outcome.ok)).toHaveLength(1);
+    expect(outcomes.filter((outcome) => !outcome.ok)).toEqual([
+      { ok: false, status: 503, error: 'daily_cost_cap' },
+    ]);
+  });
+
+  it('rejects fault arms for another owner and expires the designated scoped arm', async () => {
+    const seeded = await seedQueuedPosition('owner-a');
+    const coordinator = env.JOB_COORDINATOR.getByName('staging-global');
+    const arm = {
+      kind: 'destroy' as const, jobId: seeded.jobId, ownerId: 'owner-a', epoch: 1, positionIndex: 0, attempt: 1, remaining: 1,
+    };
+    await expect(coordinator.armFault({ ...arm, ownerId: 'owner-b' }, Date.now())).resolves.toBe(false);
+    const now = Date.now();
+    await coordinator.armFault(arm, now);
+    const stored = await env.DB.prepare('SELECT owner_id, epoch, position_index, attempt, expires_at FROM fault_arms WHERE kind = ?')
+      .bind('destroy').first<{ owner_id: string; epoch: number; position_index: number; attempt: number; expires_at: string }>();
+    expect(stored).toMatchObject({ owner_id: 'owner-a', epoch: 1, position_index: 0, attempt: 1 });
+    expect(Date.parse(stored?.expires_at ?? '')).toBeGreaterThan(now);
+    await coordinator.recover(now + 11 * 60_000);
+    const count = await env.DB.prepare('SELECT COUNT(*) AS count FROM fault_arms WHERE kind = ?').bind('destroy')
+      .first<{ count: number }>();
+    expect(count?.count).toBe(0);
+  });
+
   it('resumes a transient chunk redelivery without repeating committed positions or resetting attempts', async () => {
     const created = await createJob(sfenAt(901), { moves: ['8c8d', '2g2f'] });
     const jobId = String(created.body.jobId);
@@ -500,9 +818,13 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(unauthorized.status).toBe(401);
     const oversized = await SELF.fetch(request('/v1/jobs', OWNER_TOKEN, {
       method: 'POST',
-      body: `${JSON.stringify({ idempotency_key: 'oversized', profile: 'free-v1', initialSfen: SFEN, moves: [] })}${' '.repeat(150_001)}`,
+      body: `${JSON.stringify({ idempotency_key: 'oversized', profile: 'free-v1', initialSfen: SFEN, moves: [] })}${' '.repeat(300_000)}`,
     }));
     expect(oversized.status).toBe(400);
+    const label = await createJob([SFEN], { extra: { label: 'v6-rejected' } });
+    expect(label.response.status).toBe(400);
+    const excessMoves = await createJob([SFEN], { moves: Array(512).fill('7g7f') });
+    expect(excessMoves.response.status).toBe(400);
     const revoked = await createJob([SFEN], { token: REVOKED_TOKEN });
     expect(revoked.response.status).toBe(401);
     const precision = await createJob([SFEN], { token: OWNER_TOKEN, profile: 'precision-v1' });
@@ -574,13 +896,14 @@ describe('async jobs running in local workerd with D1 and Queues', () => {
     expect(capped.body.error).toBe('daily_cost_cap');
 
     await env.DB.prepare('DELETE FROM daily_cost').run();
-    await seedCost(0.95);
+    const reservation = estimateJobReservationUsd(ANALYSIS_PROFILES['free-v1'], 3);
+    await seedCost(1 - reservation * 1.1);
     const created = await createJob(sfenAt(908), { moves: ['1c1d', '2g2f'] });
     expect(created.response.status).toBe(202);
     const jobId = String(created.body.jobId);
     await waitForPosition(jobId, 0, 'done');
     await waitForPosition(jobId, 1, 'running');
-    await seedCost(0.06);
+    await seedCost(0.2);
     const finished = await waitForJob(jobId, ['partial']);
     expect(finished.stopReason).toBe('cost_cap');
     expect(finished.counts).toEqual({ pending: 1, running: 0, done: 2, failed: 0 });

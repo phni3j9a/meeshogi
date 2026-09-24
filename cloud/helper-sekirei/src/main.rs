@@ -10,12 +10,12 @@ use sekirei_core::sfen::{move_from_usi, move_to_usi};
 use sekirei_core::square::Square;
 use serde_json::{Value, json};
 
-const BUDGET_VERSION: &str = "sekirei-proof-ops-v1";
+const BUDGET_VERSION: &str = "sekirei-proof-ops-v2";
 const MAX_BUDGET: u64 = 10_000_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ProofResult {
-    Proven(u8),
+    Proven(u8, Vec<Move>),
     NotMate,
     BudgetExceeded,
 }
@@ -163,7 +163,7 @@ fn prove_short_mate(board: &Board, plies: u8, limit: u64) -> (ProofResult, u64) 
 
     for first in first_moves.iter().copied() {
         match is_checkmate_after(&mut position, first, &mut budget) {
-            Ok(true) => return (ProofResult::Proven(1), budget.used),
+            Ok(true) => return (ProofResult::Proven(1, vec![first]), budget.used),
             Ok(false) => {}
             Err(()) => return (ProofResult::BudgetExceeded, budget.used),
         }
@@ -202,6 +202,11 @@ fn prove_short_mate(board: &Board, plies: u8, limit: u64) -> (ProofResult, u64) 
                 return (ProofResult::BudgetExceeded, budget.used);
             }
             let reply_token = position.do_move(reply);
+            if budget.tick().is_err() {
+                position.undo_move(reply_token);
+                position.undo_move(first_token);
+                return (ProofResult::BudgetExceeded, budget.used);
+            }
             let candidate_mates = generate_legal_moves(&mut position);
             let mut finisher = None;
             for candidate in candidate_mates {
@@ -224,12 +229,12 @@ fn prove_short_mate(board: &Board, plies: u8, limit: u64) -> (ProofResult, u64) 
                 break;
             };
             if representative.is_none() {
-                representative = Some((reply, finisher));
+                representative = Some(vec![first, reply, finisher]);
             }
         }
         position.undo_move(first_token);
-        if forced && representative.is_some() {
-            return (ProofResult::Proven(3), budget.used);
+        if forced && let Some(line) = representative {
+            return (ProofResult::Proven(3, line), budget.used);
         }
     }
     (ProofResult::NotMate, budget.used)
@@ -247,20 +252,26 @@ fn mate_proof(sfen: &str, plies: u8, limit: u64) -> Result<Value, String> {
         return Ok(json!({
             "result": "in-check-invalid",
             "plies": null,
+            "line": null,
             "nodesUsed": 0,
             "budget": limit,
             "budgetVersion": BUDGET_VERSION,
         }));
     }
     let (result, used) = prove_short_mate(&board, plies, limit);
-    let (label, found_plies) = match result {
-        ProofResult::Proven(found) => ("proven", Some(found)),
-        ProofResult::NotMate => ("not-mate", None),
-        ProofResult::BudgetExceeded => ("budget-exceeded", None),
+    let (label, found_plies, line) = match result {
+        ProofResult::Proven(found, line) => (
+            "proven",
+            Some(found),
+            Some(line.iter().copied().map(move_to_usi).collect::<Vec<_>>()),
+        ),
+        ProofResult::NotMate => ("not-mate", None, None),
+        ProofResult::BudgetExceeded => ("budget-exceeded", None, None),
     };
     Ok(json!({
         "result": label,
         "plies": found_plies,
+        "line": line,
         "nodesUsed": used,
         "budget": limit,
         "budgetVersion": BUDGET_VERSION,
@@ -385,6 +396,9 @@ mod tests {
         let result = mate_proof(MATE_IN_ONE, 1, 10_000).expect("proof query");
         assert_eq!(result["result"], "proven");
         assert_eq!(result["plies"], 1);
+        let line = result["line"].as_array().unwrap();
+        assert_eq!(line.len(), 1);
+        assert_eq!(validate_pv(MATE_IN_ONE, line[0].as_str().unwrap()).unwrap()["legal"], true);
         assert!(result["nodesUsed"].as_u64().unwrap() <= 10_000);
     }
 
@@ -394,6 +408,9 @@ mod tests {
         let result = mate_proof(sfen, 3, 10_000).expect("proof query");
         assert_eq!(result["result"], "proven");
         assert_eq!(result["plies"], 3);
+        let line = result["line"].as_array().unwrap();
+        assert_eq!(line.len(), 3);
+        assert_eq!(validate_pv(sfen, &line.iter().map(|mv| mv.as_str().unwrap()).collect::<Vec<_>>().join(" ")).unwrap()["legal"], true);
     }
 
     #[test]
@@ -401,6 +418,7 @@ mod tests {
         let result = mate_proof(NON_MATE, 3, 10_000).expect("proof query");
         assert_eq!(result["result"], "not-mate");
         assert!(result["plies"].is_null());
+        assert!(result["line"].is_null());
     }
 
     #[test]
@@ -409,12 +427,14 @@ mod tests {
         assert_eq!(result["result"], "budget-exceeded");
         assert_eq!(result["budgetVersion"], BUDGET_VERSION);
         assert_eq!(result["nodesUsed"], 0);
+        assert!(result["line"].is_null());
     }
 
     #[test]
     fn mate_proof_rejects_a_side_already_in_check() {
         let result = mate_proof(IN_CHECK, 3, 10_000).expect("proof query");
         assert_eq!(result["result"], "in-check-invalid");
+        assert!(result["line"].is_null());
     }
 
     #[test]
@@ -428,6 +448,17 @@ mod tests {
                 .iter()
                 .any(|mv| mv == "P*5b")
         );
+    }
+
+    #[test]
+    fn mate_proof_does_not_accept_pawn_drop_mate_as_a_legal_line() {
+        let sfen = "3lkl3/3p1p3/4G4/9/9/9/9/9/K8 b P 1";
+        let result = mate_proof(sfen, 1, 10_000).expect("uchi-fu-zume proof query");
+        if result["result"] == "proven" {
+            let line = result["line"].as_array().expect("representative line");
+            assert_ne!(line[0], "P*5b");
+            assert_eq!(validate_pv(sfen, &line[0].as_str().unwrap()).unwrap()["legal"], true);
+        }
     }
 
     #[test]

@@ -31,7 +31,7 @@
       {
         "queue": "meeshogi-analysis-local-test-jobs",
         "max_batch_size": 1,
-        "max_retries": 3,
+        "max_retries": 5,
         "dead_letter_queue": "meeshogi-analysis-local-test-dlq",
         "max_concurrency": 1
       },
@@ -46,8 +46,13 @@
   "vars": {
     "ANALYSIS_MODEL_ID": "local-test-model",
     "ANALYSIS_ENGINE_ID": "YaneuraOu NNUE 9.70git 64AVX2",
-    "ANALYSIS_ENGINE_BINARY_DIGEST_LABEL": "sha256:test-engine-digest-label",
+    "ANALYSIS_ENGINE_BINARY_DIGEST_LABEL": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ANALYSIS_WEIGHT_SHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "ANALYSIS_ENGINE_OPTIONS_SHA256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "ANALYSIS_HELPER_SHA256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "ANALYSIS_DRIVER_SHA256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     "ANALYSIS_ADMIN_TOKEN": "local-analysis-admin-token",
-    "ANALYSIS_FAULT_FIXTURES_ENABLED": "1"
+    "ANALYSIS_FAULT_FIXTURES_ENABLED": "1",
+    "ANALYSIS_FAULT_TEST_PRINCIPAL_ID": "owner-a"
   }
 }

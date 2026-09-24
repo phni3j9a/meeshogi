@@ -29,18 +29,28 @@ export const ANALYSIS_PROFILES: Readonly<Record<AnalysisProfileId, AnalysisProfi
 });
 
 export const EXECUTION_REVISIONS = Object.freeze({
-  parser: 'last-complete-multipv-publication-v1',
-  helper: 'sekirei-core-7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac',
-  proof: 'sekirei-proof-ops-v1',
+  parser: 'last-complete-multipv-publication-v2',
+  helper: 'sekirei-core-7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac-mate-line-v2',
+  proof: 'sekirei-proof-tree-usiv2',
   contract: 'analysis-contract-v3',
   history: 'usinewgame-tt-reset-v1',
+  runtimeProvenance: 'container-artifact-provenance-v1',
 });
+
+export type ArtifactProvenance = Readonly<{
+  engineBinarySha256: string;
+  weightSha256: string;
+  engineOptionsSha256: string;
+  helperBinarySha256: string;
+  driverSha256: string;
+}>;
 
 export type ExecutionIdentityComponents = Readonly<{
   profile: { id: AnalysisProfileId; version: 2 };
   instance: { type: InstanceType; vcpu: 1 | 2 };
-  engine: { id: string; binaryDigestLabel: string };
+  engine: { id: string; binaryDigestLabel: string; binarySha256: string };
   modelId: string;
+  artifacts: ArtifactProvenance;
   options: {
     movetimeMs: number;
     requestedMultiPv: number;
@@ -63,6 +73,7 @@ export type JobIdentity = {
   modelId: string;
   instanceType: InstanceType;
   vcpu: 1 | 2;
+  artifacts: ArtifactProvenance;
   executionIdentityHash: string;
   executionIdentityComponents: ExecutionIdentityComponents;
 };
@@ -72,12 +83,14 @@ export function executionIdentityComponents(
   engineId: string,
   modelId: string,
   engineBinaryDigestLabel: string,
+  artifacts: ArtifactProvenance,
 ): ExecutionIdentityComponents {
   return {
     profile: { id: profile.id, version: profile.version },
     instance: { type: profile.instanceType, vcpu: profile.vcpu },
-    engine: { id: engineId, binaryDigestLabel: engineBinaryDigestLabel },
+    engine: { id: engineId, binaryDigestLabel: engineBinaryDigestLabel, binarySha256: artifacts.engineBinarySha256 },
     modelId,
+    artifacts,
     options: {
       movetimeMs: profile.movetimeMs,
       requestedMultiPv: profile.requestedMultiPv,
@@ -93,9 +106,37 @@ export function executionIdentityComponents(
   };
 }
 
+export function runtimeIdentityMatches(
+  identity: JobIdentity,
+  health: unknown,
+  configuredEngineDigestLabel: string,
+): boolean {
+  if (typeof health !== 'object' || health === null || Array.isArray(health)) return false;
+  const value = health as Record<string, unknown>;
+  const artifacts = value.artifactProvenance;
+  if (value.ready !== true || value.engineId !== identity.engineId ||
+      configuredEngineDigestLabel !== `sha256:${identity.artifacts.engineBinarySha256}` ||
+      typeof artifacts !== 'object' || artifacts === null || Array.isArray(artifacts)) return false;
+  const runtime = artifacts as Record<string, unknown>;
+  return runtime.engineBinarySha256 === identity.artifacts.engineBinarySha256 &&
+    runtime.weightSha256 === identity.artifacts.weightSha256 &&
+    runtime.engineOptionsSha256 === identity.artifacts.engineOptionsSha256 &&
+    runtime.helperBinarySha256 === identity.artifacts.helperBinarySha256 &&
+    runtime.driverSha256 === identity.artifacts.driverSha256;
+}
+
 export type JobChunk = { job_id: string; epoch: number; start_idx: number; end_idx: number };
 
-export type FaultArm = { kind: 'destroy' | 'throw'; jobId: string; remaining: number };
+export type FaultArmKind = 'destroy' | 'destroy-during' | 'throw' | 'sigstop';
+export type FaultArm = {
+  kind: FaultArmKind;
+  jobId: string;
+  ownerId: string;
+  epoch: number;
+  positionIndex: number;
+  attempt: number;
+  remaining: number;
+};
 
 export type JobEnvironment = WorkerEnv & {
   DB: D1Database;
@@ -109,7 +150,12 @@ export type JobEnvironment = WorkerEnv & {
   ANALYSIS_ENGINE_ID: string;
   ANALYSIS_ENGINE_BINARY_DIGEST_LABEL: string;
   ANALYSIS_MODEL_ID: string;
+  ANALYSIS_WEIGHT_SHA256?: string;
+  ANALYSIS_ENGINE_OPTIONS_SHA256?: string;
+  ANALYSIS_HELPER_SHA256?: string;
+  ANALYSIS_DRIVER_SHA256?: string;
   ANALYSIS_FAULT_FIXTURES_ENABLED?: string;
+  ANALYSIS_FAULT_TEST_PRINCIPAL_ID?: string;
 };
 
 export type AdmissionInput = {
@@ -181,11 +227,11 @@ export function classifyTerminal(terminal: AnalysisTerminal): PositionDispositio
   if (terminal === 'ok' || terminal === 'mate') {
     return { terminal, processed: true, evaluationSuccess: true, cacheEligible: true, evaluationMissing: false, failed: false };
   }
-  if (terminal === 'no_legal_moves' || terminal === 'none' || terminal === 'win' || terminal === 'resign') {
-    return { terminal, processed: true, evaluationSuccess: false, cacheEligible: false, evaluationMissing: true, failed: false };
+  if (terminal === 'no_legal_moves' || terminal === 'none' || terminal === 'win') {
+    return { terminal, processed: true, evaluationSuccess: false, cacheEligible: false, evaluationMissing: false, failed: false };
   }
-  if (terminal === 'incomplete') {
-    return { terminal, processed: false, evaluationSuccess: false, cacheEligible: false, evaluationMissing: true, failed: true };
+  if (terminal === 'incomplete' || terminal === 'resign') {
+    return { terminal, processed: false, evaluationSuccess: false, cacheEligible: false, evaluationMissing: true, failed: false };
   }
   return { terminal, processed: false, evaluationSuccess: false, cacheEligible: false, evaluationMissing: false, failed: true };
 }
@@ -252,12 +298,54 @@ export function estimateContainerCostUsd(
   return Math.ceil(raw * 1_000_000) / 1_000_000;
 }
 
+const MAX_SEARCH_ATTEMPTS = 2;
+const MAX_SEARCH_DEADLINE_MS = 5_000;
+const MAX_PROCESS_CLEANUP_MS = 5_000;
+const MAX_READINESS_ATTEMPTS = 3;
+const MAX_ENGINE_READY_MS = 120_000;
+const MAX_USI_HANDSHAKE_MS = 20_000;
+const MAX_PROOF_RUNTIME_MS = 3_000;
+const CONTAINER_IDLE_SECONDS = 30;
+
+function resourcesFor(instanceType: InstanceType): { vcpu: number; gib: number; diskGb: number } {
+  return instanceType === 'standard-3'
+    ? { vcpu: 2, gib: 8, diskGb: 16 }
+    : { vcpu: 1, gib: 6, diskGb: 12 };
+}
+
+/** Engine/container estimate for one attempt, excluding the shared idle window. */
+export function estimateAttemptCostUsd(elapsedMs: number, instanceType: InstanceType): number {
+  const resources = resourcesFor(instanceType);
+  const activeSeconds = Math.max(0, elapsedMs) / 1000;
+  const raw = activeSeconds * resources.vcpu * 0.00002 +
+    activeSeconds * (resources.gib * 0.0000025 + resources.diskGb * 0.00000007);
+  return Math.ceil(raw * 1_000_000) / 1_000_000;
+}
+
+export function estimateWorstCaseAttemptCostUsd(profile: AnalysisProfile): number {
+  const restartReadinessMs = MAX_READINESS_ATTEMPTS * (MAX_USI_HANDSHAKE_MS + MAX_ENGINE_READY_MS);
+  const maxAttemptMs = restartReadinessMs + profile.movetimeMs + MAX_SEARCH_DEADLINE_MS + MAX_PROCESS_CLEANUP_MS;
+  return estimateAttemptCostUsd(maxAttemptMs, profile.instanceType);
+}
+
+export function estimatePositionReservationUsd(profile: AnalysisProfile): number {
+  return MAX_SEARCH_ATTEMPTS * estimateWorstCaseAttemptCostUsd(profile) +
+    estimateAttemptCostUsd(MAX_PROOF_RUNTIME_MS, profile.instanceType);
+}
+
+export function estimateJobStartupAndIdleUsd(profile: AnalysisProfile): number {
+  const restartReadinessMs = MAX_READINESS_ATTEMPTS * (MAX_USI_HANDSHAKE_MS + MAX_ENGINE_READY_MS);
+  const coldReadiness = estimateAttemptCostUsd(restartReadinessMs, profile.instanceType);
+  const resources = resourcesFor(profile.instanceType);
+  const sharedIdle = CONTAINER_IDLE_SECONDS * (
+    resources.vcpu * 0.00002 + resources.gib * 0.0000025 + resources.diskGb * 0.00000007
+  );
+  return coldReadiness + sharedIdle;
+}
+
 export function estimateJobReservationUsd(profile: AnalysisProfile, positions: number): number {
-  const perPosition = estimateContainerCostUsd(profile.movetimeMs + 500, 2, profile.instanceType, profile.movetimeMs, false);
-  const oneSecond = (vcpu: number, gib: number, diskGb: number) =>
-    30 * (vcpu * 0.00002 + gib * 0.0000025 + diskGb * 0.00000007);
-  const bothContainerIdle = oneSecond(1, 6, 12) + oneSecond(2, 8, 16);
-  return Math.ceil((positions * perPosition + bothContainerIdle) * 1_000_000) / 1_000_000;
+  const raw = positions * estimatePositionReservationUsd(profile) + estimateJobStartupAndIdleUsd(profile);
+  return Math.ceil(raw * 1_000_000) / 1_000_000;
 }
 
 export function encodeResultCursor(resultSeq: number): string {

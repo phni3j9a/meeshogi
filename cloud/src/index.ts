@@ -17,11 +17,27 @@ type Env = JobEnvironment & {
 export class AnalysisContainer extends Container<Env> {
   defaultPort = 8080;
   sleepAfter = '30s';
+
+  async prepareSigstop(fence: string): Promise<void> {
+    await this.destroy();
+    await this.startAndWaitForPorts({
+      ports: [8080],
+      startOptions: { envVars: { MEESHOGI_TEST_SIGSTOP_ENGINE: '1', MEESHOGI_TEST_SIGSTOP_FENCE: fence } },
+    });
+  }
 }
 
 export class AnalysisContainerPrecision extends Container<Env> {
   defaultPort = 8080;
   sleepAfter = '30s';
+
+  async prepareSigstop(fence: string): Promise<void> {
+    await this.destroy();
+    await this.startAndWaitForPorts({
+      ports: [8080],
+      startOptions: { envVars: { MEESHOGI_TEST_SIGSTOP_ENGINE: '1', MEESHOGI_TEST_SIGSTOP_FENCE: fence } },
+    });
+  }
 }
 
 export { JobCoordinator };
@@ -39,10 +55,16 @@ function driverClient(env: Env, profile: AnalysisProfileId): DriverClient {
   }
   if (profile === 'free-v1') {
     const container = getContainer(env.ANALYSIS_CONTAINER, 'single-analysis-slot-free-staging');
-    return { fetch: (request) => container.fetch(request), destroy: () => container.destroy() };
+    return {
+      fetch: (request) => container.fetch(request), destroy: () => container.destroy(),
+      prepareSigstop: (fence) => container.prepareSigstop(fence),
+    };
   }
   const container = getContainer(env.ANALYSIS_CONTAINER_PRECISION, 'single-analysis-slot-precision-staging');
-  return { fetch: (request) => container.fetch(request), destroy: () => container.destroy() };
+  return {
+    fetch: (request) => container.fetch(request), destroy: () => container.destroy(),
+    prepareSigstop: (fence) => container.prepareSigstop(fence),
+  };
 }
 
 export default {

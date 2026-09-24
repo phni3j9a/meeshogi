@@ -252,7 +252,7 @@ describe('staging worker route guards', () => {
     expect(isCloudAnalysisResultV3(body)).toBe(true);
     expect(driver.requests).toHaveLength(1);
     expect(driver.requests[0].headers.has('authorization')).toBe(false);
-    expect(await driver.requests[0].json()).toEqual({ sfen: SFEN, movetime_ms: 250, multipv: 1 });
+    expect(await driver.requests[0].json()).toEqual({ sfen: SFEN, movetime_ms: 250, multipv: 1, fence: expect.any(String) });
   });
 
   it('requires the same bearer authentication for the admin-only benchmark route', async () => {
@@ -316,6 +316,7 @@ describe('staging worker route guards', () => {
       multipv: 3,
       threads: 2,
       hash_mb: 128,
+      fence: expect.any(String),
     });
     expect(body).not.toHaveProperty('label');
     expect(stats).toEqual({
@@ -416,7 +417,7 @@ describe('staging worker route guards', () => {
       new Request('https://worker.test/v1/internal/stop', {
         method: 'POST',
         headers: { ...authHeaders(), 'content-type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({ fence: 'job-epoch-position-attempt-lease' }),
       }),
       env,
       driver,
@@ -424,6 +425,7 @@ describe('staging worker route guards', () => {
     expect(stopped.status).toBe(200);
     expect(await stopped.json()).toEqual({ stopped: false });
     expect(driver.requests[0].headers.has('authorization')).toBe(false);
+    expect(await driver.requests[0].clone().json()).toEqual({ fence: 'job-epoch-position-attempt-lease' });
   });
 
   it('routes analyze and bench requests to the profile-selected driver, defaulting to free', async () => {
@@ -478,7 +480,7 @@ describe('staging worker route guards', () => {
         new Request('https://worker.test/v1/internal/stop', {
           method: 'POST',
           headers: { ...authHeaders(), 'content-type': 'application/json' },
-          body: JSON.stringify({ profile: 'turbo-v9' }),
+          body: JSON.stringify({ profile: 'turbo-v9', fence: 'job-epoch-position-attempt-lease' }),
         }),
         env,
         resolver,
@@ -509,7 +511,7 @@ describe('staging worker route guards', () => {
       new Request('https://worker.test/v1/internal/stop', {
         method: 'POST',
         headers: { ...authHeaders(), 'content-type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({ fence: 'job-epoch-position-attempt-lease' }),
       }),
       env,
       resolver,
@@ -521,7 +523,7 @@ describe('staging worker route guards', () => {
       new Request('https://worker.test/v1/internal/stop', {
         method: 'POST',
         headers: { ...authHeaders(), 'content-type': 'application/json' },
-        body: JSON.stringify({ profile: 'precision-v1' }),
+        body: JSON.stringify({ profile: 'precision-v1', fence: 'job-epoch-position-attempt-lease' }),
       }),
       env,
       resolver,

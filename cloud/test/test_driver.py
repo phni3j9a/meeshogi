@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -204,11 +205,12 @@ elif command == "mate-proof":
     budget = int(option("--budget"))
     plies = int(option("--plies"))
     print(json.dumps({
-        "result": "proven",
+        "result": json.loads(os.environ.get("DRIVER_FAKE_PROOF_RESULT", '"proven"')),
         "plies": plies,
+        "line": ["7g7f", "3c3d", "2g2f"][:plies],
         "nodesUsed": min(7, budget),
         "budget": budget,
-        "budgetVersion": "sekirei-proof-ops-v1",
+        "budgetVersion": "sekirei-proof-ops-v2",
     }))
 else:
     raise SystemExit(2)
@@ -267,7 +269,7 @@ class DriverTests(unittest.TestCase):
 
     @staticmethod
     def request(sfen: str = START_SFEN, multipv: int = 2) -> dict:
-        return {"sfen": sfen, "movetime_ms": 250, "multipv": multipv, "threads": 1, "hash_mb": 256}
+        return {"sfen": sfen, "movetime_ms": 250, "multipv": multipv, "threads": 1, "hash_mb": 256, "fence": str(uuid.uuid4())}
 
     def scenario(self, name: str, **extra: str):
         return patch.dict(os.environ, {"DRIVER_FAKE_SCENARIO": name, **extra})
@@ -497,7 +499,8 @@ class DriverTests(unittest.TestCase):
             deadline = time.monotonic() + 2
             while not controller._search_started and time.monotonic() < deadline:
                 time.sleep(0.01)
-            self.assertTrue(controller.request_stop())
+            self.assertFalse(controller.request_stop("stale-job:1:0:1:stale-lease"))
+            self.assertTrue(controller.request_stop(controller._active_fence))
             thread.join(timeout=3)
         self.assertFalse(thread.is_alive())
         self.assertEqual(results[0][0], 200)
@@ -539,6 +542,12 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(health["stats"], synthetic)
         self.assertIn("engineEpoch", health)
         self.assertIn("restartCount", health)
+        provenance = health["artifactProvenance"]
+        self.assertEqual(provenance["engineBinarySha256"], hashlib.sha256(self.engine_path.read_bytes()).hexdigest())
+        self.assertEqual(provenance["weightSha256"], hashlib.sha256(self.weight_path.read_bytes()).hexdigest())
+        self.assertEqual(provenance["engineOptionsSha256"], hashlib.sha256(self.options_path.read_bytes()).hexdigest())
+        self.assertEqual(provenance["helperBinarySha256"], hashlib.sha256(self.helper_path.read_bytes()).hexdigest())
+        self.assertEqual(len(provenance["driverSha256"]), 64)
         self.assertEqual(status, 200)
         self.assertEqual(result["stats"], synthetic)
 
@@ -593,7 +602,8 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(proof["result"], "proven")
         self.assertEqual(proof["plies"], 3)
         self.assertEqual(proof["nodesUsed"], 7)
-        self.assertEqual(proof["budgetVersion"], "sekirei-proof-ops-v1")
+        self.assertEqual(proof["budgetVersion"], "sekirei-proof-ops-v2")
+        self.assertEqual(proof["line"], ["7g7f", "3c3d", "2g2f"])
         for invalid in (
             {"sfen": "startpos", "plies": 3, "budget": 10_000},
             {"sfen": START_SFEN, "plies": 9, "budget": 10_000},
@@ -602,15 +612,23 @@ class DriverTests(unittest.TestCase):
         ):
             self.assertIsNone(driver._validate_proof_request(invalid))
 
+    def test_invalid_helper_result_type_is_rejected_as_a_proof_protocol_error(self) -> None:
+        controller = self.make_controller()
+        with self.scenario("iteration", DRIVER_FAKE_PROOF_RESULT="[]"):
+            status, response = controller.prove({"sfen": START_SFEN, "plies": 3, "budget": 10_000})
+        self.assertEqual(status, 502)
+        self.assertEqual(response, {"error": "proof_failed", "reason": "helper_invalid_proof"})
+
     def test_sigstop_fault_hook_is_one_shot_and_timeout_recovers_the_child(self) -> None:
-        with self.scenario("iteration", MEESHOGI_TEST_SIGSTOP_ENGINE="1"), \
+        request = self.request()
+        with self.scenario("iteration", MEESHOGI_TEST_SIGSTOP_ENGINE="1", MEESHOGI_TEST_SIGSTOP_FENCE=request["fence"]), \
             patch.object(driver, "SEARCH_GRACE_MS", 10), \
             patch.object(driver, "STOP_RESPONSE_GRACE_SECONDS", 0.01), \
             patch.object(driver, "PROCESS_TERM_GRACE_SECONDS", 0.05), \
             patch.object(driver, "PROCESS_KILL_GRACE_SECONDS", 0.5):
             controller = self.make_controller()
             started = time.monotonic()
-            status, interrupted = controller.analyze(self.request())
+            status, interrupted = controller.analyze(request)
             elapsed = time.monotonic() - started
             self.assertEqual(status, 200)
             self.assertEqual(interrupted["terminal"], "position_failed:engine_timeout")

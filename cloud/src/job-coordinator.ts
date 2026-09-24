@@ -1,9 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
   ANALYSIS_PROFILES,
-  estimateContainerCostUsd,
+  estimateWorstCaseAttemptCostUsd,
+  estimatePositionReservationUsd,
   estimateJobReservationUsd,
-  executionIdentityComponents,
   finalJobStatus,
   quotaAllows,
 } from './job-types';
@@ -29,6 +29,7 @@ const LEASE_MS = 180_000;
 const REDELIVERY_AFTER_MS = 120_000;
 const RECOVERY_DEADLINE_MS = 10 * 60_000;
 const MAX_WAITING_JOBS = 10;
+const FAULT_ARM_TTL_MS = 10 * 60_000;
 type IdempotencyRow = { job_id: string; payload_sha256: string };
 type JobRow = {
   id: string; owner_id: string; status: JobStatus; profile_id: JobIdentity['profileId']; profile_version: number;
@@ -37,6 +38,7 @@ type JobRow = {
   failed_count: number; consecutive_failures: number; stop_reason: string | null; created_at: string;
   started_at: string | null; completed_at: string | null; updated_at: string; execution_identity_hash: string;
   cost_reserved: number; cost_day_utc: string | null; result_seq_next: number;
+  execution_identity_json: string;
 };
 type PositionRow = { sfen: string; status: string; attempts: number; delivery_count: number; cost_reserved: number; lease_expires_at: number | null };
 type OutboxRow = { id: number; job_id: string; epoch: number; start_idx: number; end_idx: number; sent_at: string | null; last_sent_at: string | null; completed_at: string | null };
@@ -104,10 +106,13 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
   }
 
   private async dailyCost(day: string): Promise<{ spent: number; reserved: number }> {
-    const row = await this.first<{ spent_usd: number; reserved_usd: number }>(this.env.DB.prepare(
-      'SELECT spent_usd, reserved_usd FROM daily_cost WHERE day_utc = ?',
-    ).bind(day));
-    return { spent: Number(row?.spent_usd ?? 0), reserved: Number(row?.reserved_usd ?? 0) };
+    const [daily, outstanding] = await Promise.all([
+      this.first<{ spent_usd: number }>(this.env.DB.prepare('SELECT spent_usd FROM daily_cost WHERE day_utc = ?').bind(day)),
+      this.first<{ reserved: number }>(this.env.DB.prepare(
+        "SELECT COALESCE(SUM(cost_reserved), 0) AS reserved FROM jobs WHERE status IN ('queued', 'running', 'cancelling')",
+      )),
+    ]);
+    return { spent: Number(daily?.spent_usd ?? 0), reserved: Number(outstanding?.reserved ?? 0) };
   }
 
   private async flushHeadOutbox(jobId: string, now: number, force = false): Promise<boolean> {
@@ -187,7 +192,7 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
 
       const jobId = crypto.randomUUID();
       const createdAt = iso(input.now);
-      const perPosition = estimateContainerCostUsd(profile.movetimeMs + 500, 2, profile.instanceType, profile.movetimeMs, false);
+      const perPosition = estimatePositionReservationUsd(profile);
       const sharedIdle = Math.max(0, reservation - perPosition * input.positions.length);
       const positionRows = input.positions.map((sfen, index) => [
         jobId, index, sfen, input.profile, input.identity.profileVersion, input.identity.engineId, input.identity.modelId,
@@ -199,12 +204,13 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
       }
       const statements: D1PreparedStatement[] = [
         this.env.DB.prepare(
-          'INSERT INTO jobs (id, owner_id, status, profile_id, profile_version, engine_id, model_id, instance_type, label, position_count, epoch, created_at, updated_at, execution_identity_hash, cost_reserved, cost_day_utc, result_seq_next, engine_binary_digest_label, vcpu, cost_estimate_usd) ' +
-          "VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+          'INSERT INTO jobs (id, owner_id, status, profile_id, profile_version, engine_id, model_id, instance_type, label, position_count, epoch, created_at, updated_at, execution_identity_hash, cost_reserved, cost_day_utc, result_seq_next, engine_binary_digest_label, vcpu, cost_estimate_usd, execution_identity_json) ' +
+          "VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
         ).bind(
           jobId, input.ownerId, input.identity.profileId, input.identity.profileVersion, input.identity.engineId, input.identity.modelId,
           input.identity.instanceType, input.label, input.positions.length, createdAt, createdAt, input.identity.executionIdentityHash,
           reservation, day, input.identity.engineBinaryDigestLabel, input.identity.vcpu, reservation,
+          JSON.stringify(input.identity),
         ),
         this.env.DB.prepare('INSERT INTO idempotency(owner_id, idempotency_key, job_id, payload_sha256, created_at) VALUES (?, ?, ?, ?, ?)')
           .bind(input.ownerId, input.idempotencyKey, jobId, input.payloadSha256, createdAt),
@@ -286,12 +292,13 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
 
   async requestCancel(ownerId: string, jobId: string, now: number): Promise<CancelOutcome> {
     return this.serialized(async () => {
-      const job = await this.first<{ status: JobStatus; epoch: number }>(this.env.DB.prepare(
-        'SELECT status, epoch FROM jobs WHERE id = ? AND owner_id = ?',
+      const job = await this.first<{ status: JobStatus; epoch: number; stop_reason: string | null }>(this.env.DB.prepare(
+        'SELECT status, epoch, stop_reason FROM jobs WHERE id = ? AND owner_id = ?',
       ).bind(jobId, ownerId));
       if (!job) return { found: false, status: null };
+      if (job.status === 'cancelling' && job.stop_reason === 'dead_letter_in_progress') return { found: true, status: 'cancelling' };
       if (!active(job.status) && job.status !== 'cancelling') return { found: true, status: job.status };
-      await this.env.DB.prepare("UPDATE jobs SET status = 'cancelling', cancel_requested = 1, updated_at = ? WHERE id = ? AND status IN ('queued', 'running', 'cancelling')")
+      await this.env.DB.prepare("UPDATE jobs SET status = 'cancelling', cancel_requested = 1, stop_reason = 'cancel_in_progress', updated_at = ? WHERE id = ? AND status IN ('queued', 'running', 'cancelling')")
         .bind(iso(now), jobId).run();
       const slot = await this.first<SlotRow>(this.env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1'));
       const ownsSlot = slot?.job_id === jobId && slot.epoch === job.epoch && slot.lease_id !== null;
@@ -312,10 +319,17 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
   private async finishCancellation(jobId: string, epoch: number, now: number): Promise<void> {
     const slot = await this.first<SlotRow>(this.env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1'));
     if (slot?.job_id === jobId && slot.epoch === epoch && slot.lease_id) return;
-    await this.env.DB.prepare(
-      "UPDATE jobs SET status = 'cancelled', cancel_requested = 1, stop_reason = COALESCE(stop_reason, 'cancelled'), completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ? AND epoch = ? AND status = 'cancelling'",
-    ).bind(iso(now), iso(now), jobId, epoch).run();
-    await this.releaseJobReservations(jobId, now);
+    const job = await this.first<{ status: string; stop_reason: string | null }>(this.env.DB.prepare('SELECT status, stop_reason FROM jobs WHERE id = ? AND epoch = ?').bind(jobId, epoch));
+    if (job?.status !== 'cancelling' || job.stop_reason === 'dead_letter_in_progress') return;
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        "UPDATE jobs SET status = 'cancelled', cancel_requested = 1, stop_reason = 'cancelled', completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ? AND epoch = ? AND status = 'cancelling' AND stop_reason <> 'dead_letter_in_progress'",
+      ).bind(iso(now), iso(now), jobId, epoch),
+      this.env.DB.prepare('UPDATE daily_cost SET reserved_usd = MAX(0, reserved_usd - (SELECT cost_reserved FROM jobs WHERE id = ?)), updated_at = ? WHERE day_utc = (SELECT cost_day_utc FROM jobs WHERE id = ?) AND (SELECT cost_reserved FROM jobs WHERE id = ?) > 0')
+        .bind(jobId, iso(now), jobId, jobId),
+      this.env.DB.prepare('UPDATE jobs SET cost_reserved = 0, updated_at = ? WHERE id = ? AND epoch = ?').bind(iso(now), jobId, epoch),
+      this.env.DB.prepare('UPDATE positions SET cost_reserved = 0 WHERE job_id = ?').bind(jobId),
+    ]);
   }
 
   async cancellationSettled(jobId: string, epoch: number, now: number): Promise<boolean> {
@@ -360,6 +374,7 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
     return this.serialized(async () => {
       const slot = await this.first<SlotRow>(this.env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1'));
       if (!slot || slot.lease_id !== lease.leaseId || slot.job_id !== lease.jobId || slot.epoch !== lease.epoch || slot.position_index !== lease.index) return false;
+      if ((slot.attempt ?? 0) > 0 && !await this.recordUnknownSlotCost(slot, now)) return false;
       await this.env.DB.batch([
         this.env.DB.prepare("UPDATE positions SET status = 'pending', lease_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE job_id = ? AND position_index = ? AND status = 'running' AND lease_id = ?")
           .bind(iso(now), lease.jobId, lease.index, lease.leaseId),
@@ -368,7 +383,7 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
         this.env.DB.prepare('UPDATE jobs SET updated_at = ? WHERE id = ? AND epoch = ?').bind(iso(now), lease.jobId, lease.epoch),
       ]);
       const job = await this.first<{ status: string; stop_reason: string | null }>(this.env.DB.prepare('SELECT status, stop_reason FROM jobs WHERE id = ?').bind(lease.jobId));
-      if (job?.status === 'cancelling' && job.stop_reason !== 'dead_letter') await this.finishCancellation(lease.jobId, lease.epoch, now);
+      if (job?.status === 'cancelling' && job.stop_reason !== 'dead_letter_in_progress') await this.finishCancellation(lease.jobId, lease.epoch, now);
       return true;
     });
   }
@@ -402,27 +417,33 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
         return { kind: 'busy' };
       }
       if (position.status === 'running' && (position.lease_expires_at ?? 0) <= now) return { kind: 'quarantine_required' };
+      let identity: JobIdentity;
+      try { identity = JSON.parse(job.execution_identity_json) as JobIdentity; } catch { return { kind: 'stopped' }; }
+      if (!identity || identity.executionIdentityHash !== job.execution_identity_hash || identity.profileId !== job.profile_id ||
+          identity.profileVersion !== job.profile_version || identity.engineId !== job.engine_id || identity.modelId !== job.model_id ||
+          identity.engineBinaryDigestLabel !== job.engine_binary_digest_label) {
+        await this.stopJob(jobId, epoch, 'execution_identity_missing_or_invalid', now);
+        return { kind: 'stopped' };
+      }
       const leaseExpiresAt = now + LEASE_MS;
-      const updated = await this.env.DB.prepare(
-        "UPDATE positions SET status = 'running', lease_id = ?, lease_expires_at = ?, updated_at = ? WHERE job_id = ? AND position_index = ? AND status IN ('pending', 'running') AND (status = 'pending' OR lease_expires_at IS NULL OR lease_expires_at <= ?)",
-      ).bind(leaseId, leaseExpiresAt, iso(now), jobId, index, now).run();
-      if (updated.meta.changes === 0) return { kind: 'busy' };
-      await this.env.DB.batch([
+      let acquired: D1Result[];
+      try {
+        acquired = await this.env.DB.batch([
         this.env.DB.prepare(
-          'UPDATE global_search_slot SET job_id = ?, epoch = ?, position_index = ?, attempt = ?, lease_id = ?, lease_expires_at = ?, profile_id = ?, quarantine_required = 0, updated_at = ? WHERE singleton = 1 AND lease_id IS NULL',
-        ).bind(jobId, epoch, index, position.attempts, leaseId, leaseExpiresAt, job.profile_id, iso(now)),
-        this.env.DB.prepare("UPDATE jobs SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND epoch = ? AND status IN ('queued', 'running')")
-          .bind(iso(now), iso(now), jobId, epoch),
-      ]);
-      const identity: JobIdentity = {
-        profileId: job.profile_id, profileVersion: 2, engineId: job.engine_id,
-        engineBinaryDigestLabel: job.engine_binary_digest_label, modelId: job.model_id,
-        instanceType: job.instance_type, vcpu: job.vcpu as 1 | 2,
-        executionIdentityHash: job.execution_identity_hash,
-        executionIdentityComponents: executionIdentityComponents(
-          ANALYSIS_PROFILES[job.profile_id], job.engine_id, job.model_id, job.engine_binary_digest_label,
-        ),
-      };
+          'UPDATE global_search_slot SET job_id = ?, epoch = ?, position_index = ?, attempt = ?, lease_id = ?, lease_expires_at = ?, profile_id = ?, quarantine_required = 0, updated_at = ? WHERE singleton = 1 AND lease_id IS NULL AND EXISTS (SELECT 1 FROM positions WHERE job_id = ? AND position_index = ? AND status IN (\'pending\', \'running\') AND (status = \'pending\' OR lease_expires_at IS NULL OR lease_expires_at <= ?))',
+        ).bind(jobId, epoch, index, position.attempts, leaseId, leaseExpiresAt, job.profile_id, iso(now), jobId, index, now),
+        this.env.DB.prepare(
+          "UPDATE positions SET status = 'running', lease_id = ?, lease_expires_at = ?, updated_at = ? WHERE job_id = ? AND position_index = ? AND status IN ('pending', 'running') AND (status = 'pending' OR lease_expires_at IS NULL OR lease_expires_at <= ?) AND EXISTS (SELECT 1 FROM global_search_slot WHERE singleton = 1 AND lease_id = ? AND job_id = ? AND epoch = ? AND position_index = ?)",
+        ).bind(leaseId, leaseExpiresAt, iso(now), jobId, index, now, leaseId, jobId, epoch, index),
+        this.env.DB.prepare("UPDATE jobs SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND epoch = ? AND status IN ('queued', 'running') AND EXISTS (SELECT 1 FROM global_search_slot WHERE singleton = 1 AND lease_id = ?) AND EXISTS (SELECT 1 FROM positions WHERE job_id = ? AND position_index = ? AND status = 'running' AND lease_id = ?)")
+          .bind(iso(now), iso(now), jobId, epoch, leaseId, jobId, index, leaseId),
+        this.env.DB.prepare("UPDATE global_search_slot SET job_id = NULL, epoch = NULL, position_index = NULL, attempt = NULL, lease_id = NULL, lease_expires_at = NULL, profile_id = NULL, quarantine_required = 0, updated_at = ? WHERE singleton = 1 AND lease_id = ? AND NOT EXISTS (SELECT 1 FROM positions WHERE job_id = ? AND position_index = ? AND status = 'running' AND lease_id = ?)")
+          .bind(iso(now), leaseId, jobId, index, leaseId),
+        ]);
+      } catch {
+        return { kind: 'busy' };
+      }
+      if (acquired[0]?.meta.changes !== 1 || acquired[1]?.meta.changes !== 1) return { kind: 'busy' };
       return { kind: 'claimed', value: {
         jobId, ownerId: job.owner_id, epoch, index, sfen: position.sfen, attempts: position.attempts,
         deliveryCount: position.delivery_count, leaseId, cancelRequested: false, identity,
@@ -465,23 +486,48 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
     });
   }
 
-  async recordAttemptCost(position: ClaimedPosition, attempt: number, amountUsd: number, engineMs: number | null, now: number): Promise<void> {
-    await this.serialized(async () => {
-      const day = dayUtc(now);
-      await this.env.DB.prepare('INSERT INTO daily_cost(day_utc, spent_usd, reserved_usd, updated_at) VALUES (?, 0, 0, ?) ON CONFLICT(day_utc) DO NOTHING')
-        .bind(day, iso(now)).run();
-      const inserted = await this.env.DB.prepare(
+  async recordAttemptCost(position: ClaimedPosition, attempt: number, amountUsd: number, engineMs: number | null, now: number): Promise<boolean> {
+    return this.serialized(async () => {
+      return this.writeAttemptCost(position.jobId, position.index, attempt, position.ownerId, position.identity.profileId,
+        position.identity.executionIdentityHash, amountUsd, engineMs, now);
+    });
+  }
+
+  private async writeAttemptCost(
+    jobId: string, index: number, attempt: number, ownerId: string, profileId: string,
+    identityHash: string, amountUsd: number, engineMs: number | null, now: number,
+  ): Promise<boolean> {
+    const day = dayUtc(now);
+    const createdAt = iso(now);
+    try {
+      await this.env.DB.batch([
+      this.env.DB.prepare('INSERT INTO daily_cost(day_utc, spent_usd, reserved_usd, updated_at) VALUES (?, 0, 0, ?) ON CONFLICT(day_utc) DO NOTHING')
+        .bind(day, createdAt),
+      this.env.DB.prepare(
+        'UPDATE daily_cost SET spent_usd = spent_usd + ?, updated_at = ? WHERE day_utc = ? AND NOT EXISTS (' +
+        'SELECT 1 FROM cost_attempt_ledger WHERE job_id = ? AND position_index = ? AND attempt = ?)',
+      ).bind(amountUsd, createdAt, day, jobId, index, attempt),
+      this.env.DB.prepare(
         'INSERT OR IGNORE INTO cost_attempt_ledger(job_id, position_index, attempt, day_utc, owner_id, profile_id, execution_identity_hash, amount_usd, engine_ms, created_at) ' +
         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      ).bind(
-        position.jobId, position.index, attempt, day, position.ownerId, position.identity.profileId,
-        position.identity.executionIdentityHash, amountUsd, engineMs, iso(now),
-      ).run();
-      if (inserted.meta.changes > 0) {
-        await this.env.DB.prepare('UPDATE daily_cost SET spent_usd = spent_usd + ?, updated_at = ? WHERE day_utc = ?')
-          .bind(amountUsd, iso(now), day).run();
-      }
-    });
+      ).bind(jobId, index, attempt, day, ownerId, profileId, identityHash, amountUsd, engineMs, createdAt),
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async recordUnknownSlotCost(slot: SlotRow, now: number): Promise<boolean> {
+    if (!slot.job_id || slot.position_index === null || slot.attempt === null || slot.attempt < 1) return true;
+    const job = await this.first<{ owner_id: string; profile_id: JobIdentity['profileId']; execution_identity_hash: string }>(
+      this.env.DB.prepare('SELECT owner_id, profile_id, execution_identity_hash FROM jobs WHERE id = ?').bind(slot.job_id),
+    );
+    if (!job) return true;
+    return this.writeAttemptCost(
+      slot.job_id, slot.position_index, slot.attempt, job.owner_id, job.profile_id, job.execution_identity_hash,
+      estimateWorstCaseAttemptCostUsd(ANALYSIS_PROFILES[job.profile_id]), null, now,
+    );
   }
 
   async releaseForRetry(position: ClaimedPosition, detail: string, now: number): Promise<boolean> {
@@ -543,16 +589,16 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
     now: number,
   ): Promise<number | null> {
     return this.serialized(async () => {
-      const job = await this.first<{ status: string; epoch: number; execution_identity_hash: string }>(this.env.DB.prepare('SELECT status, epoch, execution_identity_hash FROM jobs WHERE id = ?').bind(position.jobId));
+      const job = await this.first<{ status: string; epoch: number; execution_identity_hash: string; cost_day_utc: string | null }>(this.env.DB.prepare('SELECT status, epoch, execution_identity_hash, cost_day_utc FROM jobs WHERE id = ?').bind(position.jobId));
       const slot = await this.first<SlotRow>(this.env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1'));
-      const current = await this.first<{ status: string; lease_id: string | null }>(this.env.DB.prepare('SELECT status, lease_id FROM positions WHERE job_id = ? AND position_index = ?').bind(position.jobId, position.index));
+      const current = await this.first<{ status: string; lease_id: string | null; cost_reserved: number }>(this.env.DB.prepare('SELECT status, lease_id, cost_reserved FROM positions WHERE job_id = ? AND position_index = ?').bind(position.jobId, position.index));
       if (!job || job.status !== 'running' || job.epoch !== position.epoch || job.execution_identity_hash !== position.identity.executionIdentityHash || current?.status !== 'running' || current.lease_id !== position.leaseId || slot?.lease_id !== position.leaseId || slot.job_id !== position.jobId || slot.epoch !== position.epoch) return null;
       const seq = await this.nextResultSeq(position.jobId, position.epoch);
       if (seq === null) return null;
       const createdAt = iso(now);
       const statements: D1PreparedStatement[] = [
         this.env.DB.prepare(
-          "UPDATE positions SET status = 'done', result_json = ?, stats_json = ?, proof_json = ?, engine_terminal = json_extract(?, '$.terminal'), result_seq = ?, cached = ?, error_detail = NULL, lease_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE job_id = ? AND position_index = ? AND status = 'running' AND lease_id = ? AND execution_identity_hash = ?",
+          "UPDATE positions SET status = 'done', result_json = ?, stats_json = ?, proof_json = ?, engine_terminal = json_extract(?, '$.terminal'), result_seq = ?, cached = ?, error_detail = NULL, lease_id = NULL, lease_expires_at = NULL, cost_reserved = 0, updated_at = ? WHERE job_id = ? AND position_index = ? AND status = 'running' AND lease_id = ? AND execution_identity_hash = ?",
         ).bind(resultJson, statsJson, proofJson, resultJson, seq, cached ? 1 : 0, createdAt, position.jobId, position.index, position.leaseId, position.identity.executionIdentityHash),
         this.env.DB.prepare(
           'INSERT OR IGNORE INTO result_cache (contract_version, execution_identity_hash, engine_id, model_id, profile_id, profile_version, sfen, result_json, stats_json, proof_json, quarantined, created_at, last_used_at) ' +
@@ -565,17 +611,21 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
           'SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM positions WHERE job_id = ? AND position_index = ? AND status = \'done\' AND result_seq = ?)',
         ).bind(position.jobId, position.index, position.ownerId, position.identity.profileId, cached ? 0 : amountUsd,
           position.attempts, cached ? 1 : 0, engineMs, createdAt, position.jobId, position.index, seq),
-        this.env.DB.prepare('UPDATE global_search_slot SET job_id = NULL, epoch = NULL, position_index = NULL, attempt = NULL, lease_id = NULL, lease_expires_at = NULL, profile_id = NULL, quarantine_required = 0, updated_at = ? WHERE singleton = 1 AND job_id = ? AND epoch = ? AND lease_id = ?')
-          .bind(createdAt, position.jobId, position.epoch, position.leaseId),
+        this.env.DB.prepare("UPDATE global_search_slot SET job_id = NULL, epoch = NULL, position_index = NULL, attempt = NULL, lease_id = NULL, lease_expires_at = NULL, profile_id = NULL, quarantine_required = 0, updated_at = ? WHERE singleton = 1 AND job_id = ? AND epoch = ? AND lease_id = ? AND EXISTS (SELECT 1 FROM positions WHERE job_id = ? AND position_index = ? AND status = 'done' AND result_seq = ?)")
+          .bind(createdAt, position.jobId, position.epoch, position.leaseId, position.jobId, position.index, seq),
+        this.env.DB.prepare(
+          "UPDATE jobs SET committed_count = (SELECT COUNT(*) FROM positions WHERE job_id = ? AND status = 'done'), consecutive_failures = 0, cost_reserved = MAX(0, cost_reserved - ?), updated_at = ? WHERE id = ? AND epoch = ? AND status = 'running' AND EXISTS (SELECT 1 FROM positions WHERE job_id = ? AND position_index = ? AND status = 'done' AND result_seq = ?)",
+        ).bind(position.jobId, Number(current.cost_reserved ?? 0), createdAt, position.jobId, position.epoch, position.jobId, position.index, seq),
       ];
+      if (Number(current.cost_reserved ?? 0) > 0 && job.cost_day_utc) {
+        statements.push(this.env.DB.prepare("UPDATE daily_cost SET reserved_usd = MAX(0, reserved_usd - ?), updated_at = ? WHERE day_utc = ? AND EXISTS (SELECT 1 FROM positions WHERE job_id = ? AND position_index = ? AND status = 'done' AND result_seq = ?)")
+          .bind(Number(current.cost_reserved), createdAt, job.cost_day_utc, position.jobId, position.index, seq));
+      }
       await this.env.DB.batch(statements);
       const applied = await this.first<{ result_seq: number | null; status: string }>(this.env.DB.prepare(
         'SELECT result_seq, status FROM positions WHERE job_id = ? AND position_index = ?',
       ).bind(position.jobId, position.index));
       if (applied?.status !== 'done' || applied.result_seq !== seq) return null;
-      await this.releasePositionReservation(position.jobId, position.index, now);
-      await this.env.DB.prepare('UPDATE jobs SET committed_count = (SELECT COUNT(*) FROM positions WHERE job_id = ? AND status = \'done\'), updated_at = ? WHERE id = ? AND epoch = ?')
-        .bind(position.jobId, createdAt, position.jobId, position.epoch).run();
       return seq;
     });
   }
@@ -584,7 +634,7 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
     position: ClaimedPosition,
     detail: string,
     now: number,
-    options: { fatalProtocol?: boolean; resultJson?: string | null; statsJson?: string | null } = {},
+    options: { fatalProtocol?: boolean; evaluationMissing?: boolean; resultJson?: string | null; statsJson?: string | null } = {},
   ): Promise<number | null> {
     return this.serialized(async () => {
       const job = await this.first<{ status: string; epoch: number; committed_count: number }>(this.env.DB.prepare('SELECT status, epoch, committed_count FROM jobs WHERE id = ?').bind(position.jobId));
@@ -601,31 +651,38 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
         await this.finishCancellation(position.jobId, position.epoch, now);
         return null;
       }
-      const current = await this.first<{ status: string; lease_id: string | null }>(this.env.DB.prepare('SELECT status, lease_id FROM positions WHERE job_id = ? AND position_index = ?').bind(position.jobId, position.index));
+      const current = await this.first<{ status: string; lease_id: string | null; attempts: number }>(this.env.DB.prepare('SELECT status, lease_id, attempts FROM positions WHERE job_id = ? AND position_index = ?').bind(position.jobId, position.index));
       const slot = await this.first<SlotRow>(this.env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1'));
-      if (current?.status !== 'running' || current.lease_id !== position.leaseId || slot?.lease_id !== position.leaseId || slot.job_id !== position.jobId || slot.epoch !== position.epoch) return null;
+      const ownsRunningSlot = current?.status === 'running' && current.lease_id === position.leaseId && slot?.lease_id === position.leaseId && slot.job_id === position.jobId && slot.epoch === position.epoch;
+      const confirmedDeathAfterLastAttempt = current?.status === 'pending' && current.lease_id === null &&
+        current.attempts >= 2 && position.attempts >= 2 && slot?.lease_id !== position.leaseId;
+      if (!ownsRunningSlot && !confirmedDeathAfterLastAttempt) return null;
       const seq = await this.nextResultSeq(position.jobId, position.epoch);
       if (seq === null) return null;
       const completedAt = iso(now);
       await this.env.DB.batch([
         this.env.DB.prepare(
-          "UPDATE positions SET status = 'failed', result_json = ?, stats_json = ?, engine_terminal = COALESCE(json_extract(?, '$.terminal'), ?), result_seq = ?, error_detail = ?, lease_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE job_id = ? AND position_index = ? AND status = 'running' AND lease_id = ?",
+          "UPDATE positions SET status = 'failed', result_json = ?, stats_json = ?, engine_terminal = COALESCE(json_extract(?, '$.terminal'), ?), result_seq = ?, error_detail = ?, lease_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE job_id = ? AND position_index = ? AND ((status = 'running' AND lease_id = ?) OR (status = 'pending' AND lease_id IS NULL AND attempts >= 2))",
         ).bind(options.resultJson ?? null, options.statsJson ?? null, options.resultJson ?? null, detail, seq, detail.slice(0, 120), completedAt, position.jobId, position.index, position.leaseId),
         this.env.DB.prepare('UPDATE global_search_slot SET job_id = NULL, epoch = NULL, position_index = NULL, attempt = NULL, lease_id = NULL, lease_expires_at = NULL, profile_id = NULL, quarantine_required = 0, updated_at = ? WHERE singleton = 1 AND job_id = ? AND epoch = ? AND lease_id = ?')
           .bind(completedAt, position.jobId, position.epoch, position.leaseId),
       ]);
-      const counts = await this.first<{ failed: number; done: number }>(this.env.DB.prepare(
-        "SELECT SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done FROM positions WHERE job_id = ?",
+      const counts = await this.first<{ failed: number; missing: number; done: number }>(this.env.DB.prepare(
+        "SELECT SUM(CASE WHEN status = 'failed' AND COALESCE(error_detail, '') NOT IN ('incomplete', 'evaluation_missing:resign') THEN 1 ELSE 0 END) AS failed, " +
+        "SUM(CASE WHEN status = 'failed' AND COALESCE(error_detail, '') IN ('incomplete', 'evaluation_missing:resign') THEN 1 ELSE 0 END) AS missing, " +
+        "SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done FROM positions WHERE job_id = ?",
       ).bind(position.jobId));
       const failed = Number(counts?.failed ?? 0);
+      const missing = Number(counts?.missing ?? 0);
       const done = Number(counts?.done ?? 0);
       const fatal = options.fatalProtocol === true;
-      const threshold = failed >= 5 || await this.failureStreakReached(position.jobId, 3);
+      const threshold = !options.evaluationMissing && (failed >= 5 || await this.failureStreakReached(position.jobId, 3));
       const terminal = fatal || threshold;
-      const nextStatus = terminal ? (done > 0 ? 'partial' : 'failed') : 'running';
+      const nextStatus = fatal ? 'failed' : terminal ? (done > 0 || missing > 0 ? 'partial' : 'failed') : 'running';
       await this.env.DB.prepare(
-        'UPDATE jobs SET failed_count = ?, committed_count = ?, consecutive_failures = consecutive_failures + 1, status = ?, stop_reason = CASE WHEN ? THEN ? WHEN ? THEN \'failure_threshold\' ELSE stop_reason END, completed_at = CASE WHEN ? THEN COALESCE(completed_at, ?) ELSE completed_at END, updated_at = ? WHERE id = ? AND epoch = ? AND status IN (\'queued\', \'running\')',
-      ).bind(failed, done, nextStatus, fatal ? 1 : 0, detail.slice(0, 120), threshold ? 1 : 0, terminal ? 1 : 0, completedAt, completedAt, position.jobId, position.epoch).run();
+        'UPDATE jobs SET failed_count = ?, committed_count = ?, consecutive_failures = CASE WHEN ? THEN consecutive_failures WHEN ? THEN consecutive_failures + 1 ELSE consecutive_failures END, status = ?, stop_reason = CASE WHEN ? THEN ? WHEN ? THEN \'failure_threshold\' ELSE stop_reason END, completed_at = CASE WHEN ? THEN COALESCE(completed_at, ?) ELSE completed_at END, updated_at = ? WHERE id = ? AND epoch = ? AND status IN (\'queued\', \'running\')',
+      ).bind(failed, done, options.evaluationMissing ? 1 : 0, options.evaluationMissing ? 0 : 1, nextStatus,
+        fatal ? 1 : 0, detail.slice(0, 120), threshold ? 1 : 0, terminal ? 1 : 0, completedAt, completedAt, position.jobId, position.epoch).run();
       if (fatal) {
         await this.env.DB.prepare('INSERT INTO flags(key, value, updated_at) VALUES (?, \'1\', ?) ON CONFLICT(key) DO UPDATE SET value = \'1\', updated_at = excluded.updated_at')
           .bind('profile_blocked:' + position.identity.profileId, completedAt).run();
@@ -677,15 +734,19 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
       return;
     }
     if (!active(job.status)) return;
-    const counts = await this.first<{ done: number; failed: number; pending: number; running: number }>(this.env.DB.prepare(
-      "SELECT SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed, SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending, SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running FROM positions WHERE job_id = ?",
+    const counts = await this.first<{ done: number; failed: number; missing: number; pending: number; running: number }>(this.env.DB.prepare(
+      "SELECT SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done, " +
+      "SUM(CASE WHEN status = 'failed' AND COALESCE(error_detail, '') NOT IN ('incomplete', 'evaluation_missing:resign') THEN 1 ELSE 0 END) AS failed, " +
+      "SUM(CASE WHEN status = 'failed' AND COALESCE(error_detail, '') IN ('incomplete', 'evaluation_missing:resign') THEN 1 ELSE 0 END) AS missing, " +
+      "SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending, SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running FROM positions WHERE job_id = ?",
     ).bind(jobId));
     if (!counts || Number(counts.pending ?? 0) + Number(counts.running ?? 0) > 0) return;
     const done = Number(counts.done ?? 0);
     const failed = Number(counts.failed ?? 0);
+    const missing = Number(counts.missing ?? 0);
     await this.env.DB.prepare(
       'UPDATE jobs SET status = ?, committed_count = ?, failed_count = ?, stop_reason = CASE WHEN ? > 0 THEN COALESCE(stop_reason, \'position_failures\') ELSE stop_reason END, completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ? AND epoch = ? AND status IN (\'queued\', \'running\')',
-    ).bind(finalJobStatus(done, failed), done, failed, failed, iso(now), iso(now), jobId, epoch).run();
+    ).bind(finalJobStatus(done, failed + missing), done, failed, failed, iso(now), iso(now), jobId, epoch).run();
     await this.releaseJobReservations(jobId, now);
   }
 
@@ -695,10 +756,13 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
 
   async beginDeadLetter(jobId: string, epoch: number, now: number): Promise<{ current: boolean; slot: SlotLease | null }> {
     return this.serialized(async () => {
-      const job = await this.first<{ status: string; epoch: number }>(this.env.DB.prepare('SELECT status, epoch FROM jobs WHERE id = ?').bind(jobId));
-      if (!job || job.epoch !== epoch || !active(job.status)) return { current: false, slot: null };
-      await this.env.DB.prepare("UPDATE jobs SET status = 'cancelling', cancel_requested = 1, stop_reason = 'dead_letter', updated_at = ? WHERE id = ? AND epoch = ?")
-        .bind(iso(now), jobId, epoch).run();
+      const job = await this.first<{ status: string; epoch: number; stop_reason: string | null }>(this.env.DB.prepare('SELECT status, epoch, stop_reason FROM jobs WHERE id = ?').bind(jobId));
+      if (!job || job.epoch !== epoch) return { current: false, slot: null };
+      if (job.status === 'cancelling' && job.stop_reason !== 'dead_letter_in_progress') return { current: false, slot: null };
+      if (active(job.status)) {
+        await this.env.DB.prepare("UPDATE jobs SET status = 'cancelling', cancel_requested = 1, stop_reason = 'dead_letter_in_progress', updated_at = ? WHERE id = ? AND epoch = ? AND status IN ('queued', 'running')")
+          .bind(iso(now), jobId, epoch).run();
+      } else if (job.status !== 'cancelling' || job.stop_reason !== 'dead_letter_in_progress') return { current: false, slot: null };
       const lease = await this.getSlotInternal(now);
       return { current: true, slot: lease?.jobId === jobId && lease.epoch === epoch ? lease : null };
     });
@@ -717,34 +781,79 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
 
   async finishDeadLetter(jobId: string, epoch: number, reason: string, now: number): Promise<void> {
     await this.serialized(async () => {
+      const slot = await this.first<SlotRow>(this.env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1'));
+      if (slot?.job_id === jobId && slot.epoch === epoch && slot.lease_id) return;
+      const job = await this.first<{ status: string; stop_reason: string | null }>(this.env.DB.prepare('SELECT status, stop_reason FROM jobs WHERE id = ? AND epoch = ?').bind(jobId, epoch));
+      if (job?.status !== 'cancelling' || job.stop_reason !== 'dead_letter_in_progress') return;
       const counts = await this.first<{ done: number }>(this.env.DB.prepare("SELECT SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done FROM positions WHERE job_id = ?").bind(jobId));
       const status = Number(counts?.done ?? 0) > 0 ? 'partial' : 'failed';
-      await this.env.DB.prepare(
-        'UPDATE jobs SET status = ?, stop_reason = ?, completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ? AND epoch = ? AND status = \'cancelling\'',
-      ).bind(status, reason.slice(0, 80), iso(now), iso(now), jobId, epoch).run();
-      await this.releaseJobReservations(jobId, now);
-      const slot = await this.first<SlotRow>(this.env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1'));
-      if (slot?.job_id === jobId && slot.epoch === epoch) {
-        await this.env.DB.prepare('UPDATE positions SET status = \'pending\', lease_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE job_id = ? AND position_index = ? AND status = \'running\' AND lease_id = ?')
-          .bind(iso(now), jobId, slot.position_index, slot.lease_id).run();
-        await this.env.DB.prepare('UPDATE global_search_slot SET job_id = NULL, epoch = NULL, position_index = NULL, attempt = NULL, lease_id = NULL, lease_expires_at = NULL, profile_id = NULL, quarantine_required = 0, updated_at = ? WHERE singleton = 1 AND job_id = ? AND epoch = ?')
-          .bind(iso(now), jobId, epoch).run();
-      }
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          "UPDATE jobs SET status = ?, stop_reason = ?, completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ? AND epoch = ? AND status = 'cancelling' AND stop_reason = 'dead_letter_in_progress'",
+        ).bind(status, reason.slice(0, 80), iso(now), iso(now), jobId, epoch),
+        this.env.DB.prepare('UPDATE daily_cost SET reserved_usd = MAX(0, reserved_usd - (SELECT cost_reserved FROM jobs WHERE id = ?)), updated_at = ? WHERE day_utc = (SELECT cost_day_utc FROM jobs WHERE id = ?) AND (SELECT cost_reserved FROM jobs WHERE id = ?) > 0')
+          .bind(jobId, iso(now), jobId, jobId),
+        this.env.DB.prepare('UPDATE jobs SET cost_reserved = 0, updated_at = ? WHERE id = ? AND epoch = ?').bind(iso(now), jobId, epoch),
+        this.env.DB.prepare('UPDATE positions SET cost_reserved = 0 WHERE job_id = ?').bind(jobId),
+      ]);
     });
   }
 
-  async armFault(arm: FaultArm, now: number): Promise<void> {
-    await this.serialized(async () => {
-      await this.env.DB.prepare('INSERT INTO fault_arms(kind, job_id, remaining, armed_at) VALUES (?, ?, ?, ?) ON CONFLICT(kind) DO UPDATE SET job_id = excluded.job_id, remaining = excluded.remaining, armed_at = excluded.armed_at')
-        .bind(arm.kind, arm.jobId, arm.remaining, iso(now)).run();
-    });
-  }
-
-  async consumeFault(jobId: string, kind: FaultArm['kind'], now: number): Promise<boolean> {
+  async armFault(arm: FaultArm, now: number): Promise<boolean> {
     return this.serialized(async () => {
       if (this.env.ANALYSIS_FAULT_FIXTURES_ENABLED !== '1') return false;
-      const row = await this.first<{ remaining: number }>(this.env.DB.prepare('SELECT remaining FROM fault_arms WHERE kind = ? AND job_id = ?').bind(kind, jobId));
+      const job = await this.first<{ owner_id: string; epoch: number; status: string }>(this.env.DB.prepare('SELECT owner_id, epoch, status FROM jobs WHERE id = ?').bind(arm.jobId));
+      const position = await this.first<{ attempts: number; status: string }>(this.env.DB.prepare(
+        'SELECT attempts, status FROM positions WHERE job_id = ? AND position_index = ?',
+      ).bind(arm.jobId, arm.positionIndex));
+      if (!job || job.owner_id !== arm.ownerId || job.epoch !== arm.epoch || !active(job.status) || !position ||
+          position.status !== 'pending' || arm.remaining < 1 ||
+          (arm.kind === 'throw' ? arm.attempt !== 0 || position.attempts !== 0 : arm.attempt !== position.attempts + 1 || arm.attempt > 2)) {
+        return false;
+      }
+      await this.env.DB.prepare(
+        'INSERT INTO fault_arms(kind, job_id, owner_id, epoch, position_index, attempt, remaining, armed_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT(kind) DO UPDATE SET job_id = excluded.job_id, owner_id = excluded.owner_id, epoch = excluded.epoch, position_index = excluded.position_index, attempt = excluded.attempt, remaining = excluded.remaining, armed_at = excluded.armed_at, expires_at = excluded.expires_at',
+      ).bind(arm.kind, arm.jobId, arm.ownerId, arm.epoch, arm.positionIndex, arm.attempt, arm.remaining, iso(now), iso(now + FAULT_ARM_TTL_MS)).run();
+      return true;
+    });
+  }
+
+  async clearFaultArms(now: number): Promise<void> {
+    await this.serialized(async () => {
+      await this.env.DB.prepare('DELETE FROM fault_arms').run();
+      await this.env.DB.prepare('UPDATE global_state SET updated_at = ? WHERE key = \'fault_arms\'').bind(iso(now)).run();
+    });
+  }
+
+  async faultArmed(jobId: string, epoch: number, index: number, attempt: number, kind: FaultArm['kind'], now: number): Promise<boolean> {
+    return this.serialized(async () => {
+      if (this.env.ANALYSIS_FAULT_FIXTURES_ENABLED !== '1') return false;
+      const row = await this.first<{ remaining: number }>(this.env.DB.prepare(
+        'SELECT remaining FROM fault_arms WHERE kind = ? AND job_id = ? AND epoch = ? AND position_index = ? AND attempt = ? AND expires_at > ?',
+      ).bind(kind, jobId, epoch, index, attempt, iso(now)));
       if (!row || row.remaining <= 0) return false;
+      if (kind !== 'throw') {
+        const slot = await this.first<SlotRow>(this.env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1'));
+        if (slot?.job_id !== jobId || slot.epoch !== epoch || slot.position_index !== index || slot.attempt !== attempt ||
+            !slot.lease_id || (slot.lease_expires_at ?? 0) <= now) return false;
+      }
+      return true;
+    });
+  }
+
+  async consumeFault(jobId: string, epoch: number, index: number, attempt: number, kind: FaultArm['kind'], now: number): Promise<boolean> {
+    return this.serialized(async () => {
+      if (this.env.ANALYSIS_FAULT_FIXTURES_ENABLED !== '1') return false;
+      const row = await this.first<{ remaining: number }>(this.env.DB.prepare(
+        'SELECT remaining FROM fault_arms WHERE kind = ? AND job_id = ? AND epoch = ? AND position_index = ? AND attempt = ? AND expires_at > ?',
+      ).bind(kind, jobId, epoch, index, attempt, iso(now)));
+      if (!row || row.remaining <= 0) return false;
+      if (kind !== 'throw') {
+        const slot = await this.first<SlotRow>(this.env.DB.prepare('SELECT * FROM global_search_slot WHERE singleton = 1'));
+        if (slot?.job_id !== jobId || slot.epoch !== epoch || slot.position_index !== index || slot.attempt !== attempt ||
+            !slot.lease_id || (slot.lease_expires_at ?? 0) <= now) return false;
+      }
       if (row.remaining === 1) await this.env.DB.prepare('DELETE FROM fault_arms WHERE kind = ? AND job_id = ?').bind(kind, jobId).run();
       else await this.env.DB.prepare('UPDATE fault_arms SET remaining = remaining - 1 WHERE kind = ? AND job_id = ?').bind(kind, jobId).run();
       await this.env.DB.prepare('UPDATE jobs SET updated_at = ? WHERE id = ?').bind(iso(now), jobId).run();
@@ -752,8 +861,14 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
     });
   }
 
-  async recover(now: number): Promise<{ expiredSlot: SlotLease | null; activeJobIds: string[] }> {
+  async recover(now: number): Promise<{
+    expiredSlot: SlotLease | null;
+    activeJobIds: string[];
+    deadLetterJobs: Array<{ id: string; epoch: number }>;
+    cancellationJobs: Array<{ id: string; epoch: number }>;
+  }> {
     return this.serialized(async () => {
+      await this.env.DB.prepare('DELETE FROM fault_arms WHERE expires_at <= ?').bind(iso(now)).run();
       const expiredSlot = await this.getSlotInternal(now);
       const activeJobs = await this.env.DB.prepare("SELECT id, created_at, updated_at FROM jobs WHERE status IN ('queued', 'running') ORDER BY created_at LIMIT 100")
         .all<{ id: string; created_at: string; updated_at: string }>();
@@ -772,7 +887,18 @@ export class JobCoordinator extends DurableObject<JobEnvironment> {
         activeJobIds.push(job.id);
         await this.flushHeadOutbox(job.id, now, false);
       }
-      return { expiredSlot: expiredSlot?.quarantineRequired ? expiredSlot : null, activeJobIds };
+      const deadLetters = await this.env.DB.prepare(
+        "SELECT id, epoch FROM jobs WHERE status = 'cancelling' AND stop_reason = 'dead_letter_in_progress' ORDER BY updated_at LIMIT 100",
+      ).all<{ id: string; epoch: number }>();
+      const cancellations = await this.env.DB.prepare(
+        "SELECT id, epoch FROM jobs WHERE status = 'cancelling' AND COALESCE(stop_reason, '') <> 'dead_letter_in_progress' ORDER BY updated_at LIMIT 100",
+      ).all<{ id: string; epoch: number }>();
+      return {
+        expiredSlot: expiredSlot?.quarantineRequired ? expiredSlot : null,
+        activeJobIds,
+        deadLetterJobs: deadLetters.results,
+        cancellationJobs: cancellations.results,
+      };
     });
   }
 

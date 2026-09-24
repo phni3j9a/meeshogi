@@ -48,7 +48,7 @@
       {
         "queue": "meeshogi-analysis-staging-jobs",
         "max_batch_size": 1,
-        "max_retries": 3,
+        "max_retries": 5,
         "dead_letter_queue": "meeshogi-analysis-staging-dlq",
         "max_concurrency": 1
       },
@@ -64,7 +64,7 @@
     "ANALYSIS_MODEL_ID": "analysis-model-staging-v1",
     "ANALYSIS_ENGINE_ID": "YaneuraOu NNUE 9.70git 64AVX2",
     "ANALYSIS_ENGINE_BINARY_DIGEST_LABEL": "sha256:0cb27c8302f6eb357cd360372defe172401519c06fb4bf28eb2bf72ee0f39d80",
-    "ANALYSIS_FAULT_FIXTURES_ENABLED": "1"
+    "ANALYSIS_FAULT_FIXTURES_ENABLED": "0"
   },
   "triggers": { "crons": ["* * * * *"] }
 }

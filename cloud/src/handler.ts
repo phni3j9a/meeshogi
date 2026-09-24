@@ -27,6 +27,8 @@ export type DriverClient = {
   fetch(request: Request): Promise<Response>;
   /** Available for the private Container DO bindings, not ordinary HTTP services. */
   destroy?(): Promise<void>;
+  /** Restart the designated test slot with a fence-scoped one-shot SIGSTOP hook. */
+  prepareSigstop?(fence: string): Promise<void>;
 };
 
 type InternalProfile = 'free-v1' | 'precision-v1';
@@ -39,7 +41,7 @@ type BenchAnalyzeInput = AnalyzeInput & {
 
 export type DriverResolver = (profile: InternalProfile) => DriverClient;
 
-export type ServerProfileAnalyzeInput = AnalyzeInput & { threads?: number; hashMb?: number };
+export type ServerProfileAnalyzeInput = AnalyzeInput & { threads?: number; hashMb?: number; fenceToken?: string };
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -142,7 +144,7 @@ async function parseBenchAnalyzeInput(request: Request): Promise<BenchAnalyzeInp
   };
 }
 
-async function parseStopBody(request: Request): Promise<InternalProfile | null> {
+async function parseStopBody(request: Request): Promise<{ profile: InternalProfile; fence: string } | null> {
   const declaredLength = request.headers.get('content-length');
   if (declaredLength !== null && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > 512)) return null;
   const text = await request.text();
@@ -151,9 +153,11 @@ async function parseStopBody(request: Request): Promise<InternalProfile | null> 
     const parsed: unknown = JSON.parse(text);
     if (!isRecord(parsed)) return null;
     const keys = Object.keys(parsed);
-    if (keys.length === 0) return 'free-v1';
-    if (keys.length === 1 && keys[0] === 'profile') return parseInternalProfile(parsed.profile) ?? null;
-    return null;
+    if (!keys.includes('fence') || keys.some((key) => key !== 'fence' && key !== 'profile')) return null;
+    if (typeof parsed.fence !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(parsed.fence)) return null;
+    const profile = parseInternalProfile(parsed.profile);
+    if (profile === null) return null;
+    return { profile: profile ?? 'free-v1', fence: parsed.fence };
   } catch {
     return null;
   }
@@ -206,6 +210,7 @@ export async function analyzeWithServerProfile(
         sfen: input.sfen,
         movetime_ms: input.movetimeMs,
         multipv: input.multipv,
+        fence: input.fenceToken ?? crypto.randomUUID(),
         ...(input.threads === undefined ? {} : { threads: input.threads }),
         ...(input.hashMb === undefined ? {} : { hash_mb: input.hashMb }),
       }),
@@ -224,7 +229,7 @@ export async function analyzeWithServerProfile(
     }
     return json({ ...result, stats });
   } catch {
-    return analysisFailure(503);
+    return analysisFailure(503, 'driver_transport_uncertain');
   }
 }
 
@@ -296,11 +301,11 @@ export async function handleRequest(request: Request, env: WorkerEnv, driverOrRe
 
   if (url.pathname === INTERNAL_STOP_PATH) {
     if (request.method !== 'POST') return json({ error: 'not_found' }, 404);
-    const profile = await parseStopBody(request);
-    if (profile === null) return json({ error: 'invalid_request' }, 400);
-    const driver = resolveDriver(driverOrResolver, profile);
+    const stop = await parseStopBody(request);
+    if (stop === null) return json({ error: 'invalid_request' }, 400);
+    const driver = resolveDriver(driverOrResolver, stop.profile);
     try {
-      const response = await driver.fetch(driverRequest('/stop', 'POST', {}));
+      const response = await driver.fetch(driverRequest('/stop', 'POST', { fence: stop.fence }));
       if (!response.ok) return analysisFailure(response.status === 503 ? 503 : 500);
       const payload: unknown = await response.json();
       if (!isRecord(payload) || typeof payload.stopped !== 'boolean') return analysisFailure(500);
@@ -328,6 +333,7 @@ export async function handleRequest(request: Request, env: WorkerEnv, driverOrRe
         sfen: input.sfen,
         movetime_ms: input.movetimeMs,
         multipv: input.multipv,
+        fence: crypto.randomUUID(),
       }),
     );
     if (!response.ok) return mapDriverFailure(response);
