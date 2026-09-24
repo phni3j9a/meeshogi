@@ -116,6 +116,18 @@ The W3F-01..06 repair (`a577ca1`) plus three live-discovered fixes were deployed
 - **Fault-disabled final smoke**: candidate `8e239022` with `ANALYSIS_FAULT_FIXTURES_ENABLED=0` → the arm route returns `{"error":"not_found"}` (404); a free job (4/4) and a precision job (2/2, `standard-3`) completed normally.
 - **Credential hygiene**: the two extra verification principals (`staging-w3fix-verify`, `staging-w3fix-verify2`) were revoked after this round — confirmed `unauthorized` on a live request. No production resources exist; all bindings target `meeshogi-analysis-staging-*` only.
 
+### W3F-02 live verification (2026-09-24, version `0f0c33b6`, migration `0004` applied)
+
+The rolling-reservation cost model (`c1adcf9`, Cost envelope v2) was deployed with the staging cap back at `$1`. Observed live on the 104-position public Asahi Cup final game (103 USI moves; job `98401ddc`, `precision-v1`/`standard-3`):
+
+- **Head-chunk-only admission**: the job was admitted under cap `$1` while its informational `fullJobReferenceEstimateUsd` is `$1.096911`. Admission created a single `cost_reservation_batches` row `job:…:1:0:8` for positions 0–7 at `$0.087147`; only outbox chunk 0–8 was `dispatchable=1`/`sent`, and chunks 8–96 stayed `dispatchable=0`/`sent_at=NULL`.
+- **Rolling reservation across chunks**: as each chunk finished, the next batch appeared — `1:8:16`, `1:16:24`, `1:24:32` … each ≈`$0.084147` — created only after the prior chunk completed. `currentOutstandingReservationUsd` stayed within one chunk (≈$0.072–0.087), never the full-game worst case.
+- **Phase settlement, not just reservation**: `cost_phase_ledger` for this job records `engine_attempt` 99 rows/$0.016725, `mate_proof` 98/$0.00264, `inter_position_runtime` 91/$0.003542, `container_readiness` 313 observations settled at $0.008197 (cold start measured 6,156 ms then ~433 ms warm health checks), `container_restart` 13 settled at $0 (no restarts occurred — reserved portion released), `final_idle_to_sleep` 13/$0.023842, `dual_container_idle_overlap` 13/$0.013988, and `bounded_service_allowance` 13 chunks/$0.0745.
+- **API v2 fields**: `fullJobReferenceEstimateUsd` `$1.096911`, `currentOutstandingReservationUsd` `0` at completion, `settledResourceEstimateUsd` `$0.068934`, `settledServiceEstimateUsd` `$0.0745`, `unobtainedInvoiceUsd: null`.
+- **Container lifecycle evidence**: `container_lifecycle_events` for `precision-v1` recorded `first_contact`, `sleep_timer_elapsed`, and `sleep_confirmed` from the DO's own `onStart`/`onActivityExpired`/`onStop` hooks — the idle-to-sleep path is real, not assumed.
+- **Job outcome**: `partial` — 103/104 `done` (5 cache hits, ≈$0.0039 recorded savings) plus 1 `incomplete` evaluation-missing position, zero hard failures; daily row `spent $0.243971 / reserved 0` for UTC 2026-09-24.
+- **Quota interplay**: a free-only principal's parallel submission was correctly rejected `daily_quota_exceeded` (5 jobs/day already used); no additional principals were created — the remaining game×profile runs wait for the UTC rollover per plan.
+
 ## Private artifact build and deploy
 
 The engine, `nn.bin`, and `engine_options.txt` are read from the authoritative `sekirei-weight` manifests. `scripts/prepare-private-context.sh` verifies the manifest references and all three artifact hashes, then copies only those three files into a mode-0700 temporary directory outside this repository. It prints a JSON object containing the temporary path and verified digests. A digest mismatch or unexpected options file stops the script. The context persists after success so Main can build from it; Main removes that temporary directory after its build attempt.
