@@ -1,0 +1,22 @@
+{
+  "name": "@meeshogi/analysis-staging",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "deploy:staging": "bash scripts/deploy-staging.sh"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7",
+    "tsshogi": "2.3.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@types/node": "22.20.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.137.0"
+  }
+}

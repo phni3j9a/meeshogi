@@ -14,6 +14,10 @@
 | 端末内ストレージ | 本譜、対局情報、ユーザーの設定、解析結果、手動修正 |
 | OSアダプター | クリップボード、ファイル共有、アプリライフサイクル、ネイティブ組み込み |
 
+## Issue #17 staging cloud-analysis migration policy
+
+Cloud解析は独立した `cloud/` Worker / Container package とし、モバイルから分離した純粋な解析契約だけを `src/cloud/analysis-contract.ts` で共有する。現在は認証付きの固定SFEN staging gateを準備中で、D1、Queue、job API、モバイル統合は後続段階である。固定SFEN gate・benchmark・iOS / Android受入が終わるまで端末内解析と既存native codeを保持する。production bindingは作らず、秘密情報・非公開engine・weightをリポジトリや公開artifactへ含めない。
+
 棋譜取り込みと盤面入力はMITライセンスのtsshogi 2.3.4を使用する。パーサーの読み込み成功に加え、元の駒表記・手数と全手の合法性を再検証する。探索と詰み証明はSekireiの合法手生成を使い、iOS・Androidとも同じRustを呼ぶ。UI操作と探索に異なるライブラリが関わるため、SFEN / USIの境界で結果の合法性を照合する。保存はexpo-sqlite、アプリ内状態はZustandとし、設定と既存棋譜の帰属更新をtransactionでまとめる。
 
 meetermのネイティブターミナル描画要件をこのアプリへ転用する必要はない。盤面の描画方式は将棋アプリとして判断する。

@@ -29,7 +29,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm ci --prefix cloud
+      - run: npx tsc --noEmit -p tsconfig.json
+        working-directory: cloud
+      - run: npx vitest run
+        working-directory: cloud
+      - run: python3 -m unittest discover -s test -p 'test_driver.py'
+        working-directory: cloud
       - run: npx expo install --check
       - run: python3 scripts/ci/test_devin_cloud.py
       - run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
+      - run: cargo test --locked --manifest-path cloud/helper-sekirei/Cargo.toml
       - run: cargo test --manifest-path native/sekirei/Cargo.toml --locked

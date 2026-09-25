@@ -1,0 +1,58 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "meeshogi-analysis-local-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "durable_objects": {
+    "bindings": [
+      { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" },
+      { "name": "ANALYSIS_CONTAINER_PRECISION", "class_name": "AnalysisContainerPrecision" },
+      { "name": "JOB_COORDINATOR", "class_name": "JobCoordinator" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] },
+    { "tag": "v2", "new_sqlite_classes": ["JobCoordinator"] },
+    { "tag": "v3", "new_sqlite_classes": ["AnalysisContainerPrecision"] }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "meeshogi-analysis-local-test-db",
+      "database_id": "local-test-db",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "JOB_QUEUE", "queue": "meeshogi-analysis-local-test-jobs" }
+    ],
+    "consumers": [
+      {
+        "queue": "meeshogi-analysis-local-test-jobs",
+        "max_batch_size": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "meeshogi-analysis-local-test-dlq",
+        "max_concurrency": 1
+      },
+      {
+        "queue": "meeshogi-analysis-local-test-dlq",
+        "max_batch_size": 1,
+        "max_retries": 1,
+        "max_concurrency": 1
+      }
+    ]
+  },
+  "vars": {
+    "ANALYSIS_MODEL_ID": "local-test-model",
+    "ANALYSIS_ENGINE_ID": "YaneuraOu NNUE 9.70git 64AVX2",
+    "ANALYSIS_ENGINE_BINARY_DIGEST_LABEL": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ANALYSIS_WEIGHT_SHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "ANALYSIS_ENGINE_OPTIONS_SHA256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "ANALYSIS_HELPER_SHA256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "ANALYSIS_DRIVER_SHA256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ANALYSIS_ADMIN_TOKEN": "local-analysis-admin-token",
+    "ANALYSIS_FAULT_FIXTURES_ENABLED": "1",
+    "ANALYSIS_FAULT_TEST_PRINCIPAL_ID": "owner-a"
+  }
+}

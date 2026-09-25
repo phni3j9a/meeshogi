@@ -1,0 +1,67 @@
+{
+  "capturedAt": "2026-09-23T16:53:14.682Z",
+  "runner": {
+    "node": "v22.23.2",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "workerUrl": "https://meeshogi-analysis-staging.yuki-nakano-1020.workers.dev",
+  "workerVersion": null,
+  "workerVersionSource": "unreported",
+  "instanceType": "standard-2",
+  "imageDigest": "sha256:145d3983afee3cd2aceaec5af9f91abb8a47f49be86f2a77ba60063f5b2f4cda",
+  "health": {
+    "ready": true,
+    "engineId": "YaneuraOu NNUE 9.70git 64AVX2",
+    "engineBinarySha256": "0cb27c8302f6",
+    "weightSha256": "a78b7f889843",
+    "cpuFlags": [
+      "avx2",
+      "avx512bw",
+      "avx512dq",
+      "avx512f",
+      "avx512vl",
+      "bmi1",
+      "bmi2",
+      "popcnt",
+      "sse4_1",
+      "sse4_2"
+    ],
+    "avx2": true,
+    "stats": {
+      "enginePeakRssKiB": 647284,
+      "engineRssKiB": 645360,
+      "engineCpuMs": 1050
+    }
+  },
+  "healthResponseHeaders": {
+    "cf-ray": "a3fb105ebe54184d-NRT",
+    "server": "cloudflare"
+  },
+  "cpuFlags": [
+    "avx2",
+    "avx512bw",
+    "avx512dq",
+    "avx512f",
+    "avx512vl",
+    "bmi1",
+    "bmi2",
+    "popcnt",
+    "sse4_1",
+    "sse4_2"
+  ],
+  "fixtureCount": 12,
+  "matrixCombos": [
+    {
+      "movetimeMs": 500,
+      "multipv": 2,
+      "threads": 1,
+      "hashMb": 256
+    }
+  ],
+  "warmRepetitions": 1,
+  "coldSamples": 3,
+  "coldIdleSeconds": 45,
+  "interRequestGapMs": 250,
+  "containerSleepAfterSeconds": 30
+}
