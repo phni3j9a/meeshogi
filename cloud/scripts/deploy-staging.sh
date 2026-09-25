@@ -1,6 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+VERIFICATION_MODE=false
+case "$#" in
+  0) ;;
+  1)
+    if [[ "$1" == "--verification" ]]; then
+      VERIFICATION_MODE=true
+    else
+      echo "usage: deploy-staging.sh [--verification]" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "usage: deploy-staging.sh [--verification]" >&2
+    exit 2
+    ;;
+esac
+# The environment variable is never a deployment-mode switch.
+unset ANALYSIS_VERIFY_STOP_ENGINE_ONCE
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CLOUD_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$CLOUD_DIR"
@@ -18,9 +37,11 @@ TEMP_CONFIG="$(mktemp "$CLOUD_DIR/.wrangler.staging.deploy.XXXXXX.jsonc")"
 cleanup() { rm -f -- "$TEMP_CONFIG"; }
 trap cleanup EXIT INT TERM
 IMAGE_DIGEST="${ANALYSIS_IMAGE_REF##*@sha256:}"
-python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST"
-# The verification-only Worker var is in the rendered config; Wrangler needs no inherited control flag.
-unset ANALYSIS_VERIFY_STOP_ENGINE_ONCE
+if [[ "$VERIFICATION_MODE" == true ]]; then
+  python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST" --verification-stop-engine-once
+else
+  python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST"
+fi
 
 # Create the Worker and its Container before adding the secret. Requests fail closed while it is unset.
 internal_token="$ANALYSIS_INTERNAL_TOKEN"

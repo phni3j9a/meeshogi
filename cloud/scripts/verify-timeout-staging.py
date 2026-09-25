@@ -40,12 +40,10 @@ class VerificationError(Exception):
         self.observation = observation
 
 
-def child_environment(verification_deploy: bool) -> dict[str, str]:
+def child_environment() -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("WRANGLER_WRITE_LOGS", "false")
     env.pop("ANALYSIS_VERIFY_STOP_ENGINE_ONCE", None)
-    if verification_deploy:
-        env["ANALYSIS_VERIFY_STOP_ENGINE_ONCE"] = "1"
     return env
 
 
@@ -67,11 +65,14 @@ def validate_inputs() -> tuple[str, str]:
 
 
 def deploy(verification: bool) -> bool:
+    command = ["bash", str(DEPLOY_SCRIPT)]
+    if verification:
+        command.append("--verification")
     try:
         result = subprocess.run(
-            ["bash", str(DEPLOY_SCRIPT)],
+            command,
             cwd=CLOUD_DIR,
-            env=child_environment(verification),
+            env=child_environment(),
             capture_output=True,
             text=True,
             timeout=900,
@@ -320,7 +321,7 @@ def run_normal_deploy_and_smoke(url: str, token: str) -> tuple[bool, bool]:
         result = subprocess.run(
             [sys.executable, str(SMOKE_SCRIPT)],
             cwd=CLOUD_DIR,
-            env=child_environment(verification_deploy=False),
+            env=child_environment(),
             capture_output=True,
             text=True,
             timeout=900,

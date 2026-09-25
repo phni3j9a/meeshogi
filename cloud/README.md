@@ -72,7 +72,6 @@ The only operator environment values are:
 | `ANALYSIS_IMAGE_REF` | Digest-pinned image for deploy and operator Wrangler commands | No |
 | `ANALYSIS_INTERNAL_TOKEN` | Worker bearer secret and authenticated smoke requests | **Yes** |
 | `ANALYSIS_STAGING_URL` | Deployed Worker base URL for smoke and timeout requests | No |
-| `ANALYSIS_VERIFY_STOP_ENGINE_ONCE` | Verification-only Worker var; set internally for the first deploy by the timeout verifier | No |
 
 ## Fixed staging smoke
 
@@ -90,7 +89,7 @@ After a deploy, the first analysis request can arrive while the Container is ina
 
 ## Operator-only timeout and recovery check
 
-The verifier deploys once with the Worker var `ANALYSIS_VERIFY_STOP_ENGINE_ONCE=1`. `AnalysisContainer` passes that configured var to the driver as a container environment variable; request fields and headers cannot enable it. An authenticated `GET /internal/health` forwards once to the running Container's `/health` and may start it; the response includes the actual container flag, one-shot consumption state, driver boot ID, version, and artifact digests alongside the Worker flag. The verifier polls every 15 seconds for up to ten minutes until those flags match and the one-shot is still unused. If an old warm Container remains, it sends no requests for 315 seconds (longer than the five-minute `sleepAfter`) and checks once more. Only then does the first analysis stop its real engine process after `go`; the normal driver deadline and stop/terminate/kill/wait path must return HTTP 504 `timeout` plus reap evidence. A second request for a different SFEN must succeed with a new engine epoch and PID but the same boot ID reported by health. Finally, the verifier deploys again with the flag unset, waits for the live Container to report it disabled using the same bounded idle-restart procedure, then runs the normal HTTP warm-up and four-fixture smoke.
+The verifier uses the explicit `deploy-staging.sh --verification` mode to render the Worker var `ANALYSIS_VERIFY_STOP_ENGINE_ONCE=1`. The normal deploy entry ignores and removes any inherited environment variable of that name. `AnalysisContainer` passes the configured var to the driver as a container environment variable; request fields and headers cannot enable it. An authenticated `GET /internal/health` forwards once to the running Container's `/health` and may start it; the response includes the actual container flag, one-shot consumption state, driver boot ID, version, and artifact digests alongside the Worker flag. The verifier polls every 15 seconds for up to ten minutes until those flags match and the one-shot is still unused. If an old warm Container remains, it sends no requests for 315 seconds (longer than the five-minute `sleepAfter`) and checks once more. Only then does the first analysis stop its real engine process after `go`; the normal driver deadline and stop/terminate/kill/wait path must return HTTP 504 `timeout` plus reap evidence. A second request for a different SFEN must succeed with a new engine epoch and PID but the same boot ID reported by health. Finally, the verifier deploys again through the normal mode, waits for the live Container to report the flag disabled using the same bounded idle-restart procedure, then runs the normal HTTP warm-up and four-fixture smoke.
 
 The SSH approach was tried and dropped for this account: `wrangler containers ssh <id> --stdio` returned HTTP 404 “Deployment not found”, while the raw instances API returned an empty `instances` array and only Durable Object metadata. Wrangler also reported `inactive` with null location/version even during successful analysis requests, so instance-state polling cannot gate verification.
 
@@ -106,7 +105,7 @@ python3 cloud/scripts/verify-timeout-staging.py
 unset ANALYSIS_INTERNAL_TOKEN
 ```
 
-The verifier sets `ANALYSIS_VERIFY_STOP_ENGINE_ONCE=1` only in the verification deploy's child environment, then unsets it before the final normal deploy. Output is limited to non-secret JSON evidence including HTTP/failure status, driver boot ID, engine epoch/PID, wait return code, and smoke fixture IDs. A unit test alone does not count as staging timeout evidence.
+The verifier passes `--verification` only to its first deploy invocation; the normal deploy ignores the inherited environment flag and the renderer enables it only when given its explicit verification argument. Output is limited to non-secret JSON evidence including HTTP/failure status, driver boot ID, engine epoch/PID, wait return code, and smoke fixture IDs. A unit test alone does not count as staging timeout evidence.
 
 ## Remaining limits
 
