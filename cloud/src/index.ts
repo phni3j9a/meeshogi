@@ -1,23 +1,30 @@
 import { Container, getContainer } from '@cloudflare/containers';
 import {
   EXPECTED_IDENTITY,
+  BENCHMARK_CONDITION_BY_ID,
+  BENCHMARK_CONTRACT_VERSION,
   SEARCH_CONDITIONS,
   failure,
   isValidSfen,
   legalMoves,
+  hasBenchmarkRuntime,
   MAX_BODY_BYTES,
   validateDriverResult,
+  validateBenchmarkDriverResult,
 } from './contract';
 import { Position } from 'tsshogi';
 
 export interface Env {
   ANALYSIS_INTERNAL_TOKEN?: string;
   ANALYSIS_VERIFY_STOP_ENGINE_ONCE?: string;
+  ANALYSIS_BENCHMARK_ENABLED?: string;
+  ANALYSIS_EXPECTED_INSTANCE_TYPE?: 'standard-2' | 'standard-3';
   ANALYSIS_CONTAINER: DurableObjectNamespace<AnalysisContainer>;
 }
 
 const ANALYSIS_PATH = '/internal/analyze';
 const HEALTH_PATH = '/internal/health';
+const BENCHMARK_PATH = '/internal/benchmark';
 const IDENTITY_DIGEST_KEYS = [
   'engineSha256',
   'weightSha256',
@@ -32,9 +39,11 @@ export class AnalysisContainer extends Container<Env> {
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
-    this.envVars = env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1'
-      ? { ANALYSIS_VERIFY_STOP_ENGINE_ONCE: '1' }
-      : {};
+    this.envVars = {
+      ...(env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1' ? { ANALYSIS_VERIFY_STOP_ENGINE_ONCE: '1' } : {}),
+      ...(env.ANALYSIS_BENCHMARK_ENABLED === '1' ? { ANALYSIS_BENCHMARK_ENABLED: '1' } : {}),
+      ...(env.ANALYSIS_EXPECTED_INSTANCE_TYPE ? { ANALYSIS_EXPECTED_INSTANCE_TYPE: env.ANALYSIS_EXPECTED_INSTANCE_TYPE } : {}),
+    };
   }
 }
 
@@ -117,7 +126,27 @@ function isDriverHealth(value: unknown): value is Record<string, unknown> {
     && health.driverVersion.length > 0
     && typeof health.contractVersion === 'string'
     && health.contractVersion.length > 0
+    && ['standard-2', 'standard-3'].includes(String(health.expectedInstanceType))
+    && hasBenchmarkRuntime(health.runtime, String(health.expectedInstanceType), health.driverBootId)
     && IDENTITY_DIGEST_KEYS.every((key) => typeof digestRecord[key] === 'string' && /^[0-9a-f]{64}$/u.test(digestRecord[key] as string));
+}
+
+async function readJsonBody(request: Request): Promise<{ record: Record<string, unknown> } | Response> {
+  if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+    return json(failure('invalid', 'Expected application/json.'), 415);
+  }
+  const bytes = await readBody(request);
+  if (!bytes) return json(failure('invalid', 'Request body exceeds the 1024 byte limit.'), 413);
+  let body: unknown;
+  try {
+    body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch {
+    return json(failure('invalid', 'Request body is not valid JSON.'), 400);
+  }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return json(failure('invalid', 'Expected a JSON object.'), 400);
+  }
+  return { record: body as Record<string, unknown> };
 }
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
@@ -144,9 +173,76 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       return json({
         ...driverHealth,
         workerVerifyStopEngineOnceEnabled: env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1',
+        workerBenchmarkEnabled: env.ANALYSIS_BENCHMARK_ENABLED === '1',
+        workerExpectedInstanceType: env.ANALYSIS_EXPECTED_INSTANCE_TYPE ?? null,
       });
     } catch {
       return json(failure('engine_error', 'Analysis container health is unavailable.'), 502);
+    }
+  }
+  if (url.pathname === BENCHMARK_PATH) {
+    if (env.ANALYSIS_BENCHMARK_ENABLED !== '1') return json(failure('invalid', 'Not found.'), 404);
+    if (request.method !== 'POST') return json(failure('invalid', 'Method not allowed.'), 405);
+    const authFailure = authorize(request, env);
+    if (authFailure) return authFailure;
+    const parsed = await readJsonBody(request);
+    if (parsed instanceof Response) return parsed;
+    const { record } = parsed;
+    if (Object.keys(record).length !== 2 || !Object.hasOwn(record, 'sfen') || !Object.hasOwn(record, 'conditionId') || !isValidSfen(record.sfen)) {
+      return json(failure('invalid', 'Expected only a valid SFEN and a manifest condition ID.'), 400);
+    }
+    if (typeof record.conditionId !== 'string') return json(failure('invalid', 'Unknown benchmark condition.'), 400);
+    const condition = BENCHMARK_CONDITION_BY_ID.get(record.conditionId);
+    if (!condition) return json(failure('invalid', 'Unknown benchmark condition.'), 400);
+    if (env.ANALYSIS_EXPECTED_INSTANCE_TYPE !== condition.instanceType) {
+      return json(failure('invalid', 'Benchmark condition does not match the deployed instance type.'), 409);
+    }
+    const sfen = record.sfen;
+    const rootMoves = legalMoves(sfen);
+    const position = Position.newBySFEN(sfen);
+    if (!position) return json(failure('invalid', 'SFEN is invalid.'), 400);
+    if (rootMoves.length === 0) {
+      const terminal: 'checkmate' | 'no-legal-moves' = position.checked ? 'checkmate' : 'no-legal-moves';
+      return json({
+        schemaVersion: 2,
+        contractVersion: BENCHMARK_CONTRACT_VERSION,
+        sfen,
+        perspective: 'sente',
+        status: 'terminal',
+        terminal,
+        candidates: [],
+        conditionId: condition.conditionId,
+        expectedInstanceType: condition.instanceType,
+        conditions: { requested: condition, actual: null },
+        meta: { nodes: null, completedDepth: null, searchElapsedMs: null, engineNps: null, derivedNps: null, processElapsedMs: null, processCpuSeconds: null },
+      });
+    }
+    try {
+      const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, 'analysis-mvp-singleton');
+      const internalRequest = new Request('http://analysis-container/benchmark', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen, legalMoveCount: rootMoves.length, conditionId: condition.conditionId }),
+      });
+      const response = await container.fetch(internalRequest);
+      const text = await response.text();
+      if (text.length > 64 * 1024) return json(failure('engine_error', 'Benchmark result exceeded the response limit.', sfen), 502);
+      let driverResult: unknown;
+      try {
+        driverResult = JSON.parse(text);
+      } catch {
+        return json(failure('engine_error', 'Analysis container returned an invalid response.', sfen), 502);
+      }
+      const validated = validateBenchmarkDriverResult(driverResult, sfen, rootMoves, condition);
+      if (!validated) return json(failure('engine_error', 'Benchmark result failed contract validation.', sfen), 502);
+      if (validated.status === 'failure') {
+        const failureRecord = validated.failure as { code: string };
+        const status = failureRecord.code === 'busy' ? 409 : failureRecord.code === 'timeout' ? 504 : 502;
+        return json(validated, status);
+      }
+      return json(validated);
+    } catch {
+      return json(failure('engine_error', 'Analysis container is unavailable.', sfen), 502);
     }
   }
   if (url.pathname !== ANALYSIS_PATH) return json(failure('invalid', 'Not found.'), 404);

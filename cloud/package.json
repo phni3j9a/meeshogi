@@ -16,7 +16,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:ts": "vitest run",
-    "test:python": "python3 -m unittest discover -s container -p 'test_*.py' -v",
+    "test:python": "python3 -m unittest discover -s container -p 'test_*.py' -v && python3 -m unittest discover -s bench/test -p 'test_*.py' -v",
     "test": "npm run test:ts && npm run test:python",
     "check": "npm run typecheck && npm test"
   }

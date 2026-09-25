@@ -8,6 +8,9 @@ vi.mock('@cloudflare/containers', () => ({
   getContainer: (binding: { getByName: (name: string) => unknown }, name: string) => binding.getByName(name),
 }));
 import {
+  BENCHMARK_CONDITIONS,
+  BENCHMARK_CONDITION_BY_ID,
+  BENCHMARK_CONTRACT_VERSION,
   EXPECTED_IDENTITY,
   SEARCH_CONDITIONS,
   isLegalPv,
@@ -31,6 +34,16 @@ const DRIVER_HEALTH = {
   verifyStopEngineOnceConsumed: false,
   driverVersion: EXPECTED_IDENTITY.driverVersion,
   contractVersion: EXPECTED_IDENTITY.contractVersion,
+  expectedInstanceType: 'standard-2',
+  runtime: {
+    driverBootId: 'b'.repeat(32),
+    expectedInstanceType: 'standard-2',
+    osCpuCount: 2,
+    affinityCpuCount: 1,
+    cpuMax: '100000 100000',
+    cpuQuota: 1,
+    memoryMaxBytes: 6442450944,
+  },
   identityDigests: {
     engineSha256: EXPECTED_IDENTITY.engineSha256,
     weightSha256: EXPECTED_IDENTITY.weightSha256,
@@ -66,11 +79,64 @@ function success(sfen: string, multiPV = Math.min(3, legalMoves(sfen).length)): 
   };
 }
 
+function benchmarkSuccess(sfen: string, conditionId: string): Record<string, any> {
+  const condition = BENCHMARK_CONDITION_BY_ID.get(conditionId)!;
+  const effective = Math.min(condition.multiPV, legalMoves(sfen).length);
+  const candidates = sfen === STARTPOS
+    ? [candidate('7g7f', '3c3d', 42), candidate('2g2f', '8c8d', -15), candidate('6g6f', '4c4d', 7)].slice(0, effective)
+    : success(sfen, effective).candidates;
+  return {
+    schemaVersion: 2,
+    contractVersion: BENCHMARK_CONTRACT_VERSION,
+    sfen,
+    perspective: 'sente',
+    status: 'success',
+    terminal: null,
+    candidates,
+    conditionId,
+    expectedInstanceType: condition.instanceType,
+    driverBootId: 'b'.repeat(32),
+    driverVersion: 'test-driver',
+    engineEpoch: 1,
+    runtime: {
+      driverBootId: 'b'.repeat(32),
+      expectedInstanceType: condition.instanceType,
+      osCpuCount: 2,
+      affinityCpuCount: 1,
+      cpuMax: '100000 100000',
+      cpuQuota: 1,
+      memoryMaxBytes: 6442450944,
+    },
+    conditions: {
+      requested: condition,
+      actual: {
+        instanceType: condition.instanceType,
+        threads: condition.threads,
+        hashMb: condition.hashMb,
+        moveTimeMs: condition.moveTimeMs,
+        multiPV: condition.multiPV,
+        effectiveMultiPV: effective,
+      },
+    },
+    meta: {
+      nodes: 1200,
+      completedDepth: 8,
+      searchElapsedMs: 100,
+      engineNps: 12000,
+      derivedNps: 12000,
+      processElapsedMs: 165,
+      processCpuSeconds: 0.12,
+    },
+  };
+}
+
 function makeEnv(
   response?: (payload: unknown) => unknown | Response,
   token?: string,
   verificationFlag?: string,
   containerHealth: Record<string, unknown> | Response = DRIVER_HEALTH,
+  benchmarkEnabled = false,
+  expectedInstanceType: 'standard-2' | 'standard-3' = 'standard-2',
 ): Env & { calls: number[]; forwardedPaths: string[] } {
   const calls: number[] = [];
   const forwardedPaths: string[] = [];
@@ -84,7 +150,11 @@ function makeEnv(
           return containerHealth instanceof Response ? containerHealth : Response.json(containerHealth);
         }
         const payload = await request.json();
-        const result = response ? response(payload) : success((payload as { sfen: string }).sfen);
+        const result = response
+          ? response(payload)
+          : Object.hasOwn(payload as object, 'conditionId')
+            ? benchmarkSuccess((payload as { sfen: string }).sfen, (payload as { conditionId: string }).conditionId)
+            : success((payload as { sfen: string }).sfen);
         return result instanceof Response ? result : Response.json(result);
       },
     }),
@@ -92,6 +162,8 @@ function makeEnv(
   return {
     ANALYSIS_INTERNAL_TOKEN: token,
     ANALYSIS_VERIFY_STOP_ENGINE_ONCE: verificationFlag,
+    ANALYSIS_BENCHMARK_ENABLED: benchmarkEnabled ? '1' : undefined,
+    ANALYSIS_EXPECTED_INSTANCE_TYPE: expectedInstanceType,
     ANALYSIS_CONTAINER: binding as unknown as Env['ANALYSIS_CONTAINER'],
     calls,
     forwardedPaths,
@@ -120,14 +192,23 @@ async function result(response: Response) {
 }
 
 describe('staging analysis Worker boundary', () => {
+  it('bundles 48 unique comparison conditions and one fixed reference', () => {
+    expect(BENCHMARK_CONDITIONS).toHaveLength(49);
+    expect(new Set(BENCHMARK_CONDITIONS.map((condition) => condition.conditionId)).size).toBe(49);
+    expect(BENCHMARK_CONDITIONS.filter((condition) => condition.role === 'candidate')).toHaveLength(48);
+    expect(BENCHMARK_CONDITIONS.filter((condition) => condition.role === 'reference')).toMatchObject([
+      { instanceType: 'standard-3', threads: 2, hashMb: 64, moveTimeMs: 10000, multiPV: 3 },
+    ]);
+  });
+
   it('passes the verification stop flag to the Container only when configured on the Worker', async () => {
     const verificationEnv = makeEnv(undefined, 'secret-token', '1');
     const normalEnv = makeEnv(undefined, 'secret-token');
     const verificationContainer = new AnalysisContainer({} as DurableObjectState<{}>, verificationEnv);
     const normalContainer = new AnalysisContainer({} as DurableObjectState<{}>, normalEnv);
 
-    expect(verificationContainer.envVars).toEqual({ ANALYSIS_VERIFY_STOP_ENGINE_ONCE: '1' });
-    expect(normalContainer.envVars).toEqual({});
+    expect(verificationContainer.envVars).toEqual({ ANALYSIS_VERIFY_STOP_ENGINE_ONCE: '1', ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
+    expect(normalContainer.envVars).toEqual({ ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
 
     const health = new Request('https://staging.example/internal/health', {
       method: 'GET',
@@ -138,6 +219,8 @@ describe('staging analysis Worker boundary', () => {
     expect(await result(ready)).toEqual({
       ...DRIVER_HEALTH,
       workerVerifyStopEngineOnceEnabled: true,
+      workerBenchmarkEnabled: false,
+      workerExpectedInstanceType: 'standard-2',
     });
     expect(verificationEnv.forwardedPaths).toEqual(['/health']);
 
@@ -145,6 +228,92 @@ describe('staging analysis Worker boundary', () => {
     const unavailable = await handleRequest(health, unavailableEnv);
     expect(unavailable.status).toBe(502);
     expect(unavailableEnv.forwardedPaths).toEqual(['/health']);
+  });
+
+  it('keeps benchmark mode explicitly off and rejects invalid condition input', async () => {
+    const disabled = makeEnv(undefined, 'secret-token');
+    const off = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+      }),
+      disabled,
+    );
+    expect(off.status).toBe(404);
+    expect(disabled.calls).toHaveLength(0);
+
+    const enabled = makeEnv(undefined, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const unauthenticated = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+      }),
+      enabled,
+    );
+    expect(unauthenticated.status).toBe(401);
+    expect(enabled.calls).toHaveLength(0);
+
+    const wrongType = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'reference-standard-3-t2-10000ms-mpv3' }),
+      }),
+      enabled,
+    );
+    expect(wrongType.status).toBe(409);
+    expect(enabled.calls).toHaveLength(0);
+
+    const unknown = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'unknown' }),
+      }),
+      enabled,
+    );
+    expect(unknown.status).toBe(400);
+    expect(enabled.calls).toHaveLength(0);
+  });
+
+  it('accepts only a condition ID and validates benchmark v2 observations', async () => {
+    const env = makeEnv(undefined, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const valid = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+      }),
+      env,
+    );
+    expect(valid.status).toBe(200);
+    const validPayload = await result(valid);
+    expect(validPayload).toMatchObject({
+      schemaVersion: 2,
+      contractVersion: BENCHMARK_CONTRACT_VERSION,
+      conditionId: 'standard-2-t1-100ms-mpv2',
+      expectedInstanceType: 'standard-2',
+      meta: { searchElapsedMs: 100, processElapsedMs: 165, nodes: 1200 },
+    });
+    expect(validPayload).not.toHaveProperty('identity');
+    expect(env.forwardedPaths).toEqual(['/benchmark']);
+    expect(env.calls).toHaveLength(1);
+
+    const invalidObservation = benchmarkSuccess(STARTPOS, 'standard-2-t1-100ms-mpv2');
+    (invalidObservation.conditions as any).actual.moveTimeMs = 10000;
+    const invalidEnv = makeEnv(() => invalidObservation, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const rejected = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+      }),
+      invalidEnv,
+    );
+    expect(rejected.status).toBe(502);
+    expect((await result(rejected)).failure).toMatchObject({ code: 'engine_error' });
   });
 
   it('does not allow an analysis request field or header to toggle the verification stop', async () => {
@@ -175,7 +344,7 @@ describe('staging analysis Worker boundary', () => {
       ordinaryEnv,
     );
     expect(ordinaryResponse.status).toBe(200);
-    expect(ordinaryContainer.envVars).toEqual({});
+    expect(ordinaryContainer.envVars).toEqual({ ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
     expect(ordinaryEnv.calls).toHaveLength(1);
   });
 

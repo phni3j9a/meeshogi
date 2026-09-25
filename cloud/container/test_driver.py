@@ -136,6 +136,8 @@ class DriverTests(unittest.TestCase):
             "DRIVER_FAKE_COMMANDS",
             "DRIVER_FAKE_PIDS",
             "ANALYSIS_VERIFY_STOP_ENGINE_ONCE",
+            "ANALYSIS_BENCHMARK_ENABLED",
+            "ANALYSIS_EXPECTED_INSTANCE_TYPE",
         ):
             os.environ.pop(name, None)
         self.temp.cleanup()
@@ -149,6 +151,8 @@ class DriverTests(unittest.TestCase):
         scenario: str = "normal",
         extra_settings: dict | None = None,
         verification_stop_once: bool = False,
+        benchmark: bool = False,
+        expected_instance_type: str = "standard-2",
     ) -> AnalysisService:
         os.environ["DRIVER_FAKE_SCENARIO"] = scenario
         os.environ["DRIVER_FAKE_COUNTER"] = str(self.counter_path)
@@ -158,6 +162,12 @@ class DriverTests(unittest.TestCase):
             os.environ["ANALYSIS_VERIFY_STOP_ENGINE_ONCE"] = "1"
         else:
             os.environ.pop("ANALYSIS_VERIFY_STOP_ENGINE_ONCE", None)
+        if benchmark:
+            os.environ["ANALYSIS_BENCHMARK_ENABLED"] = "1"
+            os.environ["ANALYSIS_EXPECTED_INSTANCE_TYPE"] = expected_instance_type
+        else:
+            os.environ.pop("ANALYSIS_BENCHMARK_ENABLED", None)
+            os.environ.pop("ANALYSIS_EXPECTED_INSTANCE_TYPE", None)
         settings = {
             "moveTimeMs": 50,
             "searchGraceMs": 100,
@@ -177,6 +187,9 @@ class DriverTests(unittest.TestCase):
         sfen: str = STARTPOS,
     ) -> tuple[int, dict]:
         return service.response({"sfen": sfen, "legalMoveCount": legal_move_count})
+
+    def benchmark_request(self, service: AnalysisService, condition_id: str, **extra) -> tuple[int, dict]:
+        return service.benchmark_response({"sfen": STARTPOS, "legalMoveCount": 30, "conditionId": condition_id, **extra})
 
     def test_cp_and_mate_scores_are_normalized_to_sente(self) -> None:
         black_cp = parse_info_line("info depth 2 score cp 42 nodes 100 pv 7g7f", "b")
@@ -357,6 +370,13 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(health["schemaVersion"], 1)
         self.assertEqual(health["status"], "ready")
         self.assertRegex(health["driverBootId"], r"^[0-9a-f]{32}$")
+        self.assertIsNone(health["expectedInstanceType"])
+        self.assertEqual(health["runtime"]["driverBootId"], health["driverBootId"])
+        self.assertIn("osCpuCount", health["runtime"])
+        self.assertIn("affinityCpuCount", health["runtime"])
+        self.assertIn("cpuMax", health["runtime"])
+        self.assertIn("cpuQuota", health["runtime"])
+        self.assertIn("memoryMaxBytes", health["runtime"])
         self.assertTrue(health["verifyStopEngineOnceEnabled"])
         self.assertFalse(health["verifyStopEngineOnceConsumed"])
         self.assertEqual(health["driverVersion"], "test-driver")
@@ -379,6 +399,62 @@ class DriverTests(unittest.TestCase):
         commands = self.commands_path.read_text(encoding="utf-8").splitlines()
         self.assertIn("quit", commands)
         self.assertNotIn("stop", commands)
+
+    def test_benchmark_route_is_disabled_by_default_and_never_accepts_free_search_values(self) -> None:
+        disabled = self.service()
+        status, result = self.benchmark_request(disabled, "standard-2-t1-100ms-mpv2")
+        self.assertEqual(status, 404)
+        self.assertEqual(result["failure"]["code"], "invalid")
+
+        enabled = self.service(benchmark=True)
+        status, result = self.benchmark_request(
+            enabled,
+            "standard-2-t1-100ms-mpv2",
+            moveTimeMs=10000,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(result["failure"]["code"], "invalid")
+
+    def test_benchmark_condition_must_match_deployed_instance_type(self) -> None:
+        service = self.service(benchmark=True, expected_instance_type="standard-2")
+        status, result = self.benchmark_request(service, "reference-standard-3-t2-10000ms-mpv3")
+        self.assertEqual(status, 409)
+        self.assertEqual(result["failure"]["code"], "invalid")
+        self.assertFalse(self.counter_path.exists())
+
+    def test_benchmark_reports_same_line_search_and_process_observations(self) -> None:
+        service = self.service(benchmark=True, expected_instance_type="standard-2")
+        status, result = self.benchmark_request(service, "standard-2-t1-100ms-mpv2")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["schemaVersion"], 2)
+        self.assertEqual(result["contractVersion"], "analysis-json-v2")
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["conditions"]["requested"]["moveTimeMs"], 100)
+        self.assertEqual(result["conditions"]["actual"]["effectiveMultiPV"], 2)
+        self.assertEqual(result["meta"]["nodes"], 1000)
+        self.assertEqual(result["meta"]["searchElapsedMs"], 12)
+        self.assertAlmostEqual(result["meta"]["derivedNps"], 1000 * 1000 / 12)
+        self.assertGreater(result["meta"]["processElapsedMs"], 0)
+        self.assertIsNotNone(result["meta"]["processCpuSeconds"])
+        self.assertEqual(result["driverBootId"], service.health()["driverBootId"])
+        self.assertEqual(result["expectedInstanceType"], "standard-2")
+        self.assertNotIn("identity", result)
+        commands = self.commands_path.read_text(encoding="utf-8").splitlines()
+        self.assertIn("setoption name Threads value 1", commands)
+        self.assertIn("setoption name USI_Hash value 64", commands)
+        self.assertIn("go movetime 100", commands)
+
+    def test_ten_second_reference_condition_is_accepted(self) -> None:
+        service = self.service(benchmark=True, expected_instance_type="standard-3")
+        status, result = self.benchmark_request(service, "reference-standard-3-t2-10000ms-mpv3")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["conditions"]["actual"]["threads"], 2)
+        self.assertEqual(result["conditions"]["actual"]["moveTimeMs"], 10000)
+        self.assertEqual(result["conditions"]["actual"]["effectiveMultiPV"], 3)
+        self.assertIn("go movetime 10000", self.commands_path.read_text(encoding="utf-8").splitlines())
+        self.assertIn("setoption name Threads value 2", self.commands_path.read_text(encoding="utf-8").splitlines())
 
 
 if __name__ == "__main__":

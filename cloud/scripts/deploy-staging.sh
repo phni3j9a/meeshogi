@@ -2,23 +2,39 @@
 set -euo pipefail
 
 VERIFICATION_MODE=false
-case "$#" in
-  0) ;;
-  1)
-    if [[ "$1" == "--verification" ]]; then
-      VERIFICATION_MODE=true
-    else
-      echo "usage: deploy-staging.sh [--verification]" >&2
-      exit 2
-    fi
-    ;;
-  *)
-    echo "usage: deploy-staging.sh [--verification]" >&2
-    exit 2
-    ;;
-esac
+BENCHMARK_MODE=false
+INSTANCE_TYPE="standard-2"
+INSTANCE_TYPE_SET=false
+while (($#)); do
+  case "$1" in
+    --verification) VERIFICATION_MODE=true; shift ;;
+    --benchmark) BENCHMARK_MODE=true; shift ;;
+    --instance-type)
+      (($# >= 2)) || { echo "--instance-type requires standard-2 or standard-3." >&2; exit 2; }
+      INSTANCE_TYPE="$2"
+      INSTANCE_TYPE_SET=true
+      shift 2
+      ;;
+    *) echo "usage: deploy-staging.sh [--verification] [--benchmark --instance-type standard-2|standard-3]" >&2; exit 2 ;;
+  esac
+done
+[[ "$INSTANCE_TYPE" == "standard-2" || "$INSTANCE_TYPE" == "standard-3" ]] || { echo "Unsupported Container instance type." >&2; exit 2; }
+if [[ "$BENCHMARK_MODE" == true && "$INSTANCE_TYPE_SET" != true ]]; then
+  echo "Benchmark deployment requires an explicit --instance-type." >&2
+  exit 2
+fi
+if [[ "$BENCHMARK_MODE" != true && "$INSTANCE_TYPE_SET" == true ]]; then
+  echo "--instance-type is available only with --benchmark." >&2
+  exit 2
+fi
+if [[ "$BENCHMARK_MODE" == true && "$VERIFICATION_MODE" == true ]]; then
+  echo "--verification and --benchmark cannot be combined." >&2
+  exit 2
+fi
 # The environment variable is never a deployment-mode switch.
 unset ANALYSIS_VERIFY_STOP_ENGINE_ONCE
+unset ANALYSIS_BENCHMARK_ENABLED
+unset ANALYSIS_EXPECTED_INSTANCE_TYPE
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CLOUD_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -39,6 +55,8 @@ trap cleanup EXIT INT TERM
 IMAGE_DIGEST="${ANALYSIS_IMAGE_REF##*@sha256:}"
 if [[ "$VERIFICATION_MODE" == true ]]; then
   python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST" --verification-stop-engine-once
+elif [[ "$BENCHMARK_MODE" == true ]]; then
+  python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST" --benchmark --instance-type "$INSTANCE_TYPE"
 else
   python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST"
 fi

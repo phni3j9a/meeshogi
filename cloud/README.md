@@ -118,6 +118,82 @@ The verifier passes `--verification` only to its first deploy invocation; the no
 - 新しいimageへ差し替えたdeployの直後は、前のContainer（旧image・旧env）が15分以上応答し続けることがあった。検証用deployはimageを先に通常deployで切り替えてから行い、`/internal/health` のboot IDとflagで対象Containerを確認する。
 - deploy直後はContainer起動中の要求がtyped 502になることがある。Python urllib既定User-AgentはCloudflare error 1010（HTTP 403）になった。
 
+## Issue #20 benchmark mode
+
+The operator benchmark is a separate authenticated route, `POST /internal/benchmark`, and is disabled on normal deploys. Only the explicit `deploy-staging.sh --benchmark --instance-type standard-2|standard-3` arguments enable it. Inherited `ANALYSIS_BENCHMARK_ENABLED` and `ANALYSIS_EXPECTED_INSTANCE_TYPE` values are removed before rendering. A normal `deploy-staging.sh` restores standard-2 with benchmark mode off. The existing `/internal/analyze` request remains an SFEN-only request with the fixed #19 conditions.
+
+`bench/conditions.json` is the shared allowlist: 48 candidate cells (instance type, Threads, movetime, and MultiPV) plus the 10-second standard-3 reference. All conditions request Hash 64 MiB. Requests contain only `sfen` and a `conditionId`; the Worker and driver both resolve that ID from the checked-in manifest. A request is rejected if its instance type differs from the deploy-rendered expected type. `/internal/health` reports the driver boot ID, expected instance type, visible CPU/affinity/cgroup CPU quota and memory limit. It does not invent missing platform values.
+
+The benchmark-only v2 response keeps USI time, engine-reported NPS, same-info-line nodes/depth, derived NPS, process spawn-to-reap wall time, and obtainable child CPU time separate. Driver process CPU is read from `wait4` rusage when available. The runner filters health output to non-private runtime fields; benchmark responses do not include engine/model identity or artifact hashes. The raw result files must still be treated as measurement data because they contain SFENs and dataset provenance hashes.
+
+The runner and aggregator use only Python's standard library. The dataset generator/checker owns `bench/dataset/positions.json` and `bench/dataset/game.json`; do not substitute synthetic data for the measured positions. Run manifests select condition IDs, repetitions, order seed, optional pilot `positionLimit`, `maxRequests`, and `timeBudgetSeconds`. `attemptNoStart` supports explicit repeat rows without silently retrying a failed attempt. Rerunning the same manifest and raw path skips attempts already recorded for that `runId`. A small `.pending.json` sidecar marks an in-flight request; after an interrupted process, the runner finalizes that attempt as `interrupted-before-response` before continuing, so the raw JSONL keeps one outcome row per attempt.
+
+### Pilot
+
+Build the private image in the authorized Main environment using the existing procedure above. Set `ANALYSIS_IMAGE_REF` to its pinned result, then deploy and verify each instance type before sending measurements:
+
+```sh
+export ANALYSIS_IMAGE_REF='registry.cloudflare.com/<account>/meeshogi-analysis-mvp-staging@sha256:<digest>'
+bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-2
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2
+python3 cloud/bench/run.py --manifest cloud/bench/manifests/pilot-standard-2.json --output /tmp/issue20-bench/pilot.jsonl
+
+bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-3
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3
+python3 cloud/bench/run.py --manifest cloud/bench/manifests/pilot-reference-standard-3.json --output /tmp/issue20-bench/pilot.jsonl
+```
+
+Before either runner command, set `ANALYSIS_STAGING_URL` and export `ANALYSIS_INTERNAL_TOKEN` using the existing silent prompt. The runner sends a non-default User-Agent to avoid Cloudflare's Python-urllib 1010 response and never stores or prints the token. Pilot rows use separate run IDs and should not be mixed into full-run files used for profile comparison.
+
+### Full positions matrix and aggregation
+
+Each condition has to run only while its declared instance type is deployed. The first-pass manifests include one attempt for all 48 candidate cells and three reference attempts; each instance type has a 90-minute run budget, leaving time in the six-hour total plan for candidate repeats, game timing and cold checks. The runner stops at its manifest's request/time limits and every failed HTTP attempt is retained.
+
+```sh
+bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-2
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2
+python3 cloud/bench/run.py --manifest cloud/bench/manifests/first-pass-standard-2.json --output /tmp/issue20-bench/full.jsonl
+
+bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-3
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3
+python3 cloud/bench/run.py --manifest cloud/bench/manifests/first-pass-standard-3.json --output /tmp/issue20-bench/full.jsonl
+
+python3 cloud/bench/aggregate.py --input /tmp/issue20-bench/full.jsonl --json-out /tmp/issue20-bench/aggregate.json --markdown-out /tmp/issue20-bench/aggregate.md
+```
+
+After reviewing the first-pass summary, Main selects at most four candidate cells for two more attempts each. Write one repeat manifest per instance type with those condition IDs, `repetitions: 2`, `attemptNoStart: 2`, a fresh `runId`, the same position set, and a 3,000-second time cap; deploy the matching instance type, run it, then aggregate all raw JSONL files together. The aggregator reports Top-1 agreement, reference Top-1 inclusion in candidate Top-2/Top-3, exact-CP absolute differences, mate kind/side/distance, failures and incomplete results, phase splits, repetition variation, and missing-data denominators. It does not treat the reference search as ground-truth play quality.
+
+### Full game and cold start
+
+`mode: "game"` reads `bench/dataset/game.json` and analyzes its positions in ply order for each condition/repetition. It writes one game summary with total serial HTTP wall time. Use one run manifest per chosen candidate condition and cap each at 1,800 seconds; if chosen cells use both instance types, deploy and run them separately.
+
+`mode: "cold"` needs one condition per instance type per run manifest, `idleSeconds` greater than `sleepAfterSeconds` (the checked-in examples use 315 and 300), a position limit of one, and the desired repetition count. The runner sends an authenticated health snapshot before the quiet period, sends no HTTP requests during the wait, measures the next analysis including failures, and takes a health snapshot after it. A cold result is marked confirmed only when the boot ID changes and the idle interval exceeded `sleepAfter`.
+
+```sh
+bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-2
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2
+python3 cloud/bench/run.py --manifest cloud/bench/manifests/cold-standard-2.json --output /tmp/issue20-bench/cold.jsonl
+
+bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-3
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3
+python3 cloud/bench/run.py --manifest cloud/bench/manifests/cold-standard-3.json --output /tmp/issue20-bench/cold.jsonl
+python3 cloud/bench/aggregate.py --input /tmp/issue20-bench/full.jsonl /tmp/issue20-bench/cold.jsonl --json-out /tmp/issue20-bench/aggregate.json --markdown-out /tmp/issue20-bench/aggregate.md
+```
+
+The cost report applies the public Container rates and Worker/DO request and duration rates dated 2026-09-25. Container CPU uses measured process CPU seconds when present, otherwise allocated vCPU × process elapsed as an upper bound. Memory/disk uses provisioned instance allocation × estimated active time. Worker CPU, account allowance balance, exact DO active duration, egress and final invoice rounding remain unknown; the report separates these from known request counts and labels gross usage before included allowances. Rate sources: [Containers](https://developers.cloudflare.com/containers/platform/pricing/), [Workers](https://developers.cloudflare.com/workers/platform/pricing/), and [Durable Objects](https://developers.cloudflare.com/durable-objects/platform/pricing/).
+
+### Restore normal staging
+
+After measurements, redeploy without a benchmark flag, verify standard-2 and benchmark-off via health, then run the existing #19 smoke:
+
+```sh
+bash cloud/scripts/deploy-staging.sh
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2 --benchmark-enabled no
+python3 cloud/scripts/smoke-staging.py
+```
+
+The readiness check returns the boot ID and visible CPU/cgroup/memory fields. It succeeds only when the driver and Worker report the requested type and at least one available cgroup CPU quota or memory limit agrees with that type; values that the container cannot see stay null and block readiness. The smoke is the separate normal-analysis check. Both require `ANALYSIS_STAGING_URL` and the existing token environment.
+
 ## Remaining limits
 
 This verifies the #19 staging technical gate only. It does not integrate cloud analysis into the mobile app, establish production service behavior, demonstrate commercial distribution rights for the Plus model, or claim performance for consumer devices. The archive and source-tree hashes are recorded instead of a fabricated upstream Git commit.
