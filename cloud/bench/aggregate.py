@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import statistics
 import sys
 from collections import Counter, defaultdict
@@ -202,6 +203,33 @@ def _reference_map(
     }
 
 
+def _reject_duplicate_reference_attempts(
+    rows: list[dict[str, Any]], reference_id: str | None,
+) -> None:
+    if reference_id is None:
+        return
+    seen: dict[tuple[str, str, str, int], str] = {}
+    for row in rows:
+        if (
+            row.get("conditionId") != reference_id
+            or row.get("mode", "positions") != "positions"
+            or row.get("comparisonRole", "primary") == "pilot"
+            or not isinstance(row.get("positionId"), str)
+            or not isinstance(row.get("positionSha256"), str)
+            or type(row.get("attemptNo")) is not int
+        ):
+            continue
+        key = (reference_id, row["positionId"], row["positionSha256"], row["attemptNo"])
+        run_id = row.get("runId")
+        previous_run = seen.get(key)
+        if previous_run is not None and previous_run != run_id:
+            raise ValueError(
+                "duplicate primary reference attempt across runs: "
+                f"condition={reference_id}, position={row['positionId']}, attemptNo={row['attemptNo']}"
+            )
+        seen[key] = str(run_id)
+
+
 def _materialize_attempts(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     complete: dict[tuple[Any, ...], dict[str, Any]] = {}
     starts: dict[tuple[Any, ...], dict[str, Any]] = {}
@@ -250,6 +278,8 @@ def _valid_identity_digests(value: Any) -> bool:
 
 def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
     run_starts: dict[str, dict[str, Any]] = {}
+    common_conditions_sha256: str | None = None
+    dataset_fingerprints: dict[str, tuple[str, str]] = {}
     for row in records:
         if row.get("recordType") != "run-start":
             continue
@@ -275,10 +305,31 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
                 raise ValueError(f"run {run_id} fingerprint lacks {key}")
         if not isinstance(fingerprint.get("endpoint"), str) or not fingerprint["endpoint"].startswith(("http://", "https://")):
             raise ValueError(f"run {run_id} fingerprint lacks a valid endpoint")
+        build_id = fingerprint.get("buildId")
+        git_commit = fingerprint.get("gitCommit")
+        mode = fingerprint.get("mode")
+        if not isinstance(build_id, str) or not re.fullmatch(r"[0-9a-f]{32}", build_id):
+            raise ValueError(f"run {run_id} fingerprint lacks a valid image buildId")
+        if not isinstance(git_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", git_commit):
+            raise ValueError(f"run {run_id} fingerprint lacks a valid image gitCommit")
+        if mode not in {"positions", "game", "cold"} or row.get("mode") != mode:
+            raise ValueError(f"run {run_id} mode differs from its immutable fingerprint")
         if not isinstance(fingerprint.get("driverVersion"), str) or not isinstance(fingerprint.get("contractVersion"), str):
             raise ValueError(f"run {run_id} fingerprint lacks driverVersion/contractVersion")
         if not _valid_identity_digests(fingerprint.get("identityDigests")):
             raise ValueError(f"run {run_id} fingerprint lacks valid artifact identity digests")
+        conditions_sha256 = fingerprint["conditionsSha256"]
+        if common_conditions_sha256 is None:
+            common_conditions_sha256 = conditions_sha256
+        elif conditions_sha256 != common_conditions_sha256:
+            raise ValueError("aggregation mixes conditions manifest hashes across runs")
+        dataset_kind = "game" if mode == "game" else "positions"
+        dataset_identity = (fingerprint["datasetSha256"], fingerprint["datasetManifestSha256"])
+        existing_dataset_identity = dataset_fingerprints.get(dataset_kind)
+        if existing_dataset_identity is None:
+            dataset_fingerprints[dataset_kind] = dataset_identity
+        elif dataset_identity != existing_dataset_identity:
+            raise ValueError(f"aggregation mixes {dataset_kind} dataset hashes across runs")
         run_starts[run_id] = row
 
     attempts = [row for row in records if row.get("recordType") in {"attempt", "attempt-start"}]
@@ -289,6 +340,8 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
         fingerprint = row["fingerprint"]
         identity = (
             fingerprint["imageDigest"],
+            fingerprint["buildId"],
+            fingerprint["gitCommit"],
             tuple((key, fingerprint["identityDigests"][key]) for key in IDENTITY_DIGEST_KEYS),
             fingerprint.get("driverVersion"),
             fingerprint.get("contractVersion"),
@@ -296,11 +349,16 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
         if common_identity is None:
             common_identity = identity
         elif identity != common_identity:
-            raise ValueError("aggregation mixes image or artifact identity digests across runs")
+            raise ValueError("aggregation mixes image build or artifact identity digests across runs")
         start_health = row.get("healthAtRunStart")
         start_digests = start_health.get("identityDigests") if isinstance(start_health, dict) else None
         if start_digests is not None and start_digests != fingerprint["identityDigests"]:
             raise ValueError(f"run {run_id} run-start health identity digests differ from its fingerprint")
+        if isinstance(start_health, dict) and (
+            start_health.get("buildId") != fingerprint["buildId"]
+            or start_health.get("gitCommit") != fingerprint["gitCommit"]
+        ):
+            raise ValueError(f"run {run_id} run-start health image build identity differs from its fingerprint")
 
     for row in attempts:
         run_id = row.get("runId")
@@ -309,8 +367,12 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
         fingerprint = run_starts[run_id]["fingerprint"]
         if row.get("runFingerprintSha256") != fingerprint["fingerprintSha256"]:
             raise ValueError(f"attempt in run {run_id} does not match its immutable fingerprint")
+        if row.get("mode") != fingerprint["mode"]:
+            raise ValueError(f"attempt in run {run_id} mode differs from its immutable fingerprint")
         if row.get("imageDigest") != fingerprint["imageDigest"] or row.get("identityDigests") != fingerprint["identityDigests"]:
             raise ValueError(f"attempt in run {run_id} has inconsistent image or artifact identities")
+        if row.get("expectedBuildId") != fingerprint["buildId"] or row.get("buildId") != fingerprint["buildId"]:
+            raise ValueError(f"attempt in run {run_id} has inconsistent image build identity")
         response_digests = row.get("responseIdentityDigests")
         if response_digests is not None and response_digests != fingerprint["identityDigests"]:
             raise ValueError(f"attempt in run {run_id} response identity digests differ from its fingerprint")
@@ -319,6 +381,8 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
         if response_digests is not None and response_digests != fingerprint["identityDigests"]:
             raise ValueError(f"attempt in run {run_id} response identity digests differ from its fingerprint")
         if isinstance(response, dict):
+            if response.get("buildId") != fingerprint["buildId"] or response.get("gitCommit") != fingerprint["gitCommit"]:
+                raise ValueError(f"attempt in run {run_id} response image build identity differs from its fingerprint")
             for key in ("driverVersion", "contractVersion"):
                 if isinstance(response.get(key), str) and response[key] != fingerprint[key]:
                     raise ValueError(f"attempt in run {run_id} response {key} differs from its fingerprint")
@@ -332,6 +396,8 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
             if health_digests is not None and health_digests != fingerprint["identityDigests"]:
                 raise ValueError(f"attempt in run {run_id} health identity digests differ from its fingerprint")
             if isinstance(health, dict):
+                if health.get("buildId") != fingerprint["buildId"] or health.get("gitCommit") != fingerprint["gitCommit"]:
+                    raise ValueError(f"attempt in run {run_id} health image build identity differs from its fingerprint")
                 for key in ("driverVersion", "contractVersion"):
                     if isinstance(health.get(key), str) and health[key] != fingerprint[key]:
                         raise ValueError(f"attempt in run {run_id} health {key} differs from its fingerprint")
@@ -342,9 +408,11 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "imageDigest": common_identity[0] if common_identity else None,
-        "identityDigests": dict(common_identity[1]) if common_identity else None,
-        "driverVersion": common_identity[2] if common_identity else None,
-        "contractVersion": common_identity[3] if common_identity else None,
+        "buildId": common_identity[1] if common_identity else None,
+        "gitCommit": common_identity[2] if common_identity else None,
+        "identityDigests": dict(common_identity[3]) if common_identity else None,
+        "driverVersion": common_identity[4] if common_identity else None,
+        "contractVersion": common_identity[5] if common_identity else None,
         "workerVersionIds": sorted({
             str(row["fingerprint"].get("workerVersionId"))
             for row in run_starts.values()
@@ -793,6 +861,7 @@ def aggregate_records(records: list[dict[str, Any]], conditions: dict[str, dict[
     if len(reference_ids) > 1:
         raise ValueError("conditions manifest may contain at most one reference")
     reference_id = reference_ids[0] if reference_ids else None
+    _reject_duplicate_reference_attempts(attempts, reference_id)
     references = _reference_map(attempts, reference_id)
     reference_repetitions = {
         repetition: _reference_map(attempts, reference_id, repetition)

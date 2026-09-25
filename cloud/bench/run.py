@@ -29,6 +29,8 @@ IDENTITY_DIGEST_KEYS = (
     "engineSha256", "weightSha256", "optionsSha256", "sourceArchiveSha256", "sourceTreeSha256",
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+BUILD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def wall_now() -> str:
@@ -81,6 +83,8 @@ def fingerprint_endpoint(value: str) -> str:
 def build_run_fingerprint(
     *,
     image_ref: str,
+    expected_build_id: str,
+    mode: str,
     endpoint: str,
     health: dict[str, Any],
     conditions_path: Path,
@@ -89,6 +93,15 @@ def build_run_fingerprint(
     manifest_path: Path,
 ) -> dict[str, Any]:
     image_digest = pinned_image_digest(image_ref)
+    if not BUILD_ID_RE.fullmatch(expected_build_id):
+        raise ValueError("--expected-build-id must be 32 lowercase hex characters")
+    if mode not in {"positions", "game", "cold"}:
+        raise ValueError("benchmark mode is invalid")
+    if health.get("buildId") != expected_build_id:
+        raise ValueError("health response buildId does not match --expected-build-id; refusing a stale Container")
+    git_commit = health.get("gitCommit")
+    if not isinstance(git_commit, str) or not GIT_COMMIT_RE.fullmatch(git_commit):
+        raise ValueError("health response lacks a valid image gitCommit")
     identities = safe_identity_digests(health.get("identityDigests"))
     if identities is None:
         raise ValueError("health response lacks the five validated identityDigests required for benchmark provenance")
@@ -97,6 +110,9 @@ def build_run_fingerprint(
     value = {
         "imageRef": image_ref,
         "imageDigest": image_digest,
+        "buildId": expected_build_id,
+        "gitCommit": git_commit,
+        "mode": mode,
         "workerVersionId": health.get("workerVersionId"),
         "workerVersionTag": health.get("workerVersionTag"),
         "workerVersionTimestamp": health.get("workerVersionTimestamp"),
@@ -145,6 +161,8 @@ def existing_run_fingerprint(path: Path, run_id: str) -> dict[str, Any] | None:
                 attempt.get("runFingerprintSha256") != found.get("fingerprintSha256")
                 or attempt.get("imageDigest") != found.get("imageDigest")
                 or attempt.get("identityDigests") != found.get("identityDigests")
+                or attempt.get("expectedBuildId") != found.get("buildId")
+                or attempt.get("mode") != found.get("mode")
             ):
                 raise ValueError(f"run {run_id} contains an attempt that does not match its immutable fingerprint")
     return found
@@ -247,6 +265,8 @@ def safe_health(payload: dict[str, Any] | None, http_status: int | None, elapsed
         "httpStatus": http_status,
         "elapsedMs": elapsed_ms,
         "status": payload.get("status") if isinstance(payload.get("status"), str) else None,
+        "buildId": payload.get("buildId") if isinstance(payload.get("buildId"), str) and BUILD_ID_RE.fullmatch(payload["buildId"]) else None,
+        "gitCommit": payload.get("gitCommit") if isinstance(payload.get("gitCommit"), str) and GIT_COMMIT_RE.fullmatch(payload["gitCommit"]) else None,
         "driverBootId": payload.get("driverBootId") if isinstance(payload.get("driverBootId"), str) else None,
         "driverVersion": payload.get("driverVersion") if isinstance(payload.get("driverVersion"), str) else None,
         "contractVersion": payload.get("contractVersion") if isinstance(payload.get("contractVersion"), str) else None,
@@ -373,6 +393,7 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, help="positions.json or game.json; inferred from mode when omitted")
     parser.add_argument("--base-url", default=os.environ.get("ANALYSIS_STAGING_URL"))
     parser.add_argument("--image-ref", default=os.environ.get("ANALYSIS_IMAGE_REF"), help="pinned container image ref (or ANALYSIS_IMAGE_REF)")
+    parser.add_argument("--expected-build-id", default=os.environ.get("ANALYSIS_BUILD_ID"), help="32-hex build ID printed by build-push-image.sh (or ANALYSIS_BUILD_ID)")
     parser.add_argument("--output", required=True, type=Path, help="append-only raw JSONL path")
     args = parser.parse_args()
 
@@ -383,6 +404,10 @@ def main() -> int:
         parser.error("--base-url or ANALYSIS_STAGING_URL is required")
     if not args.image_ref:
         parser.error("--image-ref or ANALYSIS_IMAGE_REF is required")
+    if not args.expected_build_id:
+        parser.error("--expected-build-id or ANALYSIS_BUILD_ID is required")
+    if not BUILD_ID_RE.fullmatch(args.expected_build_id):
+        parser.error("--expected-build-id must be 32 lowercase hex characters")
     try:
         run = load_json(args.manifest)
         if run.get("schemaVersion") != 1 or not isinstance(run.get("runId"), str) or not run["runId"]:
@@ -464,6 +489,8 @@ def main() -> int:
     try:
         fingerprint = build_run_fingerprint(
             image_ref=args.image_ref,
+            expected_build_id=args.expected_build_id,
+            mode=mode,
             endpoint=args.base_url,
             health=run_start_health,
             conditions_path=args.conditions,
@@ -499,6 +526,7 @@ def main() -> int:
                 "recordType": "run-start",
                 "runId": run["runId"],
                 "mode": mode,
+                "expectedBuildId": args.expected_build_id,
                 "runStartedWall": run_started_wall,
                 "fingerprint": fingerprint,
                 "healthAtRunStart": run_start_health,
@@ -509,6 +537,7 @@ def main() -> int:
                 "recordType": "run-resume-check",
                 "runId": run["runId"],
                 "mode": mode,
+                "expectedBuildId": args.expected_build_id,
                 "runFingerprintSha256": fingerprint["fingerprintSha256"],
                 "healthAtRunStart": run_start_health,
             })
@@ -560,6 +589,9 @@ def main() -> int:
             cold_before = None
             if mode == "cold":
                 cold_before = health_snapshot(args.base_url, token)
+                if cold_before.get("buildId") != args.expected_build_id:
+                    print("Container health buildId changed before cold attempt; stopping without measuring it", file=sys.stderr)
+                    return 2
                 idle_started = wall_now()
                 sleep_for = max(idle_seconds or 0, sleep_after + 1)
                 if time.monotonic() - run_started + sleep_for >= time_budget_seconds:
@@ -572,6 +604,9 @@ def main() -> int:
                 if since_health >= int(run.get("healthEveryRequests", 10)):
                     latest_health = health_snapshot(args.base_url, token)
                     since_health = 0
+                    if latest_health.get("buildId") != args.expected_build_id:
+                        print("Container health buildId changed during run; stopping without measuring another attempt", file=sys.stderr)
+                        return 2
             request_start = wall_now()
             started_mono = time.monotonic()
             group_id = f"{condition['conditionId']}#rep{attempt_no}" if mode == "game" else None
@@ -588,9 +623,11 @@ def main() -> int:
                 "phase": position["phase"],
                 "ply": position.get("ply"),
                 "datasetManifestSha256": dataset["manifestSha256"],
+                "expectedBuildId": args.expected_build_id,
                 "runFingerprintSha256": fingerprint["fingerprintSha256"],
                 "imageDigest": fingerprint["imageDigest"],
                 "identityDigests": fingerprint["identityDigests"],
+                "buildId": fingerprint["buildId"],
                 "requestStartWall": request_start,
                 "gameAttemptId": group_id,
                 "gameSequence": position.get("ply"),
@@ -614,6 +651,14 @@ def main() -> int:
             if error is None and elapsed_ms is not None:
                 error = None
             cold_after = health_snapshot(args.base_url, token) if mode == "cold" else None
+            response_build_id_raw = response.get("buildId") if isinstance(response, dict) else None
+            response_build_id = response_build_id_raw if isinstance(response_build_id_raw, str) and BUILD_ID_RE.fullmatch(response_build_id_raw) else None
+            if error is None and response_build_id != args.expected_build_id:
+                error = "build-id-mismatch" if response_build_id is not None else "build-id-missing"
+                response = None
+            if cold_after is not None and cold_after.get("buildId") != args.expected_build_id:
+                error = "build-id-mismatch"
+                response = None
             before_value = cold_before.get("driverBootId") if cold_before else None
             after_value = cold_after.get("driverBootId") if cold_after else None
             response_value = response.get("driverBootId") if isinstance(response, dict) else None
@@ -645,9 +690,11 @@ def main() -> int:
                 "phase": position["phase"],
                 "ply": position.get("ply"),
                 "datasetManifestSha256": dataset["manifestSha256"],
+                "expectedBuildId": args.expected_build_id,
                 "runFingerprintSha256": fingerprint["fingerprintSha256"],
                 "imageDigest": fingerprint["imageDigest"],
                 "identityDigests": fingerprint["identityDigests"],
+                "buildId": fingerprint["buildId"],
                 "requestStartWall": request_start,
                 "requestEndWall": request_end,
                 "httpElapsedMs": elapsed_ms,
@@ -655,6 +702,7 @@ def main() -> int:
                 "httpStatus": status,
                 "transportError": error,
                 "response": response,
+                "responseBuildId": response_build_id,
                 "responseBootId": response_boot_id if isinstance(response_boot_id, str) else None,
                 "responseIdentityDigests": response_identity_digests,
                 "healthAtRunStart": run_start_health,

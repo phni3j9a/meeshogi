@@ -17,6 +17,7 @@ from typing import Any
 
 USER_AGENT = "meeshogi-issue20-benchmark/1.0"
 GIB = 1 << 30
+BUILD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 RUNTIME_FIELDS = (
     "osCpuCount", "affinityCpuCount", "cpuMax", "cpuQuota", "memoryMaxBytes",
     "memTotalBytes", "rootDiskTotalBytes",
@@ -27,6 +28,7 @@ def inspect_health(
     status: int | None,
     payload: Any,
     expected_instance_type: str,
+    expected_build_id: str,
     benchmark_enabled: bool,
     transport_error: str | None = None,
 ) -> dict[str, Any]:
@@ -57,6 +59,7 @@ def inspect_health(
     checks = {
         "httpOk": status == 200,
         "driverReady": body.get("status") == "ready",
+        "buildIdMatches": isinstance(body.get("buildId"), str) and body.get("buildId") == expected_build_id,
         "driverBootIdValid": isinstance(boot_id, str) and re.fullmatch(r"[0-9a-f]{32}", boot_id) is not None,
         "runtimeBootIdMatches": runtime.get("driverBootId") == boot_id,
         "workerBenchmarkFlagMatches": body.get("workerBenchmarkEnabled") is benchmark_enabled,
@@ -83,6 +86,7 @@ def inspect_health(
         reasons.append("driver_not_ready")
     for name, reason in (
         ("driverBootIdValid", "driver_boot_id_missing_or_invalid"),
+        ("buildIdMatches", "driver_build_id_mismatch"),
         ("runtimeBootIdMatches", "runtime_boot_id_mismatch"),
         ("workerBenchmarkFlagMatches", "worker_benchmark_flag_mismatch"),
         ("workerInstanceTypeMatches", "worker_instance_type_mismatch"),
@@ -102,6 +106,8 @@ def inspect_health(
     return {
         "httpStatus": status,
         "status": body.get("status") if isinstance(body.get("status"), str) else None,
+        "buildId": body.get("buildId") if isinstance(body.get("buildId"), str) and BUILD_ID_RE.fullmatch(body["buildId"]) else None,
+        "gitCommit": body.get("gitCommit") if isinstance(body.get("gitCommit"), str) and re.fullmatch(r"[0-9a-f]{40}", body["gitCommit"]) else None,
         "workerFailureCode": (
             body.get("failure", {}).get("code")
             if isinstance(body.get("failure"), dict)
@@ -137,11 +143,16 @@ def _decode_health(status: int, raw: bytes) -> tuple[int, Any, str | None]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-instance-type", required=True, choices=("standard-2", "standard-3"))
+    parser.add_argument("--expected-build-id", default=os.environ.get("ANALYSIS_BUILD_ID"), help="32-hex build ID printed by build-push-image.sh (or ANALYSIS_BUILD_ID)")
     parser.add_argument("--benchmark-enabled", choices=("yes", "no"), default="yes")
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--max-wait-seconds", type=float, default=120)
     parser.add_argument("--poll-interval-seconds", type=float, default=5)
     args = parser.parse_args()
+    if not args.expected_build_id:
+        parser.error("--expected-build-id or ANALYSIS_BUILD_ID is required")
+    if not BUILD_ID_RE.fullmatch(args.expected_build_id):
+        parser.error("--expected-build-id must be 32 lowercase hex characters")
     if args.timeout <= 0 or args.max_wait_seconds <= 0 or args.poll_interval_seconds < 0:
         parser.error("timeout and max wait must be positive; poll interval must be non-negative")
     url = os.environ.get("ANALYSIS_STAGING_URL")
@@ -171,6 +182,7 @@ def main() -> int:
             status,
             payload,
             args.expected_instance_type,
+            args.expected_build_id,
             args.benchmark_enabled == "yes",
             transport_error,
         )

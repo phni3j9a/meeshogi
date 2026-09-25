@@ -10,6 +10,7 @@ import {
   hasBenchmarkRuntime,
   benchmarkRuntimeMismatch,
   MAX_BODY_BYTES,
+  type BenchmarkValidationDiagnostic,
   validateDriverResult,
   validateBenchmarkDriverResult,
 } from './contract';
@@ -149,6 +150,8 @@ function benchmarkInstanceFailure(
   expectedInstanceType: string | null,
   driverBootId: string,
   engineEpoch: number,
+  buildId: string | undefined,
+  gitCommit: string | undefined,
   runtime: Record<string, unknown>,
   identityDigests: Record<string, unknown>,
   runtimeMismatch: string,
@@ -164,10 +167,35 @@ function benchmarkInstanceFailure(
     expectedInstanceType,
     driverBootId,
     engineEpoch,
+    ...(buildId ? { buildId } : {}),
+    ...(gitCommit ? { gitCommit } : {}),
     runtime,
     identityDigests,
     runtimeMismatch,
   };
+}
+
+function benchmarkValidationDetail(
+  diagnostic: BenchmarkValidationDiagnostic,
+  driverResult: unknown,
+  containerHttpStatus: number,
+): string {
+  const result = typeof driverResult === 'object' && driverResult !== null && !Array.isArray(driverResult)
+    ? driverResult as Record<string, unknown>
+    : {};
+  const safeLabel = (value: unknown): string | null =>
+    typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,64}$/u.test(value) ? value : null;
+  const driverStatus = safeLabel(result.status) ?? 'unknown';
+  const failureValue = typeof result.failure === 'object' && result.failure !== null && !Array.isArray(result.failure)
+    ? result.failure as Record<string, unknown>
+    : {};
+  const failureCode = safeLabel(failureValue.code);
+  return [
+    `check=${diagnostic.check ?? 'unknown'}`,
+    `driverStatus=${driverStatus}`,
+    ...(failureCode ? [`failureCode=${failureCode}`] : []),
+    `containerHttpStatus=${containerHttpStatus}`,
+  ].join('; ');
 }
 
 async function readJsonBody(request: Request): Promise<{ record: Record<string, unknown> } | Response> {
@@ -267,6 +295,8 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
             String(driverHealth.expectedInstanceType),
             String(driverHealth.driverBootId),
             0,
+            typeof driverHealth.buildId === 'string' ? driverHealth.buildId : undefined,
+            typeof driverHealth.gitCommit === 'string' ? driverHealth.gitCommit : undefined,
             runtime,
             driverHealth.identityDigests as Record<string, unknown>,
             runtimeMismatch,
@@ -285,6 +315,8 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           driverBootId: driverHealth.driverBootId,
           engineEpoch: 0,
           driverVersion: driverHealth.driverVersion,
+          buildId: driverHealth.buildId,
+          gitCommit: driverHealth.gitCommit,
           identityDigests: driverHealth.identityDigests,
           runtime,
           conditions: { requested: condition, actual: null },
@@ -310,8 +342,16 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       } catch {
         return json(failure('engine_error', 'Analysis container returned an invalid response.', sfen), 502);
       }
-      const validated = validateBenchmarkDriverResult(driverResult, sfen, rootMoves, condition);
-      if (!validated) return json(failure('engine_error', 'Benchmark result failed contract validation.', sfen), 502);
+      const diagnostic: BenchmarkValidationDiagnostic = {};
+      const validated = validateBenchmarkDriverResult(driverResult, sfen, rootMoves, condition, diagnostic);
+      if (!validated) {
+        return json(failure(
+          'engine_error',
+          'Benchmark result failed contract validation.',
+          sfen,
+          benchmarkValidationDetail(diagnostic, driverResult, response.status),
+        ), 502);
+      }
       if (validated.status === 'failure') {
         const failureRecord = validated.failure as { code: string };
         const status = failureRecord.code === 'busy' || failureRecord.code === 'instance_mismatch' ? 409 : failureRecord.code === 'timeout' ? 504 : 502;

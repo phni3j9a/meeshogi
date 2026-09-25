@@ -40,15 +40,21 @@ IDENTITY_DIGESTS = {
     "sourceArchiveSha256": "d" * 64,
     "sourceTreeSha256": "e" * 64,
 }
+BUILD_ID = "9" * 32
+GIT_COMMIT = "a" * 40
 
 
 def add_provenance(rows: list[dict]) -> list[dict]:
     run_ids = sorted({row["runId"] for row in rows})
     starts = []
     for run_id in run_ids:
+        mode = next(row.get("mode", "positions") for row in rows if row["runId"] == run_id)
         fingerprint = {
             "imageRef": "registry.example/meeshogi@sha256:" + "f" * 64,
             "imageDigest": "f" * 64,
+            "buildId": BUILD_ID,
+            "gitCommit": GIT_COMMIT,
+            "mode": mode,
             "workerVersionId": "worker-fixture",
             "identityDigests": IDENTITY_DIGESTS,
             "driverVersion": "usi-driver-v1",
@@ -60,14 +66,25 @@ def add_provenance(rows: list[dict]) -> list[dict]:
             "endpoint": "https://staging.example",
         }
         fingerprint["fingerprintSha256"] = aggregate._canonical_sha256(fingerprint)
-        starts.append({"recordType": "run-start", "runId": run_id, "fingerprint": fingerprint})
+        starts.append({
+            "recordType": "run-start", "runId": run_id, "mode": mode, "fingerprint": fingerprint,
+            "healthAtRunStart": {
+                "buildId": BUILD_ID, "gitCommit": GIT_COMMIT, "identityDigests": IDENTITY_DIGESTS,
+                "driverVersion": "usi-driver-v1", "contractVersion": "analysis-json-v1",
+            },
+        })
         for row in rows:
             if row["runId"] == run_id:
                 row["runFingerprintSha256"] = fingerprint["fingerprintSha256"]
                 row["imageDigest"] = fingerprint["imageDigest"]
                 row["identityDigests"] = IDENTITY_DIGESTS
-                if isinstance(row.get("response"), dict) and row["response"].get("status") in {"success", "incomplete", "failure"}:
+                row["expectedBuildId"] = BUILD_ID
+                row["buildId"] = BUILD_ID
+                row["responseBuildId"] = BUILD_ID if isinstance(row.get("response"), dict) else None
+                if isinstance(row.get("response"), dict):
                     row["response"]["identityDigests"] = IDENTITY_DIGESTS
+                    row["response"]["buildId"] = BUILD_ID
+                    row["response"]["gitCommit"] = GIT_COMMIT
                     row["responseIdentityDigests"] = IDENTITY_DIGESTS
     return starts + rows
 
@@ -199,8 +216,57 @@ class AggregateTests(unittest.TestCase):
             if row.get("runId") == "second-run" and row.get("recordType") == "attempt":
                 row["imageDigest"] = second_fp["imageDigest"]
                 row["runFingerprintSha256"] = second_fp["fingerprintSha256"]
-        with self.assertRaisesRegex(ValueError, "mixes image or artifact identity"):
+        with self.assertRaisesRegex(ValueError, "mixes image build or artifact identity"):
             aggregate.aggregate_records(records, {CANDIDATE["conditionId"]: CANDIDATE})
+
+    def test_positions_runs_must_share_dataset_and_conditions_hashes(self) -> None:
+        for changed_field, message in (
+            ("datasetSha256", "mixes positions dataset hashes"),
+            ("datasetManifestSha256", "mixes positions dataset hashes"),
+            ("conditionsSha256", "mixes conditions manifest hashes"),
+        ):
+            with self.subTest(changed_field=changed_field):
+                rows = [
+                    success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20}),
+                    {**success(CANDIDATE, "p2", "opening", "2g2f", {"kind": "cp", "value": 10}), "runId": "second-run"},
+                ]
+                records = add_provenance(rows)
+                second_start = next(row for row in records if row.get("recordType") == "run-start" and row["runId"] == "second-run")
+                second_fingerprint = second_start["fingerprint"]
+                second_fingerprint[changed_field] = "8" * 64
+                second_fingerprint["fingerprintSha256"] = aggregate._canonical_sha256({
+                    key: value for key, value in second_fingerprint.items() if key != "fingerprintSha256"
+                })
+                for row in records:
+                    if row.get("runId") == "second-run" and row.get("recordType") == "attempt":
+                        row["runFingerprintSha256"] = second_fingerprint["fingerprintSha256"]
+                with self.assertRaisesRegex(ValueError, message):
+                    aggregate.aggregate_records(records, {CANDIDATE["conditionId"]: CANDIDATE})
+
+    def test_game_dataset_hashes_are_separate_from_positions_runs(self) -> None:
+        rows = [
+            success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20}),
+            {**success(CANDIDATE, "ply-1", "opening", "2g2f", {"kind": "cp", "value": 10}), "runId": "second-run", "mode": "game"},
+        ]
+        records = add_provenance(rows)
+        second_start = next(row for row in records if row.get("recordType") == "run-start" and row["runId"] == "second-run")
+        second_fingerprint = second_start["fingerprint"]
+        second_fingerprint["datasetSha256"] = "8" * 64
+        second_fingerprint["datasetManifestSha256"] = "7" * 64
+        second_fingerprint["fingerprintSha256"] = aggregate._canonical_sha256({
+            key: value for key, value in second_fingerprint.items() if key != "fingerprintSha256"
+        })
+        for row in records:
+            if row.get("runId") == "second-run" and row.get("recordType") == "attempt":
+                row["runFingerprintSha256"] = second_fingerprint["fingerprintSha256"]
+        aggregate.verify_run_provenance(records)
+
+    def test_duplicate_primary_reference_across_runs_is_rejected(self) -> None:
+        first = success(REFERENCE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20})
+        second = {**success(REFERENCE, "p1", "opening", "2g2f", {"kind": "cp", "value": 10}), "runId": "second-run"}
+        records = add_provenance([first, second])
+        with self.assertRaisesRegex(ValueError, "duplicate primary reference attempt across runs"):
+            aggregate.aggregate_records(records, {REFERENCE["conditionId"]: REFERENCE})
 
     def test_container_cpu_reports_engine_child_lower_and_allocated_upper(self) -> None:
         attempt = success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20})

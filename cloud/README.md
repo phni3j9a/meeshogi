@@ -126,7 +126,7 @@ The operator benchmark is a separate authenticated route, `POST /internal/benchm
 
 The benchmark-only v2 response keeps USI time, engine-reported NPS, same-info-line nodes/depth, derived NPS, process spawn-to-reap wall time, and obtainable child CPU time separate. It includes the same five artifact digest values as health, without engine/model names or private manifest text. Driver process CPU is read from `wait4` rusage when available. Every benchmark result, including terminal results and typed instance mismatch failures, carries the measured runtime facts. Raw health snapshots whitelist those runtime facts, identity digests, and available Worker version metadata. The raw result files must still be treated as measurement data because they contain SFENs and dataset provenance hashes.
 
-The runner and aggregator use only Python's standard library. The dataset generator/checker owns `bench/dataset/positions.json` and `bench/dataset/game.json`; do not substitute synthetic data for the measured positions. Run manifests select condition IDs, repetitions, order seed, optional pilot `positionLimit`, `maxRequests`, and `timeBudgetSeconds`. Before measuring, the runner requires `--image-ref` or `ANALYSIS_IMAGE_REF` with a pinned `@sha256:` digest and records an immutable run fingerprint containing image, Worker/driver versions, artifact digests, input hashes, and endpoint. Rerunning the same `runId` skips attempts only if this fingerprint still matches; a changed image, deployment, input, or endpoint is refused. Each attempt retains health and response boot IDs and artifact digest evidence. The aggregator rejects missing or mismatched fingerprints, mixed image/artifact identities, and duplicate attempt keys. A small `.pending.json` sidecar marks an in-flight request; after an interrupted process, the runner finalizes that attempt as `interrupted-before-response` before continuing, so the raw JSONL keeps one outcome row per attempt.
+The runner and aggregator use only Python's standard library. The dataset generator/checker owns `bench/dataset/positions.json` and `bench/dataset/game.json`; do not substitute synthetic data for the measured positions. Run manifests select condition IDs, repetitions, order seed, optional pilot `positionLimit`, `maxRequests`, and `timeBudgetSeconds`. Before measuring, build the private image with `build-push-image.sh`; it prints `ANALYSIS_IMAGE_REF`, `ANALYSIS_BUILD_ID`, and `ANALYSIS_GIT_COMMIT`. Export the printed image ref and build ID (or provide `--image-ref` and `--expected-build-id`) to readiness and runner commands. Readiness and each run's initial health check require the running Container's baked build ID to match the expected ID, so an old Container cannot be recorded under a newer requested image ref. The runner also requires a pinned `@sha256:` image ref and records the build ID and git commit with an immutable run fingerprint containing image, Worker/driver versions, artifact digests, input hashes, and endpoint. Each response and periodic health check is checked against the expected build ID before an attempt is adopted. Raw run-start and attempt rows retain the expected build ID, and valid response build ID, alongside health and response boot IDs and artifact digest evidence. Rerunning the same `runId` skips attempts only if this fingerprint still matches; a changed image, build, deployment, input, or endpoint is refused. The aggregator rejects missing or mismatched fingerprints, mixed image/build/artifact identities, inconsistent conditions or position-dataset hashes across runs, duplicate primary reference attempts across runs, and duplicate attempt keys. Game dataset hashes are tracked separately from positions datasets. A small `.pending.json` sidecar marks an in-flight request; after an interrupted process, the runner finalizes that attempt as `interrupted-before-response` before continuing, so the raw JSONL keeps one outcome row per attempt.
 
 ### Pilot
 
@@ -134,13 +134,14 @@ Build the private image in the authorized Main environment using the existing pr
 
 ```sh
 export ANALYSIS_IMAGE_REF='registry.cloudflare.com/<account>/meeshogi-analysis-mvp-staging@sha256:<digest>'
+export ANALYSIS_BUILD_ID='<32-hex value printed by build-push-image.sh>'
 bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-2
-python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2
-python3 cloud/bench/run.py --manifest cloud/bench/manifests/pilot-standard-2.json --output /tmp/issue20-bench/pilot.jsonl
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2 --expected-build-id "$ANALYSIS_BUILD_ID"
+python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/pilot-standard-2.json --output /tmp/issue20-bench/pilot.jsonl
 
 bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-3
-python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3
-python3 cloud/bench/run.py --manifest cloud/bench/manifests/pilot-reference-standard-3.json --output /tmp/issue20-bench/pilot.jsonl
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3 --expected-build-id "$ANALYSIS_BUILD_ID"
+python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/pilot-reference-standard-3.json --output /tmp/issue20-bench/pilot.jsonl
 ```
 
 Before either runner command, set `ANALYSIS_STAGING_URL` and export `ANALYSIS_INTERNAL_TOKEN` using the existing silent prompt. The runner sends a non-default User-Agent to avoid Cloudflare's Python-urllib 1010 response and never stores or prints the token. Pilot rows use separate run IDs and should not be mixed into full-run files used for profile comparison.
@@ -151,12 +152,12 @@ Each condition has to run only while its declared instance type is deployed. The
 
 ```sh
 bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-2
-python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2
-python3 cloud/bench/run.py --manifest cloud/bench/manifests/first-pass-standard-2.json --output /tmp/issue20-bench/full.jsonl
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2 --expected-build-id "$ANALYSIS_BUILD_ID"
+python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/first-pass-standard-2.json --output /tmp/issue20-bench/full.jsonl
 
 bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-3
-python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3
-python3 cloud/bench/run.py --manifest cloud/bench/manifests/first-pass-standard-3.json --output /tmp/issue20-bench/full.jsonl
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3 --expected-build-id "$ANALYSIS_BUILD_ID"
+python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/first-pass-standard-3.json --output /tmp/issue20-bench/full.jsonl
 
 python3 cloud/bench/aggregate.py --input /tmp/issue20-bench/full.jsonl --json-out /tmp/issue20-bench/aggregate.json --markdown-out /tmp/issue20-bench/aggregate.md
 ```
@@ -171,12 +172,12 @@ After reviewing the first-pass summary, Main selects at most four candidate cell
 
 ```sh
 bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-2
-python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2
-python3 cloud/bench/run.py --manifest cloud/bench/manifests/cold-standard-2.json --output /tmp/issue20-bench/cold.jsonl
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2 --expected-build-id "$ANALYSIS_BUILD_ID"
+python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/cold-standard-2.json --output /tmp/issue20-bench/cold.jsonl
 
 bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-3
-python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3
-python3 cloud/bench/run.py --manifest cloud/bench/manifests/cold-standard-3.json --output /tmp/issue20-bench/cold.jsonl
+python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3 --expected-build-id "$ANALYSIS_BUILD_ID"
+python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/cold-standard-3.json --output /tmp/issue20-bench/cold.jsonl
 python3 cloud/bench/aggregate.py --input /tmp/issue20-bench/full.jsonl /tmp/issue20-bench/cold.jsonl --json-out /tmp/issue20-bench/aggregate.json --markdown-out /tmp/issue20-bench/aggregate.md
 ```
 

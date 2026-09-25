@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import realBenchmarkResponseFixture from '../fixtures/benchmark/real-startpos-standard-2-t1-100ms-mpv2.json' with { type: 'json' };
 vi.mock('@cloudflare/containers', () => ({
   Container: class {
     envVars: Record<string, string> = {};
@@ -17,6 +18,7 @@ import {
   isLegalPv,
   isValidSfen,
   legalMoves,
+  validateBenchmarkDriverResult,
 } from '../src/contract';
 import { AnalysisContainer, handleRequest, type Env } from '../src/index';
 import { Position } from 'tsshogi';
@@ -326,7 +328,10 @@ describe('staging analysis Worker boundary', () => {
 
     const invalidObservation = benchmarkSuccess(STARTPOS, 'standard-2-t1-100ms-mpv2');
     (invalidObservation.conditions as any).actual.moveTimeMs = 10000;
-    const invalidEnv = makeEnv(() => invalidObservation, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const invalidEnv = makeEnv(
+      () => new Response(JSON.stringify(invalidObservation), { status: 418 }),
+      'secret-token', undefined, DRIVER_HEALTH, true,
+    );
     const rejected = await handleRequest(
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
@@ -336,7 +341,12 @@ describe('staging analysis Worker boundary', () => {
       invalidEnv,
     );
     expect(rejected.status).toBe(502);
-    expect((await result(rejected)).failure).toMatchObject({ code: 'engine_error' });
+    const rejectedPayload = await result(rejected);
+    expect(rejectedPayload.failure).toMatchObject({
+      code: 'engine_error',
+      detail: 'check=conditions.actual.values; driverStatus=success; containerHttpStatus=418',
+    });
+    expect(JSON.stringify(rejectedPayload)).not.toContain('10000');
   });
 
   it('validates a real Python driver v2 response from a fake USI process', async () => {
@@ -358,6 +368,114 @@ describe('staging analysis Worker boundary', () => {
       identityDigests: driverResponse.identityDigests,
       conditionId: 'standard-2-t1-100ms-mpv2',
     });
+  });
+
+  it('accepts each real Python driver benchmark outcome and maps its typed HTTP status', async () => {
+    const expected = {
+      success: { httpStatus: 200, driverStatus: 'success' },
+      incomplete: { httpStatus: 200, driverStatus: 'incomplete' },
+      resign: { httpStatus: 200, driverStatus: 'incomplete' },
+      busy: { httpStatus: 409, driverStatus: 'failure', code: 'busy' },
+      instance_mismatch: { httpStatus: 409, driverStatus: 'failure', code: 'instance_mismatch' },
+      timeout: { httpStatus: 504, driverStatus: 'failure', code: 'timeout' },
+      identity_mismatch: { httpStatus: 502, driverStatus: 'failure', code: 'identity_mismatch' },
+      engine_error: { httpStatus: 502, driverStatus: 'failure', code: 'engine_error' },
+    } as const;
+    for (const [scenario, expectation] of Object.entries(expected)) {
+      const generated = JSON.parse(execFileSync(
+        'python3', ['container/benchmark_response_fixture.py', scenario], { encoding: 'utf8' },
+      )) as { httpStatus: number; response: Record<string, any> };
+      const env = makeEnv(
+        () => new Response(JSON.stringify(generated.response), { status: generated.httpStatus }),
+        'secret-token', undefined, DRIVER_HEALTH, true,
+      );
+      const workerResponse = await handleRequest(
+        new Request('https://staging.example/internal/benchmark', {
+          method: 'POST',
+          headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+          body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        }),
+        env,
+      );
+      expect(workerResponse.status, scenario).toBe(expectation.httpStatus);
+      const payload = await result(workerResponse);
+      expect(payload.status, scenario).toBe(expectation.driverStatus);
+      if (expectation.driverStatus === 'failure') {
+        const failure = payload.failure as Record<string, unknown>;
+        expect(failure.code, scenario).toBe(expectation.code);
+      }
+      if (expectation.driverStatus === 'incomplete') {
+        expect(payload.meta).toMatchObject({
+          nodes: null, completedDepth: null, searchElapsedMs: null, engineNps: null, derivedNps: null,
+        });
+        expect(payload.lastInfo).toMatchObject({ nodes: 1200, timeMs: 100, depth: 1, adopted: false });
+      }
+    }
+  });
+
+  it('reports safe validation details including a rejected driver failure code', async () => {
+    const generated = JSON.parse(execFileSync(
+      'python3', ['container/benchmark_response_fixture.py', 'engine_error'], { encoding: 'utf8' },
+    )) as { httpStatus: number; response: Record<string, any> };
+    generated.response.failure.message = 'secret payload detail';
+    generated.response.runtime.driverBootId = 'c'.repeat(32);
+    const env = makeEnv(
+      () => new Response(JSON.stringify(generated.response), { status: generated.httpStatus }),
+      'secret-token', undefined, DRIVER_HEALTH, true,
+    );
+    const response = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+      }),
+      env,
+    );
+    const payload = await result(response);
+    expect(response.status).toBe(502);
+    const failure = payload.failure as Record<string, unknown>;
+    expect(failure.detail).toBe(
+      'check=runtime.driverBootId; driverStatus=failure; failureCode=engine_error; containerHttpStatus=502',
+    );
+    expect(JSON.stringify(payload)).not.toContain('secret payload detail');
+  });
+
+  it('returns terminal benchmark results without asking the driver to search', async () => {
+    for (const [sfen, terminal] of [[TERMINAL_MATE, 'checkmate'], [TERMINAL_NO_MOVES, 'no-legal-moves']] as const) {
+      const env = makeEnv(undefined, 'secret-token', undefined, DRIVER_HEALTH, true);
+      const response = await handleRequest(
+        new Request('https://staging.example/internal/benchmark', {
+          method: 'POST',
+          headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+          body: JSON.stringify({ sfen, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        }),
+        env,
+      );
+      expect(response.status).toBe(200);
+      expect(await result(response)).toMatchObject({ status: 'terminal', terminal });
+      expect(env.forwardedPaths).toEqual(['/health']);
+    }
+  });
+
+  it('validates the captured real benchmark driver response using tsshogi root moves and the manifest condition', async () => {
+    const realResponse = realBenchmarkResponseFixture as Record<string, unknown>;
+    const condition = BENCHMARK_CONDITION_BY_ID.get('standard-2-t1-100ms-mpv2');
+    expect(condition).toBeDefined();
+    const rootLegalMoves = legalMoves(realResponse.sfen as string);
+    expect(rootLegalMoves).toHaveLength(30);
+    expect(validateBenchmarkDriverResult(realResponse, STARTPOS, rootLegalMoves, condition!)).not.toBeNull();
+
+    const env = makeEnv(() => realResponse, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const workerResponse = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: condition!.conditionId }),
+      }),
+      env,
+    );
+    expect(workerResponse.status).toBe(200);
+    expect(await result(workerResponse)).toMatchObject({ status: 'success', conditionId: condition!.conditionId });
   });
 
   it('rejects benchmark measurements when observed CPU or memory evidence disagrees', async () => {

@@ -16,6 +16,9 @@ assert spec.loader is not None
 sys.modules[spec.name] = runner
 spec.loader.exec_module(runner)
 
+BUILD_ID = "9" * 32
+GIT_COMMIT = "a" * 40
+
 
 class Response:
     status = 200
@@ -76,7 +79,9 @@ class RunnerTests(unittest.TestCase):
 
     def test_health_snapshot_whitelists_fields_and_hides_artifact_metadata(self) -> None:
         safe = runner.safe_health({
-            "status": "ready",
+        "status": "ready",
+        "buildId": BUILD_ID,
+        "gitCommit": GIT_COMMIT,
             "driverBootId": "b" * 32,
             "expectedInstanceType": "standard-2",
             "driverVersion": "usi-driver-v1",
@@ -95,6 +100,8 @@ class RunnerTests(unittest.TestCase):
         self.assertNotIn("private", safe["identityDigests"])
         self.assertEqual(list(safe["identityDigests"]), list(runner.IDENTITY_DIGEST_KEYS))
         self.assertEqual(safe["workerVersionId"], "worker-version-id")
+        self.assertEqual(safe["buildId"], BUILD_ID)
+        self.assertEqual(safe["gitCommit"], GIT_COMMIT)
         self.assertEqual(safe["driverBootId"], "b" * 32)
         self.assertEqual(safe["runtime"]["memoryMaxBytes"], 1234)
         self.assertEqual(safe["runtime"]["memTotalBytes"], 5_900_000_000)
@@ -159,6 +166,8 @@ class RunnerTests(unittest.TestCase):
                 path.write_text(content, encoding="utf-8")
             health = {
                 "status": "ready",
+                "buildId": BUILD_ID,
+                "gitCommit": GIT_COMMIT,
                 "driverVersion": "driver-v1",
                 "contractVersion": "contract-v1",
                 "workerVersionId": "version-id",
@@ -169,6 +178,8 @@ class RunnerTests(unittest.TestCase):
             image_ref = "registry.example/meeshogi@sha256:" + "f" * 64
             first = runner.build_run_fingerprint(
                 image_ref=image_ref,
+                expected_build_id=BUILD_ID,
+                mode="positions",
                 endpoint="https://staging.example/",
                 health=health,
                 conditions_path=conditions,
@@ -178,6 +189,8 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertEqual(first["endpoint"], "https://staging.example")
             self.assertEqual(first["imageDigest"], "f" * 64)
+            self.assertEqual(first["buildId"], BUILD_ID)
+            self.assertEqual(first["gitCommit"], GIT_COMMIT)
             self.assertEqual(first["workerVersionId"], "version-id")
             self.assertEqual(first["conditionsSha256"], runner.sha256_file(conditions))
             self.assertEqual(first["datasetSha256"], runner.sha256_file(dataset))
@@ -185,6 +198,8 @@ class RunnerTests(unittest.TestCase):
             manifest.write_text("changed manifest", encoding="utf-8")
             second = runner.build_run_fingerprint(
                 image_ref=image_ref,
+                expected_build_id=BUILD_ID,
+                mode="positions",
                 endpoint="https://staging.example/",
                 health=health,
                 conditions_path=conditions,
@@ -193,6 +208,30 @@ class RunnerTests(unittest.TestCase):
                 manifest_path=manifest,
             )
             self.assertNotEqual(first["fingerprintSha256"], second["fingerprintSha256"])
+
+    def test_run_fingerprint_rejects_health_from_a_different_build(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="meeshogi-runner-build-test-") as directory:
+            root = Path(directory)
+            conditions, dataset, manifest = (root / name for name in ("conditions.json", "dataset.json", "run.json"))
+            for path in (conditions, dataset, manifest):
+                path.write_text("{}", encoding="utf-8")
+            health = {
+                "status": "ready", "buildId": "8" * 32, "gitCommit": GIT_COMMIT,
+                "driverVersion": "driver-v1", "contractVersion": "contract-v1",
+                "identityDigests": {key: char * 64 for key, char in zip(runner.IDENTITY_DIGEST_KEYS, "abcde")},
+            }
+            with self.assertRaisesRegex(ValueError, "buildId does not match"):
+                runner.build_run_fingerprint(
+                    image_ref="registry.example/image@sha256:" + "f" * 64,
+                    expected_build_id=BUILD_ID,
+                    mode="positions",
+                    endpoint="https://staging.example",
+                    health=health,
+                    conditions_path=conditions,
+                    dataset_path=dataset,
+                    dataset_manifest_sha256="1" * 64,
+                    manifest_path=manifest,
+                )
 
     def test_resume_refuses_attempts_without_run_start_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory(prefix="meeshogi-runner-test-") as directory:

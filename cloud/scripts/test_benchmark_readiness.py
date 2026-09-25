@@ -20,11 +20,14 @@ spec.loader.exec_module(readiness)
 
 
 GIB = 1 << 30
+BUILD_ID = "9" * 32
 
 
 def healthy_payload() -> dict:
     return {
         "status": "ready",
+        "buildId": BUILD_ID,
+        "gitCommit": "a" * 40,
         "driverBootId": "a" * 32,
         "expectedInstanceType": "standard-2",
         "workerBenchmarkEnabled": True,
@@ -62,10 +65,12 @@ class FakeResponse:
 
 class BenchmarkReadinessTests(unittest.TestCase):
     def test_cpu_and_memtotal_prove_instance_type_without_cgroup_values(self) -> None:
-        result = readiness.inspect_health(200, healthy_payload(), "standard-2", True)
+        result = readiness.inspect_health(200, healthy_payload(), "standard-2", BUILD_ID, True)
         self.assertTrue(result["ready"])
         self.assertEqual(result["runtime"]["memTotalBytes"], 5 * GIB + GIB // 2)
         self.assertEqual(result["runtime"]["rootDiskTotalBytes"], 32 * GIB)
+        self.assertEqual(result["buildId"], BUILD_ID)
+        self.assertEqual(result["gitCommit"], "a" * 40)
         self.assertIsNone(result["resourceEvidence"]["cpuQuotaMatchesExpected"])
         self.assertIsNone(result["resourceEvidence"]["memoryLimitMatchesExpected"])
 
@@ -74,11 +79,18 @@ class BenchmarkReadinessTests(unittest.TestCase):
         payload["runtime"]["affinityCpuCount"] = 2
         payload["runtime"]["memTotalBytes"] = 4 * GIB
         payload["runtime"]["cpuQuota"] = 2
-        result = readiness.inspect_health(200, payload, "standard-2", True)
+        result = readiness.inspect_health(200, payload, "standard-2", BUILD_ID, True)
         self.assertFalse(result["ready"])
         self.assertIn("affinity_cpu_count_mismatch", result["failureReasons"])
         self.assertIn("mem_total_missing_or_out_of_range", result["failureReasons"])
         self.assertIn("cpu_quota_mismatch", result["failureReasons"])
+
+    def test_wrong_image_build_id_is_not_ready(self) -> None:
+        payload = healthy_payload()
+        payload["buildId"] = "8" * 32
+        result = readiness.inspect_health(200, payload, "standard-2", BUILD_ID, True)
+        self.assertFalse(result["ready"])
+        self.assertIn("driver_build_id_mismatch", result["failureReasons"])
 
     def test_main_reports_each_poll_and_recovers_from_old_container_contract(self) -> None:
         old_container = {
@@ -105,6 +117,7 @@ class BenchmarkReadinessTests(unittest.TestCase):
         output = io.StringIO()
         argv = [
             "benchmark-readiness.py", "--expected-instance-type", "standard-2",
+            "--expected-build-id", BUILD_ID,
             "--max-wait-seconds", "2", "--poll-interval-seconds", "0", "--timeout", "1",
         ]
         with (

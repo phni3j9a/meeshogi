@@ -27,6 +27,7 @@ CONDITIONS_MANIFEST_PATH = Path(os.environ.get(
     "CONDITIONS_MANIFEST_PATH",
     str(Path(__file__).resolve().parents[1] / "bench" / "conditions.json"),
 ))
+BUILD_INFO_PATH = Path(os.environ.get("BUILD_INFO_PATH", "/opt/app/build-info.json"))
 
 MAX_BODY_BYTES = 1024
 MAX_SFEN_BYTES = 256
@@ -44,8 +45,26 @@ READY_TIMEOUT_SECONDS = 45.0
 MOVE_RE = re.compile(r"^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$")
 SFEN_RE = re.compile(r"^[0-9KkLlNnSsGgBbRrPp/+ bw-]+$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+BUILD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DRIVER_BOOT_ID = uuid.uuid4().hex
 GIB = 1 << 30
+DEV_BUILD_INFO = {"buildId": "0" * 32, "gitCommit": "0" * 40}
+
+
+def read_build_info(path: Path = BUILD_INFO_PATH) -> dict[str, str]:
+    """Read the immutable build identity baked into the Container image."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return dict(DEV_BUILD_INFO)
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("buildId"), str) or not BUILD_ID_RE.fullmatch(value["buildId"])
+        or not isinstance(value.get("gitCommit"), str) or not GIT_COMMIT_RE.fullmatch(value["gitCommit"])
+    ):
+        return dict(DEV_BUILD_INFO)
+    return {"buildId": value["buildId"], "gitCommit": value["gitCommit"]}
 
 
 class DriverError(Exception):
@@ -399,11 +418,18 @@ class MultiPvCollector:
         self.completed: dict[int, list[dict[str, Any]]] = {}
         self.nodes: int | None = None
         self.engine_time: int | None = None
+        self.last_info: dict[str, Any] | None = None
 
     def observe(self, line: str) -> None:
         record = parse_info_line(line, self.side_to_move)
         if not record:
             return
+        self.last_info = {
+            "depth": record["depth"],
+            "nodes": record["nodes"],
+            "timeMs": record["engineTime"],
+            "adopted": False,
+        }
         if record["nodes"] is not None:
             self.nodes = max(self.nodes or 0, record["nodes"])
         if record["engineTime"] is not None:
@@ -711,6 +737,7 @@ class AnalysisService:
         manifest_path: Path = MANIFEST_PATH,
         conditions_manifest_path: Path = CONDITIONS_MANIFEST_PATH,
         settings: dict[str, Any] | None = None,
+        build_info: dict[str, str] | None = None,
     ):
         self.engine_path = engine_path
         self.weight_path = weight_path
@@ -721,6 +748,7 @@ class AnalysisService:
             engine_path, weight_path, options_path, manifest_path
         )
         self.identity = artifact_identity(self.manifest)
+        self.build_info = dict(build_info) if build_info is not None else read_build_info()
         self.settings = {
             "searchGraceMs": SEARCH_GRACE_MS,
             "moveTimeMs": MOVE_TIME_MS,
@@ -761,6 +789,7 @@ class AnalysisService:
             ),
             "driverVersion": self.identity["driverVersion"],
             "contractVersion": self.identity["contractVersion"],
+            **self.build_info,
             "identityDigests": {key: self.identity[key] for key in digest_keys},
         }
 
@@ -850,6 +879,7 @@ class AnalysisService:
             "driverBootId": DRIVER_BOOT_ID,
             "engineEpoch": engine_epoch,
             "driverVersion": self.identity["driverVersion"],
+            **self.build_info,
             "identityDigests": {
                 key: self.identity[key]
                 for key in ("engineSha256", "weightSha256", "optionsSha256", "sourceArchiveSha256", "sourceTreeSha256")
@@ -932,9 +962,13 @@ class AnalysisService:
             if result["status"] == "failure":
                 result["failure"] = {"code": "engine_error", "message": "Engine returned an unsupported bestmove."}
                 return 502, result
+            if collector.last_info is not None:
+                result["lastInfo"] = collector.last_info
             return 200, result
         if block is None:
             result["status"] = "incomplete"
+            if collector.last_info is not None:
+                result["lastInfo"] = collector.last_info
             return 200, result
         depth, records = block
         top = records[0]

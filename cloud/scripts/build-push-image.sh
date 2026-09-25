@@ -12,6 +12,12 @@ cd "$CLOUD_DIR"
 
 context_json="$(bash "$SCRIPT_DIR/prepare-private-context.sh")"
 CONTEXT="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["contextPath"])' "$context_json")"
+BUILD_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+GIT_COMMIT="$(git rev-parse --verify HEAD)"
+[[ "$BUILD_ID" =~ ^[0-9a-f]{32}$ ]] || { echo "Could not generate a valid build ID." >&2; exit 1; }
+[[ "$GIT_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "Could not read the current git commit." >&2; exit 1; }
+printf '{"buildId":"%s","gitCommit":"%s"}\n' "$BUILD_ID" "$GIT_COMMIT" > "$CONTEXT/build-info.json"
+chmod 0440 "$CONTEXT/build-info.json"
 DOCKER_CONFIG_DIR="$(mktemp -d /tmp/meeshogi-analysis-docker.XXXXXX)"
 chmod 0700 "$DOCKER_CONFIG_DIR"
 CONFIG_FILE="$(mktemp "$CLOUD_DIR/.wrangler.staging.build.XXXXXX.jsonc")"
@@ -34,3 +40,5 @@ DIGEST="$(python3 -c 'import json,sys; value=json.loads(sys.argv[1]); digest=val
 [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Cloudflare registry did not return a pinned sha256 manifest digest." >&2; exit 1; }
 IMAGE_REF="registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/meeshogi-analysis-mvp-staging@${DIGEST}"
 printf 'ANALYSIS_IMAGE_REF=%s\n' "$IMAGE_REF"
+printf 'ANALYSIS_BUILD_ID=%s\n' "$BUILD_ID"
+printf 'ANALYSIS_GIT_COMMIT=%s\n' "$GIT_COMMIT"
