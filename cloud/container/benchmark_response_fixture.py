@@ -16,6 +16,7 @@ import driver  # noqa: E402
 
 FAKE_USI = r'''#!/usr/bin/env python3
 import os
+import signal
 import sys
 import time
 scenario = os.environ.get("DRIVER_FIXTURE_SCENARIO", "success")
@@ -33,6 +34,11 @@ for line in sys.stdin:
         print("readyok", flush=True)
     elif command.startswith("go "):
         moves = ("7g7f", "2g2f", "6g6f")
+        if scenario in {"unexpected_exit_code", "unexpected_signal"}:
+            print("info depth 1 multipv 1 score cp 39 nodes 1200 time 100 nps 12000 pv 7g7f", flush=True)
+            if scenario == "unexpected_exit_code":
+                os._exit(23)
+            os.kill(os.getpid(), signal.SIGTERM)
         if scenario == "timeout":
             print("info depth 1 multipv 1 score cp 39 nodes 1200 time 10 nps 120000 pv 7g7f", flush=True)
             while True:
@@ -48,7 +54,10 @@ for line in sys.stdin:
 
 def main() -> None:
     scenario = sys.argv[1] if len(sys.argv) > 1 else "success"
-    supported = {"success", "incomplete", "resign", "busy", "instance_mismatch", "timeout", "identity_mismatch", "engine_error"}
+    supported = {
+        "success", "incomplete", "resign", "busy", "instance_mismatch", "timeout", "identity_mismatch", "engine_error",
+        "unexpected_exit_code", "unexpected_signal",
+    }
     if scenario not in supported:
         raise SystemExit(f"unsupported benchmark fixture scenario: {scenario}")
     with tempfile.TemporaryDirectory(prefix="meeshogi-fake-usi-") as directory:

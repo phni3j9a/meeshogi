@@ -380,6 +380,14 @@ describe('staging analysis Worker boundary', () => {
       timeout: { httpStatus: 504, driverStatus: 'failure', code: 'timeout' },
       identity_mismatch: { httpStatus: 502, driverStatus: 'failure', code: 'identity_mismatch' },
       engine_error: { httpStatus: 502, driverStatus: 'failure', code: 'engine_error' },
+      unexpected_exit_code: {
+        httpStatus: 502, driverStatus: 'failure', code: 'engine_error',
+        diagnostics: { exitCode: 23, terminatingSignal: null, waitReturnCode: 23 },
+      },
+      unexpected_signal: {
+        httpStatus: 502, driverStatus: 'failure', code: 'engine_error',
+        diagnostics: { exitCode: null, terminatingSignal: 'SIGTERM', waitReturnCode: -15 },
+      },
     } as const;
     for (const [scenario, expectation] of Object.entries(expected)) {
       const generated = JSON.parse(execFileSync(
@@ -403,6 +411,14 @@ describe('staging analysis Worker boundary', () => {
       if (expectation.driverStatus === 'failure') {
         const failure = payload.failure as Record<string, unknown>;
         expect(failure.code, scenario).toBe(expectation.code);
+        if ('diagnostics' in expectation) {
+          expect(failure.diagnostics).toMatchObject({
+            ...expectation.diagnostics,
+            stdoutEof: true,
+            lastInfo: { depth: 1, nodes: 1200, timeMs: 100, adopted: false },
+            lastNonInfoLineKind: 'readyok',
+          });
+        }
       }
       if (expectation.driverStatus === 'incomplete') {
         expect(payload.meta).toMatchObject({

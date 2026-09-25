@@ -84,6 +84,11 @@ class SearchTimeout(DriverError):
         super().__init__("timeout", "The engine exceeded the fixed search deadline.")
 
 
+class EngineExitedUnexpectedly(DriverError):
+    def __init__(self, message: str):
+        super().__init__("engine_error", message)
+
+
 def is_valid_sfen(value: Any) -> bool:
     if not isinstance(value, str) or not value or len(value.encode("utf-8")) > MAX_SFEN_BYTES:
         return False
@@ -468,6 +473,8 @@ class EngineSession:
         self.process_started_monotonic: float | None = None
         self.lines: queue.Queue[str | None] = queue.Queue()
         self.reader: threading.Thread | None = None
+        self.stdout_eof = False
+        self.last_non_info_line_kind: str | None = None
         self.engine_name = ""
         self.verification_stop_injected = False
 
@@ -495,7 +502,7 @@ class EngineSession:
         while True:
             line = self.next_line(deadline)
             if line is None:
-                raise DriverError("engine_error", "Engine ended during the USI handshake.")
+                raise EngineExitedUnexpectedly("Engine ended during the USI handshake.")
             if line.startswith("id name "):
                 self.engine_name = line[len("id name ") :]
             if line == "usiok":
@@ -551,19 +558,32 @@ class EngineSession:
         try:
             for line in self.process.stdout:
                 clean = line.rstrip("\r\n")
+                if not clean.startswith("info "):
+                    self.last_non_info_line_kind = self._line_kind(clean)
                 if clean.startswith("option name "):
                     option = clean[len("option name ") :].split(" type ", 1)[0]
                     self._options_seen.add(option)
                 self.lines.put(clean)
+            self.stdout_eof = True
         finally:
             self.lines.put(None)
+
+    @staticmethod
+    def _line_kind(line: str) -> str:
+        tokens = line.split()
+        if not tokens:
+            return "empty"
+        token = tokens[0]
+        if token in {"id", "option", "usiok", "readyok", "bestmove", "checkmate"}:
+            return token
+        return "other"
 
     def _wait_for(self, token: str, timeout_seconds: float) -> None:
         deadline = time.monotonic() + timeout_seconds
         while True:
             line = self.next_line(deadline)
             if line is None:
-                raise DriverError("engine_error", f"Engine ended before {token}.")
+                raise EngineExitedUnexpectedly(f"Engine ended before {token}.")
             if line == token:
                 return
 
@@ -587,7 +607,7 @@ class EngineSession:
             except TimeoutError as error:
                 raise SearchTimeout() from error
             if line is None:
-                raise DriverError("engine_error", "Engine ended during search.")
+                raise EngineExitedUnexpectedly("Engine ended during search.")
             if line.startswith("info "):
                 collector.observe(line)
             if line.startswith("bestmove "):
@@ -686,6 +706,12 @@ class EngineSession:
         # reaped the child, returncode is already set and Popen.wait() returns it directly.
         process.returncode = wait_return_code
         wait_return_code = process.wait()
+        terminating_signal = None
+        if wait_return_code < 0:
+            try:
+                terminating_signal = signal.Signals(-wait_return_code).name
+            except ValueError:
+                terminating_signal = f"SIG{-wait_return_code}"
         process_elapsed_ms = None
         if self.process_started_monotonic is not None:
             process_elapsed_ms = max(1, round((time.monotonic() - self.process_started_monotonic) * 1000))
@@ -700,6 +726,8 @@ class EngineSession:
         return {
             "enginePid": process.pid,
             "waitReturnCode": wait_return_code,
+            "exitCode": wait_return_code if wait_return_code >= 0 else None,
+            "terminatingSignal": terminating_signal,
             "processCpuSeconds": cpu_seconds,
             "processElapsedMs": process_elapsed_ms,
         }
@@ -944,7 +972,17 @@ class AnalysisService:
             result["meta"]["processCpuSeconds"] = reap_evidence["processCpuSeconds"]
         block = collector.best_block
         if error is not None:
-            result.update({"status": "failure", "failure": {"code": error.code, "message": error.message}})
+            failure: dict[str, Any] = {"code": error.code, "message": error.message}
+            if isinstance(error, EngineExitedUnexpectedly) and reap_evidence is not None:
+                failure["diagnostics"] = {
+                    "exitCode": reap_evidence["exitCode"],
+                    "terminatingSignal": reap_evidence["terminatingSignal"],
+                    "waitReturnCode": reap_evidence["waitReturnCode"],
+                    "stdoutEof": session.stdout_eof,
+                    "lastInfo": collector.last_info,
+                    "lastNonInfoLineKind": session.last_non_info_line_kind,
+                }
+            result.update({"status": "failure", "failure": failure})
             return (502 if error.code != "timeout" else 504), result
         if timed_out:
             if block:

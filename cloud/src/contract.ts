@@ -357,7 +357,18 @@ export type BenchmarkDriverFailure = {
   sfen: string;
   perspective: 'sente';
   status: 'failure';
-  failure: { code: 'busy' | 'timeout' | 'identity_mismatch' | 'instance_mismatch' | 'engine_error'; message: string };
+  failure: {
+    code: 'busy' | 'timeout' | 'identity_mismatch' | 'instance_mismatch' | 'engine_error';
+    message: string;
+    diagnostics?: {
+      exitCode: number | null;
+      terminatingSignal: string | null;
+      waitReturnCode: number;
+      stdoutEof: boolean;
+      lastInfo: { depth: number; nodes: number | null; timeMs: number | null; adopted: false } | null;
+      lastNonInfoLineKind: string | null;
+    };
+  };
   conditionId: string;
   driverBootId: string;
   engineEpoch: number;

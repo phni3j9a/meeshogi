@@ -95,6 +95,11 @@ for command in iter(commands.get, None):
             emit_info()
             print("bestmove 7g7f", flush=True)
             continue
+        if scenario in {"unexpected-exit-code", "unexpected-signal"}:
+            print("info depth 3 multipv 1 score cp 42 nodes 4242 time 77 pv 7g7f 3c3d", flush=True)
+            if scenario == "unexpected-exit-code":
+                os._exit(23)
+            os.kill(os.getpid(), signal.SIGTERM)
         if scenario == "hang-once" and boot == 1:
             print("info depth 1 multipv 1 score cp 9999 nodes 10 time 1 pv 9a9b", flush=True)
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -315,6 +320,35 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(code, 502)
         self.assertEqual(result["status"], "failure")
         self.assertEqual(result["failure"]["code"], "engine_error")
+
+    def test_unexpected_engine_exit_reports_safe_wait4_and_output_diagnostics(self) -> None:
+        cases = (
+            ("unexpected-exit-code", 23, None, 23),
+            ("unexpected-signal", None, "SIGTERM", -signal.SIGTERM),
+        )
+        for scenario, exit_code, terminating_signal, wait_return_code in cases:
+            with self.subTest(scenario=scenario):
+                prior_pids = self.pids_path.read_text(encoding="ascii").splitlines() if self.pids_path.exists() else []
+                with patch.object(driver_module, "runtime_facts", side_effect=benchmark_runtime):
+                    service = self.service(scenario, benchmark=True)
+                    code, result = self.benchmark_request(service, "standard-2-t1-100ms-mpv2")
+                self.assertEqual(code, 502)
+                self.assertEqual(result["status"], "failure")
+                self.assertEqual(result["failure"]["code"], "engine_error")
+                self.assertEqual(result["failure"]["message"], "Engine ended during search.")
+                diagnostics = result["failure"]["diagnostics"]
+                self.assertEqual(diagnostics["exitCode"], exit_code)
+                self.assertEqual(diagnostics["terminatingSignal"], terminating_signal)
+                self.assertEqual(diagnostics["waitReturnCode"], wait_return_code)
+                self.assertTrue(diagnostics["stdoutEof"])
+                self.assertEqual(
+                    diagnostics["lastInfo"],
+                    {"depth": 3, "nodes": 4242, "timeMs": 77, "adopted": False},
+                )
+                self.assertEqual(diagnostics["lastNonInfoLineKind"], "readyok")
+                self.assertNotIn("info depth", json.dumps(result))
+                observed_pids = self.pids_path.read_text(encoding="ascii").splitlines()
+                self.assertEqual(len(observed_pids), len(prior_pids) + 1, "unexpected engine exit must not retry")
 
     def test_timeout_stops_kills_reaps_busy_request_and_next_is_fresh(self) -> None:
         service = self.service("hang-once")
