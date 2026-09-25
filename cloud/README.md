@@ -109,12 +109,13 @@ The verifier passes `--verification` only to its first deploy invocation; the no
 
 ## staging検証結果 (#19)
 
-2026-09-25に実stagingで検証した（imageは`a7e5db6`からbuild、Worker/driverは`bd436e3`）。最終imageは `registry.cloudflare.com/<account>/meeshogi-analysis-mvp-staging@sha256:7f6419e171fff65fa0c4531f1421580f085d288cef0c34fc960cb97d7a7bf624`、runtime baseは `ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254`。build時のUSI smoke（`usiok` / `readyok`）は成功した。
+2026-09-25に実stagingで検証した（image・Worker・driverとも`0b1dc86`からbuild/deploy）。最終imageは `registry.cloudflare.com/<account>/meeshogi-analysis-mvp-staging@sha256:331f23790cadc0a017516493ac7536c14b268129fc0c0434195e2d4c64c7f13d`、runtime baseは `ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254`。build時のUSI smoke（`usiok` / `readyok`）は成功した。
 
 - Registry manifestとtag一覧への匿名GET、および認証なしの解析POSTはいずれもHTTP 401。
-- 通常smokeは4 fixtureすべて成功。startposは3候補・depth 19（約966k nodes、約2.2秒）、synthetic middlegameはdepth 19、mate-in-oneはmate score、checkmate fixtureは終局・候補なし・探索値なしを確認した。
+- 通常smokeは4 fixtureすべて成功。手数100のSFENも3候補・depth 19で解析できた。startposは3候補・depth 19（約966k nodes、約2.2秒）、synthetic middlegameはdepth 19、mate-in-oneはmate score、checkmate fixtureは終局・候補なし・探索値なしを確認した。
 - timeout検証ではhealthが `enabled=true, consumed=false` を報告し、注入した停止でHTTP 504 `timeout` とengine reap（PID 4、wait rc `-9`）を確認した。同じboot IDで次の独立要求はHTTP 200となり、新しいengine epoch/PIDで成功した。通常modeで再deploy後は `enabled=false` となり、4 fixture smokeも再成功した。
 - Wrangler SSHはHTTP 404 `Deployment not found`。instances APIは空で、要求成功中もWranglerの状態は `inactive` / location・version nullだったため、SSHとinstance状態確認は検証ゲートに採用しなかった。
+- 新しいimageへ差し替えたdeployの直後は、前のContainer（旧image・旧env）が15分以上応答し続けることがあった。検証用deployはimageを先に通常deployで切り替えてから行い、`/internal/health` のboot IDとflagで対象Containerを確認する。
 - deploy直後はContainer起動中の要求がtyped 502になることがある。Python urllib既定User-AgentはCloudflare error 1010（HTTP 403）になった。
 
 ## Remaining limits
