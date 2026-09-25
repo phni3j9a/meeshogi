@@ -20,6 +20,10 @@ trap cleanup EXIT INT TERM
 IMAGE_DIGEST="${ANALYSIS_IMAGE_REF##*@sha256:}"
 python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST"
 
-# Secret input is consumed by Wrangler stdin. It is never put in a config, command argument, or image.
-printf '%s' "$ANALYSIS_INTERNAL_TOKEN" | ./node_modules/.bin/wrangler secret put ANALYSIS_INTERNAL_TOKEN --config "$TEMP_CONFIG"
+# Create the Worker and its Container before adding the secret. Requests fail closed while it is unset.
+internal_token="$ANALYSIS_INTERNAL_TOKEN"
+unset ANALYSIS_INTERNAL_TOKEN
 ./node_modules/.bin/wrangler deploy --config "$TEMP_CONFIG" --strict --containers-rollout immediate
+# Secret input is consumed by Wrangler stdin. It is not inherited by deploy or put in a config, argument, or image.
+printf '%s' "$internal_token" | ./node_modules/.bin/wrangler secret put ANALYSIS_INTERNAL_TOKEN --config "$TEMP_CONFIG"
+unset internal_token

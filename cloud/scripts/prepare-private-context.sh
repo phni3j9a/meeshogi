@@ -45,8 +45,12 @@ if runtime["engine"]["sha256"] != recipe["engineSha256"]:
     raise SystemExit("Runtime manifest engine digest differs from the checked-in artifact manifest.")
 if runtime["weight"]["sha256"] != recipe["weightSha256"] or source["nn"]["sha256"] != recipe["weightSha256"]:
     raise SystemExit("Weight manifest digests differ from the checked-in artifact manifest.")
-if source["engine_options"]["sha256"] != recipe["optionsSha256"]:
+source_options = source["source"]["selected_members"]["engine_options.txt"]
+archive_options = source["archive"]["selected_members"]["engine_options.txt"]
+if source_options["sha256"] != recipe["optionsSha256"] or archive_options["sha256"] != recipe["optionsSha256"]:
     raise SystemExit("Options manifest digest differs from the checked-in artifact manifest.")
+if source_options["path"] != source["engine_options"]["path"] or archive_options["path"] != source_options["path"]:
+    raise SystemExit("Source and archive manifests point to different engine options files.")
 if source["source_archive"]["archive_sha256"] != recipe["sourceArchiveSha256"]:
     raise SystemExit("Source archive digest differs from the checked-in artifact manifest.")
 if source["source_archive"]["source_tree_sha256"] != recipe["sourceTreeSha256"]:
@@ -60,7 +64,7 @@ if runtime["build_manifest"]["sha256"] != file_hash(build_path):
 
 engine_path = manifest_file(runtime["engine"])
 weight_path = manifest_file(runtime["weight"])
-options_path = manifest_file(source["engine_options"])
+options_path = manifest_file(source_options)
 if manifest_file(build["binary"]) != engine_path or manifest_file(source["nn"]) != weight_path:
     raise SystemExit("Runtime, source and build manifests point to different artifacts.")
 if options_path.read_text(encoding="ascii") != recipe["optionsText"]:

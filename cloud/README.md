@@ -12,9 +12,9 @@ The fixed verification conditions are `Threads=1`, `USI_Hash=64 MiB`, `movetime=
 
 Cloudflare Containers require one Durable Object class and binding. This implementation has exactly one `AnalysisContainer` class, its `ANALYSIS_CONTAINER` binding, and the `new_sqlite_classes` migration used to register it. It adds no application Durable Object storage, coordinator, alarm, scheduler, retry, or recovery code. The class uses the standard `@cloudflare/containers` routing and lifecycle.
 
-The Python 3.12 driver uses only the standard library. It checks engine, model, options, source archive, source tree, and build identity before opening its HTTP listener. It starts a fresh engine process for each request and waits for it to exit. A busy request is rejected immediately. The search deadline is `movetime + 5 s`; on timeout the driver sends `stop`, waits up to 750 ms for a response, sends `SIGTERM`, then `SIGKILL` if needed, and always calls `wait()` to reap the child. The next request uses a new process. `bestmove resign` yields an incomplete result with `engineOutcome: "resign"` and no fabricated move.
+The Python 3.12 driver uses only the standard library. It checks engine, model, options, source archive, source tree, and build identity before opening its HTTP listener. The `ubuntu:24.04` image provides a new enough glibc and libstdc++ for the engine; a Docker build-time USI/`isready` smoke applies the same `EvalDir=/opt/engine` and fixed options as the driver, so an incompatible base or unreadable model fails the image build. It starts a fresh engine process for each request and waits for it to exit. A busy request is rejected immediately. The search deadline is `movetime + 5 s`; on timeout the driver sends `stop`, waits up to 750 ms for a response, sends `SIGTERM`, then `SIGKILL` if needed, and always calls `wait()` to reap the child. The next request uses a new process. `bestmove resign` yields an incomplete result with `engineOutcome: "resign"` and no fabricated move.
 
-The image is `linux/amd64`. The worker config is only for `meeshogi-analysis-mvp-staging`, one `standard-2` Container instance, and a digest-pinned Cloudflare managed registry image. `wrangler.staging.jsonc` is a template; scripts render a temporary config with the real account ID and image digest, then remove it. The separate SSH facility is enabled for Wrangler operators with account write access so one engine can be stopped during the timeout check. There is no public fault-injection route or public Container port.
+The image is `linux/amd64`. The worker config is only for `meeshogi-analysis-mvp-staging`, with one `standard-2` Container instance named `meeshogi-analysis-mvp-staging-analysis` and a digest-pinned Cloudflare managed registry image. `wrangler.staging.jsonc` is a template; scripts render a temporary config with the real account ID and image digest, then remove it. The separate SSH facility is enabled for Wrangler operators with account write access so one engine can be stopped during the timeout check. There is no public fault-injection route or public Container port.
 
 ## Offline checks
 
@@ -38,6 +38,8 @@ npm run check
 
 The operator environment needs Docker with a working `buildx` driver, Wrangler 4.139.0, Cloudflare credentials with Container registry and Worker deployment access, and the existing `/home/server/projects/sekirei-weight` checkout. No new account or package is required. `CLOUDFLARE_ACCOUNT_ID` is the 32-character Cloudflare account ID. `SEKIREI_WEIGHT_ROOT` is optional and defaults to `/home/server/projects/sekirei-weight`.
 
+The Dockerfile uses the `ubuntu:24.04` base tag because this Worker environment could not inspect the local Docker image cache for a digest. Main should record the resolved base image digest from the Docker build environment.
+
 The preparation script reads only the three referenced JSON manifests before locating the files. It checks the manifest links and the expected engine, model, options, archive, and source-tree hashes, then hashes the actual files and copies only `engine`, `nn.bin`, `engine_options.txt`, the public driver, the public artifact manifest, the Dockerfile, and a restrictive `.dockerignore` into a mode-0700 directory under `/tmp`. It does not modify the checkout. The combined build script invokes preparation, runs Wrangler's `containers build --push` for the managed registry, reads the pushed tag's manifest digest, and removes the private context, temporary Docker configuration, and rendered Wrangler config even on failure.
 
 Set the account and a new image tag, then run:
@@ -58,7 +60,7 @@ bash cloud/scripts/deploy-staging.sh
 unset ANALYSIS_INTERNAL_TOKEN
 ```
 
-`deploy-staging.sh` validates the account, repository, digest, and Worker name. It pipes the token to `wrangler secret put ANALYSIS_INTERNAL_TOKEN`; the token is never an argument, config value, build argument, image layer, or log value. It then deploys the digest-pinned image and the one standard Container migration. Do not place this token in `vars`, a `.env` file, a shell trace, or the Docker context.
+`deploy-staging.sh` validates the account, repository, digest, and Worker name. It first deploys the Worker and Container migration while the unset secret makes analysis fail closed, then pipes the token to `wrangler secret put ANALYSIS_INTERNAL_TOKEN`. The script removes the exported token before starting the deploy command, so Wrangler deploy does not inherit it. The token is never an argument, config value, build argument, image layer, or log value. Do not place this token in `vars`, a `.env` file, a shell trace, or the Docker context.
 
 The only operator environment values are:
 
