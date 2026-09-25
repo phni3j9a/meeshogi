@@ -12,14 +12,23 @@ import { Position } from 'tsshogi';
 
 export interface Env {
   ANALYSIS_INTERNAL_TOKEN?: string;
+  ANALYSIS_VERIFY_STOP_ENGINE_ONCE?: string;
   ANALYSIS_CONTAINER: DurableObjectNamespace<AnalysisContainer>;
 }
 
 const ANALYSIS_PATH = '/internal/analyze';
+const HEALTH_PATH = '/internal/health';
 
 export class AnalysisContainer extends Container<Env> {
   defaultPort = 8080;
   sleepAfter = '5m';
+
+  constructor(ctx: DurableObjectState<{}>, env: Env) {
+    super(ctx, env);
+    this.envVars = env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1'
+      ? { ANALYSIS_VERIFY_STOP_ENGINE_ONCE: '1' }
+      : {};
+  }
 }
 
 function json(value: unknown, status = 200): Response {
@@ -75,17 +84,33 @@ function unauthorized(status: number, code: 'auth_unconfigured' | 'unauthorized'
   return json(failure(code, message), status);
 }
 
-export async function handleRequest(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  if (url.pathname !== ANALYSIS_PATH) return json(failure('invalid', 'Not found.'), 404);
-  if (request.method !== 'POST') return json(failure('invalid', 'Method not allowed.'), 405);
-
+function authorize(request: Request, env: Env): Response | null {
   const expectedToken = env.ANALYSIS_INTERNAL_TOKEN;
   if (!expectedToken) return unauthorized(503, 'auth_unconfigured');
   const authorization = request.headers.get('authorization') ?? '';
   if (!authorization.startsWith('Bearer ') || !constantTimeEqual(authorization.slice(7), expectedToken)) {
     return unauthorized(401, 'unauthorized');
   }
+  return null;
+}
+
+export async function handleRequest(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname === HEALTH_PATH) {
+    if (request.method !== 'GET') return json(failure('invalid', 'Method not allowed.'), 405);
+    const authFailure = authorize(request, env);
+    if (authFailure) return authFailure;
+    return json({
+      schemaVersion: 1,
+      status: 'ready',
+      verificationStopEngineOnce: env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1',
+    });
+  }
+  if (url.pathname !== ANALYSIS_PATH) return json(failure('invalid', 'Not found.'), 404);
+  if (request.method !== 'POST') return json(failure('invalid', 'Method not allowed.'), 405);
+
+  const authFailure = authorize(request, env);
+  if (authFailure) return authFailure;
 
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
     return json(failure('invalid', 'Expected application/json.'), 415);

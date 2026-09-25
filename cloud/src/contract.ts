@@ -41,6 +41,16 @@ export type Score =
 
 export type Candidate = { move: string; pv: string[]; score: Score };
 
+export type DriverVerificationEvidence = {
+  driverBootId: string;
+  engineEpoch: number;
+  enginePid: number;
+  engineReaped: true;
+  waitReturned: true;
+  waitReturnCode: number;
+  stopInjected: boolean;
+};
+
 export type AnalysisResult = {
   schemaVersion: 1;
   sfen: string;
@@ -59,6 +69,7 @@ export type AnalysisResult = {
     } | null;
   };
   identity: typeof EXPECTED_IDENTITY;
+  verification?: DriverVerificationEvidence;
 };
 
 export type FailureResult = {
@@ -143,7 +154,20 @@ export type DriverFailure = {
   status: 'failure';
   failure: { code: 'busy' | 'timeout' | 'identity_mismatch' | 'engine_error'; message: string };
   identity: typeof EXPECTED_IDENTITY;
+  verification?: DriverVerificationEvidence;
 };
+
+function hasValidVerificationEvidence(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const evidence = value as Record<string, unknown>;
+  return typeof evidence.driverBootId === 'string' && /^[0-9a-f]{32}$/u.test(evidence.driverBootId)
+    && Number.isSafeInteger(evidence.engineEpoch) && typeof evidence.engineEpoch === 'number' && evidence.engineEpoch > 0
+    && Number.isSafeInteger(evidence.enginePid) && typeof evidence.enginePid === 'number' && evidence.enginePid > 0
+    && evidence.engineReaped === true
+    && evidence.waitReturned === true
+    && Number.isSafeInteger(evidence.waitReturnCode) && typeof evidence.waitReturnCode === 'number'
+    && typeof evidence.stopInjected === 'boolean';
+}
 
 export function validateDriverResult(
   value: unknown,
@@ -154,6 +178,7 @@ export function validateDriverResult(
   const result = value as Record<string, unknown>;
   if (result.schemaVersion !== 1 || result.sfen !== sfen || result.perspective !== 'sente') return null;
   if (!hasExactIdentity(result.identity)) return null;
+  if (Object.hasOwn(result, 'verification') && !hasValidVerificationEvidence(result.verification)) return null;
 
   if (result.status === 'failure') {
     const failureValue = result.failure;

@@ -11,7 +11,6 @@ from typing import Any
 from staging_readiness import (
     HttpObservation,
     ReadinessError,
-    collect_instance_states,
     post_analysis,
     wait_until_ready,
 )
@@ -106,7 +105,6 @@ def main() -> int:
             "httpStatus": None,
             "responseStatus": None,
             "failureCode": None,
-            "instanceStates": [{"state": "unavailable"}],
         }, separators=(",", ":")), file=sys.stderr)
         return 2
     if not url.startswith("https://"):
@@ -117,7 +115,6 @@ def main() -> int:
             "httpStatus": None,
             "responseStatus": None,
             "failureCode": None,
-            "instanceStates": [{"state": "unavailable"}],
         }, separators=(",", ":")), file=sys.stderr)
         return 2
     readiness: dict[str, Any] | None = None
@@ -125,13 +122,13 @@ def main() -> int:
     try:
         positions = load_positions()
         try:
-            readiness = wait_until_ready(url, token, positions[0]["sfen"], os.environ)
+            readiness = wait_until_ready(url, token, positions[0]["sfen"])
         except ReadinessError as error:
             print(json.dumps({
                 "phase": "readiness",
                 "status": "failed",
                 "check": error.check,
-                **error.diagnostics(),
+                **error.diagnostics(token),
             }, separators=(",", ":")), file=sys.stderr)
             return 1
         last_observation = readiness["observation"]
@@ -141,12 +138,11 @@ def main() -> int:
             "httpStatus": readiness["observation"].http_status,
             "responseStatus": readiness["observation"].payload.get("status"),
             "warmupAttempts": readiness["attempts"],
-            "instanceStates": readiness["instanceStates"],
         }, separators=(",", ":")))
         for position in positions:
             observation = request_analysis(url, token, position["sfen"])
             last_observation = observation
-            status, value = observation.http_status, observation.payload
+            value = observation.payload
             try:
                 check_result(position, observation)
                 meta = value["meta"]
@@ -161,7 +157,7 @@ def main() -> int:
                     "mateReported": any(candidate["score"]["kind"] == "mate" for candidate in value["candidates"]),
                 }
             except Exception as error:
-                diagnostic = observation.diagnostics()
+                diagnostic = observation.diagnostics(token)
                 check = (
                     f"{position['id']}: HTTP {diagnostic['httpStatus']}; "
                     f"response status={diagnostic['responseStatus']}; "
@@ -171,23 +167,16 @@ def main() -> int:
                     "phase": "fixture",
                     "status": "failed",
                     "check": check,
-                    **observation.diagnostics(),
-                    "instanceStates": collect_instance_states(readiness["appId"], os.environ),
+                    **diagnostic,
                 }, separators=(",", ":")), file=sys.stderr)
                 return 1
             print(json.dumps(result, separators=(",", ":")))
     except Exception as error:
-        instance_states = (
-            collect_instance_states(readiness["appId"], os.environ)
-            if readiness is not None
-            else [{"state": "unavailable"}]
-        )
         print(json.dumps({
             "phase": "smoke",
             "status": "failed",
             "check": f"unexpected-error: {type(error).__name__}",
-            **last_observation.diagnostics(),
-            "instanceStates": instance_states,
+            **last_observation.diagnostics(token),
         }, separators=(",", ":")), file=sys.stderr)
         return 1
     print("staging smoke passed: 4 fixed public/synthetic positions")

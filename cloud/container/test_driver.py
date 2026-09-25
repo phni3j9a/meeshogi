@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import tempfile
 import threading
 import time
@@ -64,6 +65,11 @@ for command in iter(commands.get, None):
     elif command == "isready":
         print("readyok", flush=True)
     elif command.startswith("go "):
+        if scenario == "verification-stop-once" and boot == 1:
+            time.sleep(0.35)
+            emit_info()
+            print("bestmove 7g7f", flush=True)
+            continue
         if scenario == "hang-once" and boot == 1:
             print("info depth 1 multipv 1 score cp 9999 nodes 10 time 1 pv 9a9b", flush=True)
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -123,7 +129,13 @@ class DriverTests(unittest.TestCase):
         self.pids_path = self.root / "pids.txt"
 
     def tearDown(self) -> None:
-        for name in ("DRIVER_FAKE_SCENARIO", "DRIVER_FAKE_COUNTER", "DRIVER_FAKE_COMMANDS", "DRIVER_FAKE_PIDS"):
+        for name in (
+            "DRIVER_FAKE_SCENARIO",
+            "DRIVER_FAKE_COUNTER",
+            "DRIVER_FAKE_COMMANDS",
+            "DRIVER_FAKE_PIDS",
+            "ANALYSIS_VERIFY_STOP_ENGINE_ONCE",
+        ):
             os.environ.pop(name, None)
         self.temp.cleanup()
 
@@ -131,11 +143,20 @@ class DriverTests(unittest.TestCase):
     def digest(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    def service(self, scenario: str = "normal", extra_settings: dict | None = None) -> AnalysisService:
+    def service(
+        self,
+        scenario: str = "normal",
+        extra_settings: dict | None = None,
+        verification_stop_once: bool = False,
+    ) -> AnalysisService:
         os.environ["DRIVER_FAKE_SCENARIO"] = scenario
         os.environ["DRIVER_FAKE_COUNTER"] = str(self.counter_path)
         os.environ["DRIVER_FAKE_COMMANDS"] = str(self.commands_path)
         os.environ["DRIVER_FAKE_PIDS"] = str(self.pids_path)
+        if verification_stop_once:
+            os.environ["ANALYSIS_VERIFY_STOP_ENGINE_ONCE"] = "1"
+        else:
+            os.environ.pop("ANALYSIS_VERIFY_STOP_ENGINE_ONCE", None)
         settings = {
             "moveTimeMs": 50,
             "searchGraceMs": 100,
@@ -148,8 +169,13 @@ class DriverTests(unittest.TestCase):
         settings.update(extra_settings or {})
         return AnalysisService(engine_path=self.engine_path, expected_manifest=self.manifest, settings=settings)
 
-    def request(self, service: AnalysisService, legal_move_count: int = 30) -> tuple[int, dict]:
-        return service.response({"sfen": STARTPOS, "legalMoveCount": legal_move_count})
+    def request(
+        self,
+        service: AnalysisService,
+        legal_move_count: int = 30,
+        sfen: str = STARTPOS,
+    ) -> tuple[int, dict]:
+        return service.response({"sfen": sfen, "legalMoveCount": legal_move_count})
 
     def test_cp_and_mate_scores_are_normalized_to_sente(self) -> None:
         black_cp = parse_info_line("info depth 2 score cp 42 nodes 100 pv 7g7f", "b")
@@ -260,6 +286,53 @@ class DriverTests(unittest.TestCase):
         pids = self.pids_path.read_text(encoding="ascii").splitlines()
         self.assertEqual(len(pids), 2)
         self.assertNotEqual(pids[0], pids[1])
+
+    def test_configured_one_shot_stop_reaps_first_engine_and_second_sfen_succeeds_fresh(self) -> None:
+        service = self.service(
+            "verification-stop-once",
+            {"moveTimeMs": 500, "searchGraceMs": 1000},
+            verification_stop_once=True,
+        )
+        timeout_code, timeout_result = self.request(service)
+
+        self.assertEqual(timeout_code, 504)
+        self.assertEqual(timeout_result["failure"]["code"], "timeout")
+        timeout_evidence = timeout_result["verification"]
+        self.assertTrue(timeout_evidence["stopInjected"])
+        self.assertTrue(timeout_evidence["engineReaped"])
+        self.assertTrue(timeout_evidence["waitReturned"])
+        self.assertEqual(timeout_evidence["waitReturnCode"], -signal.SIGKILL)
+        self.assertEqual(timeout_evidence["engineEpoch"], 1)
+        old_pid = timeout_evidence["enginePid"]
+        with self.assertRaises(ProcessLookupError):
+            os.kill(old_pid, 0)
+
+        success_code, success_result = self.request(
+            service,
+            legal_move_count=30,
+            sfen="1nrg3n1/l2s2k2/p1p1gp1pl/1p1pp2s1/6P1p/b1P5P/PP1PPP1P1/L1KSRSG2/1NG4NL b BP 1",
+        )
+        self.assertEqual(success_code, 200)
+        self.assertEqual(success_result["status"], "success")
+        success_evidence = success_result["verification"]
+        self.assertFalse(success_evidence["stopInjected"])
+        self.assertTrue(success_evidence["engineReaped"])
+        self.assertTrue(success_evidence["waitReturned"])
+        self.assertEqual(success_evidence["waitReturnCode"], 0)
+        self.assertEqual(success_evidence["driverBootId"], timeout_evidence["driverBootId"])
+        self.assertGreater(success_evidence["engineEpoch"], timeout_evidence["engineEpoch"])
+        self.assertNotEqual(success_evidence["enginePid"], old_pid)
+
+    def test_one_shot_stop_is_not_injected_without_verification_flag(self) -> None:
+        service = self.service("verification-stop-once", {"moveTimeMs": 500, "searchGraceMs": 1000})
+        status, result = self.request(service)
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["status"], "success")
+        self.assertNotIn("verification", result)
+        commands = self.commands_path.read_text(encoding="utf-8").splitlines()
+        self.assertIn("quit", commands)
+        self.assertNotIn("stop", commands)
 
 
 if __name__ == "__main__":

@@ -8,9 +8,11 @@ import json
 import os
 import queue
 import re
+import signal
 import subprocess
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,7 @@ READY_TIMEOUT_SECONDS = 45.0
 MOVE_RE = re.compile(r"^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$")
 SFEN_RE = re.compile(r"^[1-9KkLlNnSsGgBbRrPp/+ bw-]+$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+DRIVER_BOOT_ID = uuid.uuid4().hex
 
 
 class DriverError(Exception):
@@ -283,6 +286,7 @@ class EngineSession:
         self.lines: queue.Queue[str | None] = queue.Queue()
         self.reader: threading.Thread | None = None
         self.engine_name = ""
+        self.verification_stop_injected = False
 
     def start(self) -> None:
         try:
@@ -379,11 +383,19 @@ class EngineSession:
             if line == token:
                 return
 
-    def search(self, sfen: str, collector: MultiPvCollector) -> str:
+    def search(self, sfen: str, collector: MultiPvCollector, stop_after_go: bool = False) -> str:
         self.send("usinewgame")
         self.send(f"position sfen {sfen}")
         move_time_ms = self.settings.get("moveTimeMs", MOVE_TIME_MS)
         self.send(f"go movetime {move_time_ms}")
+        if stop_after_go:
+            if self.process is None or self.process.poll() is not None:
+                raise DriverError("engine_error", "Verification engine process stopped before SIGSTOP.")
+            try:
+                self.process.send_signal(signal.SIGSTOP)
+            except OSError as error:
+                raise DriverError("engine_error", "Verification engine process could not be stopped.") from error
+            self.verification_stop_injected = True
         deadline = time.monotonic() + (move_time_ms + self.settings["searchGraceMs"]) / 1000
         while True:
             try:
@@ -403,9 +415,9 @@ class EngineSession:
                     raise DriverError("engine_error", "Engine returned a malformed bestmove.")
                 return move
 
-    def stop_and_reap(self) -> None:
+    def stop_and_reap(self) -> dict[str, int] | None:
         if self.process is None:
-            return
+            return None
         process = self.process
         if process.poll() is None:
             try:
@@ -416,18 +428,18 @@ class EngineSession:
                 self._wait_for_bestmove(self.settings["stopResponseGraceSeconds"])
             except (DriverError, TimeoutError):
                 pass
-        self._terminate_and_reap(process, force_terminate=True)
+        return {"enginePid": process.pid, "waitReturnCode": self._terminate_and_reap(process, force_terminate=True)}
 
-    def close_after_search(self) -> None:
+    def close_after_search(self) -> dict[str, int] | None:
         if self.process is None:
-            return
+            return None
         process = self.process
         if process.poll() is None:
             try:
                 self.send("quit")
             except DriverError:
                 pass
-        self._terminate_and_reap(process)
+        return {"enginePid": process.pid, "waitReturnCode": self._terminate_and_reap(process)}
 
     def _wait_for_bestmove(self, timeout_seconds: float) -> None:
         deadline = time.monotonic() + timeout_seconds
@@ -436,7 +448,7 @@ class EngineSession:
             if line is None or line.startswith("bestmove "):
                 return
 
-    def _terminate_and_reap(self, process: subprocess.Popen[str], force_terminate: bool = False) -> None:
+    def _terminate_and_reap(self, process: subprocess.Popen[str], force_terminate: bool = False) -> int:
         if process.poll() is None:
             if force_terminate:
                 process.terminate()
@@ -456,6 +468,8 @@ class EngineSession:
                         process.wait()
         else:
             process.wait()
+        # Always call wait() and retain its return code as explicit reap evidence.
+        wait_return_code = process.wait()
         if self.reader is not None:
             self.reader.join(timeout=1)
         for pipe in (process.stdin, process.stdout):
@@ -464,6 +478,7 @@ class EngineSession:
                     pipe.close()
                 except OSError:
                     pass
+        return wait_return_code
 
 
 def fixed_conditions(effective_multi_pv: int) -> dict[str, int]:
@@ -518,6 +533,9 @@ class AnalysisService:
         if settings:
             self.settings.update(settings)
         self.busy = threading.Lock()
+        self.verify_stop_engine_once_enabled = os.environ.get("ANALYSIS_VERIFY_STOP_ENGINE_ONCE") == "1"
+        self.verify_stop_engine_once_pending = self.verify_stop_engine_once_enabled
+        self.engine_epoch = 0
 
     def response(self, payload: Any) -> tuple[int, dict[str, Any]]:
         if not isinstance(payload, dict) or set(payload) != {"sfen", "legalMoveCount"}:
@@ -531,11 +549,26 @@ class AnalysisService:
             result.update({"status": "failure", "failure": {"code": "busy", "message": "An analysis is already running."}})
             return 409, result
         try:
-            return self._analyze_one(sfen, legal_move_count)
+            stop_engine = self.verify_stop_engine_once_pending
+            self.verify_stop_engine_once_pending = False
+            return self._analyze_one(
+                sfen,
+                legal_move_count,
+                verification_enabled=self.verify_stop_engine_once_enabled,
+                stop_engine=stop_engine,
+            )
         finally:
             self.busy.release()
 
-    def _analyze_one(self, sfen: str, legal_move_count: int) -> tuple[int, dict[str, Any]]:
+    def _analyze_one(
+        self,
+        sfen: str,
+        legal_move_count: int,
+        verification_enabled: bool = False,
+        stop_engine: bool = False,
+    ) -> tuple[int, dict[str, Any]]:
+        self.engine_epoch += 1
+        engine_epoch = self.engine_epoch
         effective = min(MAX_MULTIPV, legal_move_count)
         result = _base_result(sfen, self.identity, effective)
         collector = MultiPvCollector(effective, side_to_move=sfen.split(" ")[1])
@@ -547,9 +580,10 @@ class AnalysisService:
         )
         timed_out = False
         engine_outcome: str | None = None
+        reap_evidence: dict[str, int] | None = None
         try:
             session.start()
-            engine_outcome = session.search(sfen, collector)
+            engine_outcome = session.search(sfen, collector, stop_after_go=stop_engine)
         except SearchTimeout:
             timed_out = True
         except IdentityMismatch as error:
@@ -560,9 +594,20 @@ class AnalysisService:
             return 502, result
         finally:
             if timed_out:
-                session.stop_and_reap()
+                reap_evidence = session.stop_and_reap()
             else:
-                session.close_after_search()
+                reap_evidence = session.close_after_search()
+
+        if verification_enabled and reap_evidence is not None:
+            result["verification"] = {
+                "driverBootId": DRIVER_BOOT_ID,
+                "engineEpoch": engine_epoch,
+                "enginePid": reap_evidence["enginePid"],
+                "engineReaped": True,
+                "waitReturned": True,
+                "waitReturnCode": reap_evidence["waitReturnCode"],
+                "stopInjected": session.verification_stop_injected,
+            }
 
         elapsed_ms = max(1, round((time.monotonic() - started) * 1000))
         block = collector.best_block

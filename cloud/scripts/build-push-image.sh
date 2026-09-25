@@ -22,6 +22,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 export DOCKER_CONFIG="$DOCKER_CONFIG_DIR"
 
+# Building an image never creates a verification deployment.
+unset ANALYSIS_VERIFY_STOP_ENGINE_ONCE
 python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$CONFIG_FILE" "$CLOUDFLARE_ACCOUNT_ID" "$(printf '%064d' 0)"
 
 LOCAL_TAG="meeshogi-analysis-mvp-staging:${ANALYSIS_IMAGE_TAG}"

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('@cloudflare/containers', () => ({
-  Container: class {},
+  Container: class {
+    envVars: Record<string, string> = {};
+
+    constructor(_ctx: unknown, _env: unknown) {}
+  },
   getContainer: (binding: { getByName: (name: string) => unknown }, name: string) => binding.getByName(name),
 }));
 import {
@@ -10,7 +14,7 @@ import {
   isValidSfen,
   legalMoves,
 } from '../src/contract';
-import { handleRequest, type Env } from '../src/index';
+import { AnalysisContainer, handleRequest, type Env } from '../src/index';
 import { Position } from 'tsshogi';
 
 const STARTPOS = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1';
@@ -46,7 +50,11 @@ function success(sfen: string, multiPV = Math.min(3, legalMoves(sfen).length)): 
   };
 }
 
-function makeEnv(response?: (payload: unknown) => unknown | Response, token?: string): Env & { calls: number[] } {
+function makeEnv(
+  response?: (payload: unknown) => unknown | Response,
+  token?: string,
+  verificationFlag?: string,
+): Env & { calls: number[] } {
   const calls: number[] = [];
   const binding = {
     getByName: () => ({
@@ -60,15 +68,22 @@ function makeEnv(response?: (payload: unknown) => unknown | Response, token?: st
   };
   return {
     ANALYSIS_INTERNAL_TOKEN: token,
+    ANALYSIS_VERIFY_STOP_ENGINE_ONCE: verificationFlag,
     ANALYSIS_CONTAINER: binding as unknown as Env['ANALYSIS_CONTAINER'],
     calls,
   };
 }
 
-function request(body: string, options: { token?: string; contentType?: string; method?: string } = {}) {
+function request(body: string, options: {
+  token?: string;
+  contentType?: string;
+  method?: string;
+  extraHeaders?: Record<string, string>;
+} = {}) {
   const headers = new Headers();
   if (options.token !== undefined) headers.set('authorization', `Bearer ${options.token}`);
   if (options.contentType !== undefined) headers.set('content-type', options.contentType);
+  for (const [name, value] of Object.entries(options.extraHeaders ?? {})) headers.set(name, value);
   return new Request('https://staging.example/internal/analyze', {
     method: options.method ?? 'POST',
     headers,
@@ -81,6 +96,99 @@ async function result(response: Response) {
 }
 
 describe('staging analysis Worker boundary', () => {
+  it('passes the verification stop flag to the Container only when configured on the Worker', async () => {
+    const verificationEnv = makeEnv(undefined, 'secret-token', '1');
+    const normalEnv = makeEnv(undefined, 'secret-token');
+    const verificationContainer = new AnalysisContainer({} as DurableObjectState<{}>, verificationEnv);
+    const normalContainer = new AnalysisContainer({} as DurableObjectState<{}>, normalEnv);
+
+    expect(verificationContainer.envVars).toEqual({ ANALYSIS_VERIFY_STOP_ENGINE_ONCE: '1' });
+    expect(normalContainer.envVars).toEqual({});
+
+    const health = new Request('https://staging.example/internal/health', {
+      method: 'GET',
+      headers: { authorization: 'Bearer secret-token' },
+    });
+    const ready = await handleRequest(health, verificationEnv);
+    expect(ready.status).toBe(200);
+    expect(await result(ready)).toEqual({
+      schemaVersion: 1,
+      status: 'ready',
+      verificationStopEngineOnce: true,
+    });
+    expect(verificationEnv.calls).toHaveLength(0);
+  });
+
+  it('does not allow an analysis request field or header to toggle the verification stop', async () => {
+    const env = makeEnv(undefined, 'secret-token');
+    const response = await handleRequest(
+      new Request('https://staging.example/internal/analyze', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json',
+          'x-analysis-verify-stop-engine-once': '1',
+        },
+        body: JSON.stringify({ sfen: STARTPOS, verificationStopEngineOnce: true }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(400);
+    expect(env.calls).toHaveLength(0);
+
+    const ordinaryEnv = makeEnv(() => success(STARTPOS), 'secret-token');
+    const ordinaryContainer = new AnalysisContainer({} as DurableObjectState<{}>, ordinaryEnv);
+    const ordinaryResponse = await handleRequest(
+      request(JSON.stringify({ sfen: STARTPOS }), {
+        token: 'secret-token',
+        contentType: 'application/json',
+        extraHeaders: { 'x-analysis-verify-stop-engine-once': '1' },
+      }),
+      ordinaryEnv,
+    );
+    expect(ordinaryResponse.status).toBe(200);
+    expect(ordinaryContainer.envVars).toEqual({});
+    expect(ordinaryEnv.calls).toHaveLength(1);
+  });
+
+  it('preserves validated one-shot timeout and fresh-engine evidence from the Container', async () => {
+    const timeoutEvidence = {
+      driverBootId: 'a'.repeat(32),
+      engineEpoch: 1,
+      enginePid: 321,
+      engineReaped: true,
+      waitReturned: true,
+      waitReturnCode: -9,
+      stopInjected: true,
+    };
+    const timeoutEnv = makeEnv(() => ({
+      schemaVersion: 1,
+      sfen: STARTPOS,
+      perspective: 'sente',
+      status: 'failure',
+      failure: { code: 'timeout', message: 'The engine exceeded the fixed search deadline.' },
+      identity: EXPECTED_IDENTITY,
+      verification: timeoutEvidence,
+    }), 'secret-token');
+    const timeout = await handleRequest(
+      request(JSON.stringify({ sfen: STARTPOS }), { token: 'secret-token', contentType: 'application/json' }),
+      timeoutEnv,
+    );
+    expect(timeout.status).toBe(504);
+    expect(await result(timeout)).toMatchObject({ verification: timeoutEvidence });
+
+    const recoveryEvidence = { ...timeoutEvidence, engineEpoch: 2, enginePid: 322, waitReturnCode: 0, stopInjected: false };
+    const recovery = success(STARTPOS);
+    recovery.verification = recoveryEvidence;
+    const recoveryEnv = makeEnv(() => recovery, 'secret-token');
+    const response = await handleRequest(
+      request(JSON.stringify({ sfen: STARTPOS }), { token: 'secret-token', contentType: 'application/json' }),
+      recoveryEnv,
+    );
+    expect(response.status).toBe(200);
+    expect(await result(response)).toMatchObject({ verification: recoveryEvidence });
+  });
+
   it('requires a configured bearer secret and never calls the Container on auth failure', async () => {
     const env = makeEnv(undefined, 'secret-token');
     const missing = await handleRequest(request(JSON.stringify({ sfen: STARTPOS })), env);

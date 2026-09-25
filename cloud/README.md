@@ -14,7 +14,7 @@ Cloudflare Containers require one Durable Object class and binding. This impleme
 
 The Python 3.12 driver uses only the standard library. It checks engine, model, options, source archive, source tree, and build identity before opening its HTTP listener. The `ubuntu:24.04` image provides a new enough glibc and libstdc++ for the engine; a Docker build-time USI/`isready` smoke applies the same `EvalDir=/opt/engine` and fixed options as the driver, so an incompatible base or unreadable model fails the image build. It starts a fresh engine process for each request and waits for it to exit. A busy request is rejected immediately. The search deadline is `movetime + 5 s`; on timeout the driver sends `stop`, waits up to 750 ms for a response, sends `SIGTERM`, then `SIGKILL` if needed, and always calls `wait()` to reap the child. The next request uses a new process. `bestmove resign` yields an incomplete result with `engineOutcome: "resign"` and no fabricated move.
 
-The image is `linux/amd64`. The worker config is only for `meeshogi-analysis-mvp-staging`, with one `standard-2` Container instance named `meeshogi-analysis-mvp-staging-analysis` and a digest-pinned Cloudflare managed registry image. `wrangler.staging.jsonc` is a template; scripts render a temporary config with the real account ID and image digest, then remove it. The separate SSH facility is enabled for Wrangler operators with account write access so one engine can be stopped during the timeout check. There is no public fault-injection route or public Container port.
+The image is `linux/amd64`. The worker config is only for `meeshogi-analysis-mvp-staging`, with one `standard-2` Container instance named `meeshogi-analysis-mvp-staging-analysis` and a digest-pinned Cloudflare managed registry image. `wrangler.staging.jsonc` is a template; scripts render a temporary config with the real account ID and image digest, then remove it. There is no public fault-injection route or public Container port.
 
 ## Offline checks
 
@@ -72,6 +72,7 @@ The only operator environment values are:
 | `ANALYSIS_IMAGE_REF` | Digest-pinned image for deploy and operator Wrangler commands | No |
 | `ANALYSIS_INTERNAL_TOKEN` | Worker bearer secret and authenticated smoke requests | **Yes** |
 | `ANALYSIS_STAGING_URL` | Deployed Worker base URL for smoke and timeout requests | No |
+| `ANALYSIS_VERIFY_STOP_ENGINE_ONCE` | Verification-only Worker var; set internally for the first deploy by the timeout verifier | No |
 
 ## Fixed staging smoke
 
@@ -79,46 +80,33 @@ The smoke sends four requests in order: the checked-in `non-mate-startpos` fixtu
 
 ```sh
 export ANALYSIS_STAGING_URL='https://<deployed-worker-subdomain>.workers.dev'
-export CLOUDFLARE_ACCOUNT_ID='<32-character-account-id>'
-export ANALYSIS_IMAGE_REF='registry.cloudflare.com/<account-id>/meeshogi-analysis-mvp-staging@sha256:<image-digest>'
 read -r -s -p 'Internal analysis token: ' ANALYSIS_INTERNAL_TOKEN
 export ANALYSIS_INTERNAL_TOKEN
 python3 cloud/scripts/smoke-staging.py
 unset ANALYSIS_INTERNAL_TOKEN
 ```
 
-The smoke uses the authenticated Wrangler profile to resolve the Container application and instance states. After a deploy, the first analysis request can arrive while the Container is inactive or its port is still starting. The Containers package returns a plain-text 500/503 for some startup failures; the Worker converts that response, or a thrown fetch error, into a typed HTTP 502 JSON failure with `failure.code: "engine_error"`. The smoke sends start-position warm-up requests every five seconds until one succeeds, for up to ten minutes, then waits for Wrangler to report a `running` instance before starting the fixtures. It prints each fixture ID and measured result fields. It never prints the token. A failure includes HTTP status, response status/failure code or a short non-JSON body preview, and instance states.
+After a deploy, the first analysis request can arrive while the Container is inactive or its port is still starting. The Containers package returns a plain-text 500/503 for some startup failures; the Worker converts that response, or a thrown fetch error, into a typed HTTP 502 JSON failure with `failure.code: "engine_error"`. The smoke uses HTTP only: it sends start-position warm-up requests every five seconds until one succeeds, for up to ten minutes, then runs the fixtures. It prints each fixture ID and measured result fields. It never prints the token. A failure includes HTTP status and response status/failure code or a short non-JSON body preview.
 
 ## Operator-only timeout and recovery check
 
-This check uses a throwaway SSH key and an SSH-enabled deployment only for the verification window. Normal staging config has no SSH block. The renderer adds `ssh: { enabled: true }` and its sibling `authorized_keys` array only when `ANALYSIS_SSH_PUBLIC_KEY` is present; the key must be a single valid `ssh-ed25519` line. Wrangler access still requires the operator's authenticated Cloudflare account.
+The verifier deploys once with the Worker var `ANALYSIS_VERIFY_STOP_ENGINE_ONCE=1`. `AnalysisContainer` passes that configured var to the driver as a container environment variable; request fields and headers cannot enable it. An authenticated `GET /internal/health` reports whether the verification Worker version is active without starting or calling the analysis Container, so readiness polling cannot consume the one-shot. The first analysis then stops its real engine process after `go`; the normal driver deadline and stop/terminate/kill/wait path must return HTTP 504 `timeout` plus reap evidence. A second request for a different SFEN must succeed with a new engine epoch and PID but the same driver boot ID. Finally, the verifier deploys again with the flag unset and runs the normal HTTP warm-up and four-fixture smoke.
 
-Set the normal staging inputs (`ANALYSIS_STAGING_URL`, `CLOUDFLARE_ACCOUNT_ID`, `ANALYSIS_IMAGE_REF`, and `ANALYSIS_INTERNAL_TOKEN`), then generate a disposable key, deploy with its public key, and run the automated timeout/recovery check:
+The SSH approach was tried and dropped for this account: `wrangler containers ssh <id> --stdio` returned HTTP 404 “Deployment not found”, while the raw instances API returned an empty `instances` array and only Durable Object metadata. Wrangler also reported `inactive` with null location/version even during successful analysis requests, so instance-state polling cannot gate verification.
+
+Build and push the updated private image using the preceding procedure, then set the normal staging inputs (`ANALYSIS_STAGING_URL`, `CLOUDFLARE_ACCOUNT_ID`, `ANALYSIS_IMAGE_REF`, and `ANALYSIS_INTERNAL_TOKEN`) and run the verifier:
 
 ```sh
-key_dir="$(mktemp -d "${TMPDIR:-/tmp}/meeshogi-timeout-key.XXXXXX")"
-chmod 700 "$key_dir"
-ssh-keygen -q -t ed25519 -N '' -C 'meeshogi-issue19-timeout-verification' -f "$key_dir/id_ed25519"
-chmod 600 "$key_dir/id_ed25519"
-export ANALYSIS_SSH_PUBLIC_KEY="$(cat "$key_dir/id_ed25519.pub")"
-export ANALYSIS_SSH_PRIVATE_KEY="$key_dir/id_ed25519"
-bash cloud/scripts/deploy-staging.sh
+export ANALYSIS_STAGING_URL='https://<deployed-worker-subdomain>.workers.dev'
+export CLOUDFLARE_ACCOUNT_ID='<32-character-account-id>'
+export ANALYSIS_IMAGE_REF='registry.cloudflare.com/<account-id>/meeshogi-analysis-mvp-staging@sha256:<image-digest>'
+read -r -s -p 'Internal analysis token: ' ANALYSIS_INTERNAL_TOKEN
+export ANALYSIS_INTERNAL_TOKEN
 python3 cloud/scripts/verify-timeout-staging.py
-unset ANALYSIS_SSH_PUBLIC_KEY ANALYSIS_SSH_PRIVATE_KEY ANALYSIS_INTERNAL_TOKEN
-rm -rf -- "$key_dir"
+unset ANALYSIS_INTERNAL_TOKEN
 ```
 
-The operator script sends start-position warm-up requests every five seconds until one succeeds, for up to ten minutes, then polls Wrangler until the instance state is `running`. It resolves the Container **application ID** by name from `containers list --json`, then uses the **instance ID** from `containers instances <APPLICATION_ID> --json`. It opens the Wrangler `--stdio` SSH proxy before sending a normal start-position analysis request in the background, stops only the running engine PID, checks the HTTP 504 typed `timeout`, and confirms that PID is gone. It then sends a separate request and verifies HTTP 200 success with a different engine PID. Finally it redeploys after removing `ANALYSIS_SSH_PUBLIC_KEY` from the deployment environment, repeats the bounded readiness wait, and runs the four-position smoke. Its JSON output contains only verification status, failure code, PIDs, elapsed measurements, artifact identity, and non-secret failure diagnostics; Wrangler and smoke command output is captured.
-
-For manual inspection while the temporary public key is deployed, use the application ID only with `instances`, then use an instance ID with `ssh`:
-
-```sh
-bash cloud/scripts/wrangler-staging.sh containers list --json
-bash cloud/scripts/wrangler-staging.sh containers instances <APPLICATION_ID> --json
-bash cloud/scripts/wrangler-staging.sh containers ssh <INSTANCE_ID>
-```
-
-Keep the private key in the temporary directory, never commit or paste it, and remove it with the directory after the procedure. The final redeploy and smoke are attempted even if timeout verification fails. A unit test alone does not count as staging timeout evidence.
+The verifier sets `ANALYSIS_VERIFY_STOP_ENGINE_ONCE=1` only in the verification deploy's child environment, then unsets it before the final normal deploy. Output is limited to non-secret JSON evidence including HTTP/failure status, driver boot ID, engine epoch/PID, wait return code, and smoke fixture IDs. A unit test alone does not count as staging timeout evidence.
 
 ## Remaining limits
 
