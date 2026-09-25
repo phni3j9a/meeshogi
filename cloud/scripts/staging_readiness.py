@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -36,6 +37,51 @@ class HttpObservation:
         }
         if self.body_preview is not None:
             values["bodyPreview"] = _redact(self.body_preview, token)
+        boot_id = self.payload.get("driverBootId")
+        if isinstance(boot_id, str) and re.fullmatch(r"[0-9a-f]{32}", boot_id):
+            values["driverBootId"] = _redact(boot_id, token)
+        for name in (
+            "workerVerifyStopEngineOnceEnabled",
+            "verifyStopEngineOnceEnabled",
+            "verifyStopEngineOnceConsumed",
+        ):
+            value = self.payload.get(name)
+            if isinstance(value, bool):
+                values[name] = value
+        for name in ("driverVersion", "contractVersion"):
+            value = self.payload.get(name)
+            if isinstance(value, str):
+                values[name] = _redact(value, token)
+        digests = self.payload.get("identityDigests")
+        if isinstance(digests, dict):
+            safe_digests = {
+                key: value
+                for key, value in digests.items()
+                if isinstance(key, str)
+                and isinstance(value, str)
+                and re.fullmatch(r"[0-9a-f]{64}", value)
+            }
+            if safe_digests:
+                values["identityDigests"] = {
+                    key: _redact(value, token) for key, value in safe_digests.items()
+                }
+        verification = self.payload.get("verification")
+        if isinstance(verification, dict):
+            safe_evidence: dict[str, Any] = {}
+            if isinstance(verification.get("driverBootId"), str) and re.fullmatch(
+                r"[0-9a-f]{32}", verification["driverBootId"]
+            ):
+                safe_evidence["driverBootId"] = _redact(verification["driverBootId"], token)
+            for name in ("engineEpoch", "enginePid", "waitReturnCode"):
+                value = verification.get(name)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    safe_evidence[name] = value
+            for name in ("engineReaped", "waitReturned", "stopInjected"):
+                value = verification.get(name)
+                if isinstance(value, bool):
+                    safe_evidence[name] = value
+            if safe_evidence:
+                values["verification"] = safe_evidence
         return values
 
 

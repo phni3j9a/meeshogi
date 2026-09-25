@@ -14,6 +14,7 @@ from driver import (
     AnalysisService,
     IdentityMismatch,
     MultiPvCollector,
+    driver_get_response,
     is_valid_sfen,
     parse_info_line,
     verify_identity,
@@ -322,6 +323,25 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(success_evidence["driverBootId"], timeout_evidence["driverBootId"])
         self.assertGreater(success_evidence["engineEpoch"], timeout_evidence["engineEpoch"])
         self.assertNotEqual(success_evidence["enginePid"], old_pid)
+
+    def test_driver_health_does_not_start_engine_or_consume_one_shot(self) -> None:
+        service = self.service("verification-stop-once", verification_stop_once=True)
+        status, health = driver_get_response(service, "/health")
+        self.assertEqual(status, 200)
+        self.assertEqual(health["schemaVersion"], 1)
+        self.assertEqual(health["status"], "ready")
+        self.assertRegex(health["driverBootId"], r"^[0-9a-f]{32}$")
+        self.assertTrue(health["verifyStopEngineOnceEnabled"])
+        self.assertFalse(health["verifyStopEngineOnceConsumed"])
+        self.assertEqual(health["driverVersion"], "test-driver")
+        self.assertEqual(health["contractVersion"], "test-contract")
+        self.assertEqual(health["identityDigests"]["engineSha256"], self.manifest["engineSha256"])
+        self.assertFalse(self.counter_path.exists(), "health must not spawn the engine")
+
+        status, result = self.request(service)
+        self.assertEqual(status, 504)
+        self.assertEqual(result["failure"]["code"], "timeout")
+        self.assertTrue(service.health()["verifyStopEngineOnceConsumed"])
 
     def test_one_shot_stop_is_not_injected_without_verification_flag(self) -> None:
         service = self.service("verification-stop-once", {"moveTimeMs": 500, "searchGraceMs": 1000})

@@ -25,7 +25,10 @@ SMOKE_SCRIPT = CLOUD_DIR / "scripts/smoke-staging.py"
 STARTPOS = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
 MIDDLEGAME = "1nrg3n1/l2s2k2/p1p1gp1pl/1p1pp2s1/6P1p/b1P5P/PP1PPP1P1/L1KSRSG2/1NG4NL b BP 1"
 READINESS_TIMEOUT_SECONDS = 600
-READINESS_INTERVAL_SECONDS = 5
+CONTAINER_HEALTH_INTERVAL_SECONDS = 15
+# Keep this aligned with AnalysisContainer.sleepAfter = '5m'.
+CONTAINER_SLEEP_AFTER_SECONDS = 300
+CONTAINER_SLEEP_BUFFER_SECONDS = 15
 DRIVER_BOOT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 LAST_HTTP = HttpObservation(None, {})
 
@@ -78,7 +81,27 @@ def deploy(verification: bool) -> bool:
     return result.returncode == 0
 
 
-def wait_for_verification_worker(url: str, token: str) -> dict[str, Any]:
+def container_health_matches(observation: HttpObservation, expected_enabled: bool) -> bool:
+    payload = observation.payload
+    return (
+        observation.http_status == 200
+        and payload.get("status") == "ready"
+        and payload.get("workerVerifyStopEngineOnceEnabled") is expected_enabled
+        and payload.get("verifyStopEngineOnceEnabled") is expected_enabled
+        and isinstance(payload.get("driverBootId"), str)
+        and DRIVER_BOOT_ID_RE.fullmatch(payload["driverBootId"]) is not None
+        and (
+            not expected_enabled
+            or payload.get("verifyStopEngineOnceConsumed") is False
+        )
+    )
+
+
+def poll_container_health(
+    url: str,
+    token: str,
+    expected_enabled: bool,
+) -> tuple[dict[str, Any] | None, HttpObservation, int]:
     global LAST_HTTP
     deadline = time.monotonic() + READINESS_TIMEOUT_SECONDS
     attempts = 0
@@ -86,17 +109,52 @@ def wait_for_verification_worker(url: str, token: str) -> dict[str, Any]:
         remaining = deadline - time.monotonic()
         LAST_HTTP = get_worker_health(url, token, timeout=min(15, max(1, remaining)))
         attempts += 1
-        if (
-            time.monotonic() < deadline
-            and LAST_HTTP.http_status == 200
-            and LAST_HTTP.payload.get("status") == "ready"
-            and LAST_HTTP.payload.get("verificationStopEngineOnce") is True
-        ):
-            return {"attempts": attempts, "observation": LAST_HTTP}
+        if time.monotonic() < deadline and container_health_matches(LAST_HTTP, expected_enabled):
+            return {"attempts": attempts, "observation": LAST_HTTP}, LAST_HTTP, attempts
         remaining = deadline - time.monotonic()
         if remaining > 0:
-            time.sleep(min(READINESS_INTERVAL_SECONDS, remaining))
-    raise ReadinessError("verification-worker-readiness-timeout", LAST_HTTP)
+            time.sleep(min(CONTAINER_HEALTH_INTERVAL_SECONDS, remaining))
+    return None, LAST_HTTP, attempts
+
+
+def wait_for_container_configuration(
+    url: str,
+    token: str,
+    expected_enabled: bool,
+    phase: str,
+) -> dict[str, Any]:
+    global LAST_HTTP
+    readiness, last_observation, attempts = poll_container_health(url, token, expected_enabled)
+    if readiness is not None:
+        return {**readiness, "quietRestartWait": False}
+
+    quiet_seconds = CONTAINER_SLEEP_AFTER_SECONDS + CONTAINER_SLEEP_BUFFER_SECONDS
+    print(json.dumps({
+        "phase": f"{phase}-container-restart-wait",
+        "status": "waiting",
+        "expectedContainerFlag": expected_enabled,
+        "pollAttempts": attempts,
+        "quietSeconds": quiet_seconds,
+        **last_observation.diagnostics(token),
+    }, separators=(",", ":")))
+    quiet_deadline = time.monotonic() + quiet_seconds
+    while True:
+        remaining = quiet_deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(CONTAINER_HEALTH_INTERVAL_SECONDS, remaining))
+
+    LAST_HTTP = get_worker_health(url, token, timeout=15)
+    attempts += 1
+    if container_health_matches(LAST_HTTP, expected_enabled):
+        return {
+            "attempts": attempts,
+            "observation": LAST_HTTP,
+            "quietRestartWait": True,
+            "quietSeconds": quiet_seconds,
+        }
+    check = "container-verification-config-not-applied" if expected_enabled else "container-normal-config-not-applied"
+    raise ReadinessError(check, LAST_HTTP)
 
 
 def require_verification_evidence(payload: dict[str, Any]) -> dict[str, Any]:
@@ -128,13 +186,28 @@ def run_timeout_and_recovery(url: str, token: str) -> None:
         raise VerificationError("verification-deploy")
     print(json.dumps({"phase": "verification-deploy", "status": "passed"}, separators=(",", ":")))
 
-    readiness = wait_for_verification_worker(url, token)
+    readiness = wait_for_container_configuration(
+        url,
+        token,
+        expected_enabled=True,
+        phase="verification",
+    )
+    health_payload = readiness["observation"].payload
+    health_boot_id = health_payload["driverBootId"]
     print(json.dumps({
         "phase": "verification-readiness",
         "status": "passed",
         "httpStatus": readiness["observation"].http_status,
         "attempts": readiness["attempts"],
-        "verificationStopEngineOnce": True,
+        "quietRestartWait": readiness["quietRestartWait"],
+        "quietSeconds": readiness.get("quietSeconds", 0),
+        "driverBootId": health_boot_id,
+        "driverVersion": health_payload["driverVersion"],
+        "contractVersion": health_payload["contractVersion"],
+        "identityDigests": health_payload["identityDigests"],
+        "workerVerifyStopEngineOnceEnabled": health_payload["workerVerifyStopEngineOnceEnabled"],
+        "verifyStopEngineOnceEnabled": health_payload["verifyStopEngineOnceEnabled"],
+        "verifyStopEngineOnceConsumed": health_payload["verifyStopEngineOnceConsumed"],
     }, separators=(",", ":")))
 
     # The first analysis request reaches the configured driver and consumes its in-memory one-shot.
@@ -149,13 +222,18 @@ def run_timeout_and_recovery(url: str, token: str) -> None:
     ):
         raise VerificationError("timeout-response", LAST_HTTP)
     timeout_evidence = require_verification_evidence(timeout_payload)
-    if not timeout_evidence["stopInjected"] or timeout_evidence["waitReturnCode"] >= 0:
+    if (
+        not timeout_evidence["stopInjected"]
+        or timeout_evidence["waitReturnCode"] >= 0
+        or timeout_evidence["driverBootId"] != health_boot_id
+    ):
         raise VerificationError("timeout-reap-evidence", LAST_HTTP)
     print(json.dumps({
         "phase": "timeout",
         "httpStatus": LAST_HTTP.http_status,
         "status": timeout_payload.get("status"),
         "failureCode": failure["code"],
+        "healthDriverBootId": health_boot_id,
         **timeout_evidence,
     }, separators=(",", ":")))
 
@@ -168,6 +246,7 @@ def run_timeout_and_recovery(url: str, token: str) -> None:
     if (
         recovery_evidence["stopInjected"]
         or recovery_evidence["driverBootId"] != timeout_evidence["driverBootId"]
+        or recovery_evidence["driverBootId"] != health_boot_id
         or recovery_evidence["engineEpoch"] <= timeout_evidence["engineEpoch"]
         or recovery_evidence["enginePid"] == timeout_evidence["enginePid"]
         or recovery_evidence["waitReturnCode"] != 0
@@ -178,6 +257,7 @@ def run_timeout_and_recovery(url: str, token: str) -> None:
         "httpStatus": LAST_HTTP.http_status,
         "status": recovery_payload.get("status"),
         "freshEngine": True,
+        "healthDriverBootId": health_boot_id,
         **recovery_evidence,
     }, separators=(",", ":")))
 
@@ -193,7 +273,7 @@ def smoke_diagnostics(stderr: str) -> dict[str, Any] | None:
     return None
 
 
-def run_normal_deploy_and_smoke() -> tuple[bool, bool]:
+def run_normal_deploy_and_smoke(url: str, token: str) -> tuple[bool, bool]:
     global LAST_HTTP
     LAST_HTTP = HttpObservation(None, {})
     if not deploy(verification=False):
@@ -205,6 +285,37 @@ def run_normal_deploy_and_smoke() -> tuple[bool, bool]:
         }, separators=(",", ":")), file=sys.stderr)
         return False, False
     print(json.dumps({"phase": "normal-deploy", "status": "passed", "verificationStopEngineOnce": False}, separators=(",", ":")))
+    try:
+        readiness = wait_for_container_configuration(
+            url,
+            token,
+            expected_enabled=False,
+            phase="normal",
+        )
+    except ReadinessError as error:
+        LAST_HTTP = error.observation
+        print(json.dumps({
+            "phase": "normal-readiness",
+            "status": "failed",
+            "check": error.check,
+            **error.diagnostics(token),
+        }, separators=(",", ":")), file=sys.stderr)
+        return True, False
+    normal_health = readiness["observation"].payload
+    print(json.dumps({
+        "phase": "normal-readiness",
+        "status": "passed",
+        "httpStatus": readiness["observation"].http_status,
+        "attempts": readiness["attempts"],
+        "quietRestartWait": readiness["quietRestartWait"],
+        "quietSeconds": readiness.get("quietSeconds", 0),
+        "driverBootId": normal_health["driverBootId"],
+        "driverVersion": normal_health["driverVersion"],
+        "contractVersion": normal_health["contractVersion"],
+        "identityDigests": normal_health["identityDigests"],
+        "workerVerifyStopEngineOnceEnabled": normal_health["workerVerifyStopEngineOnceEnabled"],
+        "verifyStopEngineOnceEnabled": normal_health["verifyStopEngineOnceEnabled"],
+    }, separators=(",", ":")))
     try:
         result = subprocess.run(
             [sys.executable, str(SMOKE_SCRIPT)],
@@ -248,6 +359,7 @@ def main() -> int:
     deployed = False
     smoke_passed = False
     phase = "inputs"
+    url = ""
     token = os.environ.get("ANALYSIS_INTERNAL_TOKEN", "")
     try:
         url, token = validate_inputs()
@@ -281,7 +393,7 @@ def main() -> int:
         }, separators=(",", ":")), file=sys.stderr)
     finally:
         if verification_attempted:
-            deployed, smoke_passed = run_normal_deploy_and_smoke()
+            deployed, smoke_passed = run_normal_deploy_and_smoke(url, token)
         else:
             print(json.dumps({
                 "phase": "normal-deploy-and-smoke",

@@ -18,6 +18,13 @@ export interface Env {
 
 const ANALYSIS_PATH = '/internal/analyze';
 const HEALTH_PATH = '/internal/health';
+const IDENTITY_DIGEST_KEYS = [
+  'engineSha256',
+  'weightSha256',
+  'optionsSha256',
+  'sourceArchiveSha256',
+  'sourceTreeSha256',
+] as const;
 
 export class AnalysisContainer extends Container<Env> {
   defaultPort = 8080;
@@ -94,17 +101,53 @@ function authorize(request: Request, env: Env): Response | null {
   return null;
 }
 
+function isDriverHealth(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const health = value as Record<string, unknown>;
+  const digests = health.identityDigests;
+  if (typeof digests !== 'object' || digests === null || Array.isArray(digests)) return false;
+  const digestRecord = digests as Record<string, unknown>;
+  return health.schemaVersion === 1
+    && health.status === 'ready'
+    && typeof health.driverBootId === 'string'
+    && /^[0-9a-f]{32}$/u.test(health.driverBootId)
+    && typeof health.verifyStopEngineOnceEnabled === 'boolean'
+    && typeof health.verifyStopEngineOnceConsumed === 'boolean'
+    && typeof health.driverVersion === 'string'
+    && health.driverVersion.length > 0
+    && typeof health.contractVersion === 'string'
+    && health.contractVersion.length > 0
+    && IDENTITY_DIGEST_KEYS.every((key) => typeof digestRecord[key] === 'string' && /^[0-9a-f]{64}$/u.test(digestRecord[key] as string));
+}
+
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === HEALTH_PATH) {
     if (request.method !== 'GET') return json(failure('invalid', 'Method not allowed.'), 405);
     const authFailure = authorize(request, env);
     if (authFailure) return authFailure;
-    return json({
-      schemaVersion: 1,
-      status: 'ready',
-      verificationStopEngineOnce: env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1',
-    });
+    try {
+      const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, 'analysis-mvp-singleton');
+      const response = await container.fetch(new Request('http://analysis-container/health', { method: 'GET' }));
+      if (!response.ok) return json(failure('engine_error', 'Analysis container health is unavailable.'), 502);
+      const text = await response.text();
+      if (text.length > 8192) return json(failure('engine_error', 'Analysis container health exceeded the response limit.'), 502);
+      let driverHealth: unknown;
+      try {
+        driverHealth = JSON.parse(text);
+      } catch {
+        return json(failure('engine_error', 'Analysis container returned an invalid health response.'), 502);
+      }
+      if (!isDriverHealth(driverHealth)) {
+        return json(failure('engine_error', 'Analysis container health failed contract validation.'), 502);
+      }
+      return json({
+        ...driverHealth,
+        workerVerifyStopEngineOnceEnabled: env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1',
+      });
+    } catch {
+      return json(failure('engine_error', 'Analysis container health is unavailable.'), 502);
+    }
   }
   if (url.pathname !== ANALYSIS_PATH) return json(failure('invalid', 'Not found.'), 404);
   if (request.method !== 'POST') return json(failure('invalid', 'Method not allowed.'), 405);

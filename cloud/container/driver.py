@@ -537,6 +537,27 @@ class AnalysisService:
         self.verify_stop_engine_once_pending = self.verify_stop_engine_once_enabled
         self.engine_epoch = 0
 
+    def health(self) -> dict[str, Any]:
+        digest_keys = (
+            "engineSha256",
+            "weightSha256",
+            "optionsSha256",
+            "sourceArchiveSha256",
+            "sourceTreeSha256",
+        )
+        return {
+            "schemaVersion": 1,
+            "status": "ready",
+            "driverBootId": DRIVER_BOOT_ID,
+            "verifyStopEngineOnceEnabled": self.verify_stop_engine_once_enabled,
+            "verifyStopEngineOnceConsumed": (
+                self.verify_stop_engine_once_enabled and not self.verify_stop_engine_once_pending
+            ),
+            "driverVersion": self.identity["driverVersion"],
+            "contractVersion": self.identity["contractVersion"],
+            "identityDigests": {key: self.identity[key] for key in digest_keys},
+        }
+
     def response(self, payload: Any) -> tuple[int, dict[str, Any]]:
         if not isinstance(payload, dict) or set(payload) != {"sfen", "legalMoveCount"}:
             return 400, {"schemaVersion": 1, "sfen": None, "perspective": "sente", "status": "failure", "failure": {"code": "invalid", "message": "Expected an SFEN and verified legal move count."}, "identity": self.identity}
@@ -670,15 +691,21 @@ class AnalysisService:
         return 200, result
 
 
+def driver_get_response(service: AnalysisService, path: str) -> tuple[int, dict[str, Any]]:
+    if path == "/health":
+        return 200, service.health()
+    if path == "/ping":
+        return 200, {"status": "ready"}
+    return 404, {"status": "failure", "failure": {"code": "invalid"}}
+
+
 def create_handler(service: AnalysisService) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:
-            if self.path == "/ping":
-                self._write(200, {"status": "ready"})
-            else:
-                self._write(404, {"status": "failure", "failure": {"code": "invalid"}})
+            status, response = driver_get_response(service, self.path)
+            self._write(status, response)
 
         def do_POST(self) -> None:
             if self.path != "/analyze":

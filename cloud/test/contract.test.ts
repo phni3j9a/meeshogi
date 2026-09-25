@@ -23,6 +23,22 @@ const TERMINAL_NO_MOVES = 'k8/9/9/9/9/2nn1nn2/9/3p1p3/4K4 b - 1';
 const TWO_MOVES = 'k8/9/9/9/9/9/9/8r/4K4 b - 1';
 const SYNTHETIC_MIDDLEGAME = '1nrg3n1/l2s2k2/p1p1gp1pl/1p1pp2s1/6P1p/b1P5P/PP1PPP1P1/L1KSRSG2/1NG4NL b BP 1';
 const SYNTHETIC_MATE_IN_ONE = '2p2+B2k/1+B3g2p/1P2L1Gpn/p1P2p3/3p2p2/lpG1NP3/P1KP+p3+l/LS1S2SP+n/1NR1S1+pg1 b RPp 1';
+const DRIVER_HEALTH = {
+  schemaVersion: 1,
+  status: 'ready',
+  driverBootId: 'b'.repeat(32),
+  verifyStopEngineOnceEnabled: true,
+  verifyStopEngineOnceConsumed: false,
+  driverVersion: EXPECTED_IDENTITY.driverVersion,
+  contractVersion: EXPECTED_IDENTITY.contractVersion,
+  identityDigests: {
+    engineSha256: EXPECTED_IDENTITY.engineSha256,
+    weightSha256: EXPECTED_IDENTITY.weightSha256,
+    optionsSha256: EXPECTED_IDENTITY.optionsSha256,
+    sourceArchiveSha256: EXPECTED_IDENTITY.sourceArchiveSha256,
+    sourceTreeSha256: EXPECTED_IDENTITY.sourceTreeSha256,
+  },
+};
 
 function candidate(move: string, nextMove: string, value: number) {
   return { move, pv: [move, nextMove], score: { kind: 'cp', value } };
@@ -54,12 +70,19 @@ function makeEnv(
   response?: (payload: unknown) => unknown | Response,
   token?: string,
   verificationFlag?: string,
-): Env & { calls: number[] } {
+  containerHealth: Record<string, unknown> | Response = DRIVER_HEALTH,
+): Env & { calls: number[]; forwardedPaths: string[] } {
   const calls: number[] = [];
+  const forwardedPaths: string[] = [];
   const binding = {
     getByName: () => ({
       fetch: async (request: Request) => {
         calls.push(1);
+        const path = new URL(request.url).pathname;
+        forwardedPaths.push(path);
+        if (path === '/health') {
+          return containerHealth instanceof Response ? containerHealth : Response.json(containerHealth);
+        }
         const payload = await request.json();
         const result = response ? response(payload) : success((payload as { sfen: string }).sfen);
         return result instanceof Response ? result : Response.json(result);
@@ -71,6 +94,7 @@ function makeEnv(
     ANALYSIS_VERIFY_STOP_ENGINE_ONCE: verificationFlag,
     ANALYSIS_CONTAINER: binding as unknown as Env['ANALYSIS_CONTAINER'],
     calls,
+    forwardedPaths,
   };
 }
 
@@ -112,11 +136,15 @@ describe('staging analysis Worker boundary', () => {
     const ready = await handleRequest(health, verificationEnv);
     expect(ready.status).toBe(200);
     expect(await result(ready)).toEqual({
-      schemaVersion: 1,
-      status: 'ready',
-      verificationStopEngineOnce: true,
+      ...DRIVER_HEALTH,
+      workerVerifyStopEngineOnceEnabled: true,
     });
-    expect(verificationEnv.calls).toHaveLength(0);
+    expect(verificationEnv.forwardedPaths).toEqual(['/health']);
+
+    const unavailableEnv = makeEnv(undefined, 'secret-token', '1', new Response('not ready', { status: 503 }));
+    const unavailable = await handleRequest(health, unavailableEnv);
+    expect(unavailable.status).toBe(502);
+    expect(unavailableEnv.forwardedPaths).toEqual(['/health']);
   });
 
   it('does not allow an analysis request field or header to toggle the verification stop', async () => {
