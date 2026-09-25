@@ -20,7 +20,18 @@ export interface Env {
   ANALYSIS_VERIFY_STOP_ENGINE_ONCE?: string;
   ANALYSIS_BENCHMARK_ENABLED?: string;
   ANALYSIS_EXPECTED_INSTANCE_TYPE?: 'standard-2' | 'standard-3';
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
   ANALYSIS_CONTAINER: DurableObjectNamespace<AnalysisContainer>;
+}
+
+function workerVersionFields(env: Env): Record<string, string> {
+  const metadata = env.CF_VERSION_METADATA;
+  if (!metadata || typeof metadata.id !== 'string' || !metadata.id) return {};
+  return {
+    workerVersionId: metadata.id,
+    ...(typeof metadata.tag === 'string' && metadata.tag ? { workerVersionTag: metadata.tag } : {}),
+    ...(typeof metadata.timestamp === 'string' && metadata.timestamp ? { workerVersionTimestamp: metadata.timestamp } : {}),
+  };
 }
 
 const ANALYSIS_PATH = '/internal/analyze';
@@ -139,6 +150,7 @@ function benchmarkInstanceFailure(
   driverBootId: string,
   engineEpoch: number,
   runtime: Record<string, unknown>,
+  identityDigests: Record<string, unknown>,
   runtimeMismatch: string,
 ): Record<string, unknown> {
   return {
@@ -153,6 +165,7 @@ function benchmarkInstanceFailure(
     driverBootId,
     engineEpoch,
     runtime,
+    identityDigests,
     runtimeMismatch,
   };
 }
@@ -198,6 +211,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       }
       return json({
         ...driverHealth,
+        ...workerVersionFields(env),
         workerVerifyStopEngineOnceEnabled: env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1',
         workerBenchmarkEnabled: env.ANALYSIS_BENCHMARK_ENABLED === '1',
         workerExpectedInstanceType: env.ANALYSIS_EXPECTED_INSTANCE_TYPE ?? null,
@@ -254,6 +268,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
             String(driverHealth.driverBootId),
             0,
             runtime,
+            driverHealth.identityDigests as Record<string, unknown>,
             runtimeMismatch,
           ), 409);
         }
@@ -270,6 +285,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           driverBootId: driverHealth.driverBootId,
           engineEpoch: 0,
           driverVersion: driverHealth.driverVersion,
+          identityDigests: driverHealth.identityDigests,
           runtime,
           conditions: { requested: condition, actual: null },
           meta: { nodes: null, completedDepth: null, searchElapsedMs: null, engineNps: null, derivedNps: null, processElapsedMs: null, processCpuSeconds: null },
@@ -301,7 +317,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         const status = failureRecord.code === 'busy' || failureRecord.code === 'instance_mismatch' ? 409 : failureRecord.code === 'timeout' ? 504 : 502;
         return json(validated, status);
       }
-      return json(validated);
+      return json({ ...validated, ...workerVersionFields(env) });
     } catch {
       return json(failure('engine_error', 'Analysis container is unavailable.', sfen), 502);
     }

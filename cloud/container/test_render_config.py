@@ -46,6 +46,7 @@ class RenderConfigTests(unittest.TestCase):
         self.assertNotIn("ANALYSIS_BENCHMARK_ENABLED", normal.get("vars", {}))
         self.assertEqual(normal["vars"]["ANALYSIS_EXPECTED_INSTANCE_TYPE"], "standard-2")
         self.assertEqual(normal["containers"][0]["instance_type"], "standard-2")
+        self.assertEqual(normal["version_metadata"], {"binding": "CF_VERSION_METADATA"})
         self.assertEqual(
             verification["vars"]["ANALYSIS_VERIFY_STOP_ENGINE_ONCE"],
             "1",

@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import sys
 import time
 import urllib.error
@@ -15,6 +16,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 
 HERE = Path(__file__).resolve().parent
@@ -23,6 +25,10 @@ DEFAULT_POSITIONS = HERE / "dataset" / "positions.json"
 DEFAULT_GAME = HERE / "dataset" / "game.json"
 USER_AGENT = "meeshogi-issue20-benchmark/1.0"
 MAX_RESPONSE_BYTES = 1_048_576
+IDENTITY_DIGEST_KEYS = (
+    "engineSha256", "weightSha256", "optionsSha256", "sourceArchiveSha256", "sourceTreeSha256",
+)
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def wall_now() -> str:
@@ -31,6 +37,122 @@ def wall_now() -> str:
 
 def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def canonical_sha256(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return sha256_text(encoded)
+
+
+def pinned_image_digest(image_ref: str) -> str:
+    match = re.search(r"@sha256:([0-9a-f]{64})$", image_ref)
+    if not match:
+        raise ValueError("--image-ref must be pinned to an @sha256:<64 lowercase hex> digest")
+    return match.group(1)
+
+
+def safe_identity_digests(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict) or any(
+        not isinstance(value.get(key), str) or not SHA256_RE.fullmatch(value[key])
+        for key in IDENTITY_DIGEST_KEYS
+    ):
+        return None
+    return {key: value[key] for key in IDENTITY_DIGEST_KEYS}
+
+
+def fingerprint_endpoint(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("endpoint must be an http(s) URL without credentials, query, or fragment")
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    if parsed.port is not None:
+        host += f":{parsed.port}"
+    return urlunsplit((parsed.scheme, host, parsed.path.rstrip("/"), "", ""))
+
+
+def build_run_fingerprint(
+    *,
+    image_ref: str,
+    endpoint: str,
+    health: dict[str, Any],
+    conditions_path: Path,
+    dataset_path: Path,
+    dataset_manifest_sha256: str,
+    manifest_path: Path,
+) -> dict[str, Any]:
+    image_digest = pinned_image_digest(image_ref)
+    identities = safe_identity_digests(health.get("identityDigests"))
+    if identities is None:
+        raise ValueError("health response lacks the five validated identityDigests required for benchmark provenance")
+    if health.get("status") != "ready" or not isinstance(health.get("driverVersion"), str) or not isinstance(health.get("contractVersion"), str):
+        raise ValueError("health response is not ready or lacks driverVersion/contractVersion")
+    value = {
+        "imageRef": image_ref,
+        "imageDigest": image_digest,
+        "workerVersionId": health.get("workerVersionId"),
+        "workerVersionTag": health.get("workerVersionTag"),
+        "workerVersionTimestamp": health.get("workerVersionTimestamp"),
+        "identityDigests": identities,
+        "driverVersion": health["driverVersion"],
+        "contractVersion": health["contractVersion"],
+        "conditionsSha256": sha256_file(conditions_path),
+        "datasetSha256": sha256_file(dataset_path),
+        "datasetManifestSha256": dataset_manifest_sha256,
+        "runManifestSha256": sha256_file(manifest_path),
+        "endpoint": fingerprint_endpoint(endpoint),
+    }
+    value["fingerprintSha256"] = canonical_sha256(value)
+    return value
+
+
+def existing_run_fingerprint(path: Path, run_id: str) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    found: dict[str, Any] | None = None
+    found_attempts: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict) or record.get("runId") != run_id:
+                continue
+            if record.get("recordType") == "run-start":
+                if found is not None:
+                    raise ValueError(f"run {run_id} has duplicate run-start fingerprints")
+                fingerprint = record.get("fingerprint")
+                if not isinstance(fingerprint, dict):
+                    raise ValueError(f"run-start fingerprint is invalid at {path}:{line_number}")
+                found = fingerprint
+            elif record.get("recordType") in {"attempt", "attempt-start", "pending"}:
+                found_attempts.append(record)
+    if found is None and found_attempts:
+        raise ValueError(f"run {run_id} has existing attempts but no immutable run-start fingerprint; refusing resume")
+    if found is not None:
+        for attempt in found_attempts:
+            if (
+                attempt.get("runFingerprintSha256") != found.get("fingerprintSha256")
+                or attempt.get("imageDigest") != found.get("imageDigest")
+                or attempt.get("identityDigests") != found.get("identityDigests")
+            ):
+                raise ValueError(f"run {run_id} contains an attempt that does not match its immutable fingerprint")
+    return found
+
+
+def assert_resume_fingerprint(existing: dict[str, Any] | None, expected: dict[str, Any], run_id: str) -> None:
+    if existing is not None and existing != expected:
+        raise ValueError(f"run {run_id} fingerprint changed; refusing to mix measurements")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -120,6 +242,7 @@ def safe_health(payload: dict[str, Any] | None, http_status: int | None, elapsed
     payload = payload or {}
     runtime = payload.get("runtime")
     runtime_record = runtime if isinstance(runtime, dict) else {}
+    identity_record = safe_identity_digests(payload.get("identityDigests"))
     return {
         "httpStatus": http_status,
         "elapsedMs": elapsed_ms,
@@ -127,6 +250,10 @@ def safe_health(payload: dict[str, Any] | None, http_status: int | None, elapsed
         "driverBootId": payload.get("driverBootId") if isinstance(payload.get("driverBootId"), str) else None,
         "driverVersion": payload.get("driverVersion") if isinstance(payload.get("driverVersion"), str) else None,
         "contractVersion": payload.get("contractVersion") if isinstance(payload.get("contractVersion"), str) else None,
+        "identityDigests": identity_record,
+        "workerVersionId": payload.get("workerVersionId") if isinstance(payload.get("workerVersionId"), str) else None,
+        "workerVersionTag": payload.get("workerVersionTag") if isinstance(payload.get("workerVersionTag"), str) else None,
+        "workerVersionTimestamp": payload.get("workerVersionTimestamp") if isinstance(payload.get("workerVersionTimestamp"), str) else None,
         "expectedInstanceType": payload.get("expectedInstanceType") if isinstance(payload.get("expectedInstanceType"), str) else None,
         "workerExpectedInstanceType": payload.get("workerExpectedInstanceType") if isinstance(payload.get("workerExpectedInstanceType"), str) else None,
         "workerBenchmarkEnabled": payload.get("workerBenchmarkEnabled") if isinstance(payload.get("workerBenchmarkEnabled"), bool) else None,
@@ -245,6 +372,7 @@ def main() -> int:
     parser.add_argument("--conditions", type=Path, default=DEFAULT_CONDITIONS)
     parser.add_argument("--dataset", type=Path, help="positions.json or game.json; inferred from mode when omitted")
     parser.add_argument("--base-url", default=os.environ.get("ANALYSIS_STAGING_URL"))
+    parser.add_argument("--image-ref", default=os.environ.get("ANALYSIS_IMAGE_REF"), help="pinned container image ref (or ANALYSIS_IMAGE_REF)")
     parser.add_argument("--output", required=True, type=Path, help="append-only raw JSONL path")
     args = parser.parse_args()
 
@@ -253,6 +381,8 @@ def main() -> int:
         parser.error("ANALYSIS_INTERNAL_TOKEN is required in the environment")
     if not args.base_url:
         parser.error("--base-url or ANALYSIS_STAGING_URL is required")
+    if not args.image_ref:
+        parser.error("--image-ref or ANALYSIS_IMAGE_REF is required")
     try:
         run = load_json(args.manifest)
         if run.get("schemaVersion") != 1 or not isinstance(run.get("runId"), str) or not run["runId"]:
@@ -328,7 +458,60 @@ def main() -> int:
         return 2
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    run_started = time.monotonic()
+    run_started_wall = wall_now()
+    run_start_health = health_snapshot(args.base_url, token)
+    try:
+        fingerprint = build_run_fingerprint(
+            image_ref=args.image_ref,
+            endpoint=args.base_url,
+            health=run_start_health,
+            conditions_path=args.conditions,
+            dataset_path=dataset_path,
+            dataset_manifest_sha256=dataset["manifestSha256"],
+            manifest_path=args.manifest,
+        )
+        previous_fingerprint = existing_run_fingerprint(args.output, run["runId"])
+        assert_resume_fingerprint(previous_fingerprint, fingerprint, run["runId"])
+    except (OSError, ValueError) as error:
+        print(f"cannot establish benchmark provenance: {error}", file=sys.stderr)
+        return 2
     pending_path = args.output.with_name(args.output.name + ".pending.json")
+    if pending_path.exists():
+        try:
+            pending_record = load_json(pending_path)
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            print(f"cannot read pending attempt: {type(error).__name__}", file=sys.stderr)
+            return 2
+        if pending_record.get("runId") != run["runId"]:
+            print("cannot recover pending attempt for a different runId", file=sys.stderr)
+            return 2
+        if (
+            pending_record.get("runFingerprintSha256") != fingerprint["fingerprintSha256"]
+            or pending_record.get("imageDigest") != fingerprint["imageDigest"]
+            or pending_record.get("identityDigests") != fingerprint["identityDigests"]
+        ):
+            print("pending attempt fingerprint changed; refusing to recover it", file=sys.stderr)
+            return 2
+    if previous_fingerprint is None:
+        with args.output.open("a", encoding="utf-8") as stream:
+            append_record(stream, {
+                "recordType": "run-start",
+                "runId": run["runId"],
+                "mode": mode,
+                "runStartedWall": run_started_wall,
+                "fingerprint": fingerprint,
+                "healthAtRunStart": run_start_health,
+            })
+    if previous_fingerprint is not None:
+        with args.output.open("a", encoding="utf-8") as stream:
+            append_record(stream, {
+                "recordType": "run-resume-check",
+                "runId": run["runId"],
+                "mode": mode,
+                "runFingerprintSha256": fingerprint["fingerprintSha256"],
+                "healthAtRunStart": run_start_health,
+            })
     if pending_path.exists():
         try:
             recover_pending(args.output, pending_path)
@@ -336,7 +519,6 @@ def main() -> int:
             print(f"cannot recover pending attempt: {type(error).__name__}", file=sys.stderr)
             return 2
     completed = read_existing(args.output, run["runId"])
-    run_started = time.monotonic()
     total_requests = len(completed)
     schedule: list[tuple[dict[str, Any], dict[str, Any], int]] = []
     for condition in selected_conditions:
@@ -363,7 +545,6 @@ def main() -> int:
     game_groups: dict[str, list[dict[str, Any]]] = {}
     game_started_monotonic: dict[str, float] = {}
     game_resumed: set[str] = set()
-    run_start_health = None if mode == "cold" else health_snapshot(args.base_url, token)
     latest_health = run_start_health
     since_health = 0
     with args.output.open("a", encoding="utf-8") as stream:
@@ -407,6 +588,9 @@ def main() -> int:
                 "phase": position["phase"],
                 "ply": position.get("ply"),
                 "datasetManifestSha256": dataset["manifestSha256"],
+                "runFingerprintSha256": fingerprint["fingerprintSha256"],
+                "imageDigest": fingerprint["imageDigest"],
+                "identityDigests": fingerprint["identityDigests"],
                 "requestStartWall": request_start,
                 "gameAttemptId": group_id,
                 "gameSequence": position.get("ply"),
@@ -430,13 +614,23 @@ def main() -> int:
             if error is None and elapsed_ms is not None:
                 error = None
             cold_after = health_snapshot(args.base_url, token) if mode == "cold" else None
-            before_id = cold_before.get("driverBootId") if cold_before else None
-            after_id = cold_after.get("driverBootId") if cold_after else None
+            before_value = cold_before.get("driverBootId") if cold_before else None
+            after_value = cold_after.get("driverBootId") if cold_after else None
+            response_value = response.get("driverBootId") if isinstance(response, dict) else None
+            before_id = before_value if isinstance(before_value, str) and re.fullmatch(r"[0-9a-f]{32}", before_value) else None
+            after_id = after_value if isinstance(after_value, str) and re.fullmatch(r"[0-9a-f]{32}", after_value) else None
+            response_boot_id = response_value if isinstance(response_value, str) and re.fullmatch(r"[0-9a-f]{32}", response_value) else None
+            response_identity_digests = response.get("identityDigests") if isinstance(response, dict) else None
+            response_identity_digests = safe_identity_digests(response_identity_digests)
             cold_evidence = None if mode != "cold" else {
                 "bootIdBeforeIdle": before_id,
                 "bootIdAfterAttempt": after_id,
-                "bootChanged": bool(before_id and after_id and before_id != after_id),
+                "bootIdFromAnalysisResponse": response_boot_id if isinstance(response_boot_id, str) else None,
+                "analysisResponseBootIdPresent": isinstance(response_boot_id, str),
+                "healthAfterBootChanged": bool(before_id and after_id and before_id != after_id),
+                "bootChanged": bool(before_id and response_boot_id and before_id != response_boot_id),
                 "idleExceededSleepAfter": bool(cold_idle and cold_idle["seconds"] > cold_idle["requiredSleepAfterSeconds"]),
+                "coldConfirmed": bool(before_id and response_boot_id and before_id != response_boot_id and cold_idle and cold_idle["seconds"] > cold_idle["requiredSleepAfterSeconds"]),
             }
             record = {
                 "recordType": "attempt",
@@ -451,6 +645,9 @@ def main() -> int:
                 "phase": position["phase"],
                 "ply": position.get("ply"),
                 "datasetManifestSha256": dataset["manifestSha256"],
+                "runFingerprintSha256": fingerprint["fingerprintSha256"],
+                "imageDigest": fingerprint["imageDigest"],
+                "identityDigests": fingerprint["identityDigests"],
                 "requestStartWall": request_start,
                 "requestEndWall": request_end,
                 "httpElapsedMs": elapsed_ms,
@@ -458,6 +655,8 @@ def main() -> int:
                 "httpStatus": status,
                 "transportError": error,
                 "response": response,
+                "responseBootId": response_boot_id if isinstance(response_boot_id, str) else None,
+                "responseIdentityDigests": response_identity_digests,
                 "healthAtRunStart": run_start_health,
                 "healthSnapshot": latest_health,
                 "healthBeforeCold": cold_before,

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 vi.mock('@cloudflare/containers', () => ({
   Container: class {
     envVars: Record<string, string> = {};
@@ -109,6 +110,7 @@ function benchmarkSuccess(sfen: string, conditionId: string): Record<string, any
     driverVersion: 'test-driver',
     engineEpoch: 1,
     runtime: benchmarkRuntime(condition.instanceType),
+    identityDigests: DRIVER_HEALTH.identityDigests,
     conditions: {
       requested: condition,
       actual: {
@@ -232,6 +234,25 @@ describe('staging analysis Worker boundary', () => {
     expect(unavailableEnv.forwardedPaths).toEqual(['/health']);
   });
 
+  it('includes Cloudflare Worker version metadata in health when the binding is available', async () => {
+    const env = makeEnv(undefined, 'secret-token');
+    env.CF_VERSION_METADATA = { id: 'worker-version-id', tag: 'benchmark-deploy', timestamp: '2026-09-25T12:00:00.000Z' };
+    const response = await handleRequest(
+      new Request('https://staging.example/internal/health', {
+        method: 'GET',
+        headers: { authorization: 'Bearer secret-token' },
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await result(response)).toMatchObject({
+      workerVersionId: 'worker-version-id',
+      workerVersionTag: 'benchmark-deploy',
+      workerVersionTimestamp: '2026-09-25T12:00:00.000Z',
+      identityDigests: DRIVER_HEALTH.identityDigests,
+    });
+  });
+
   it('keeps benchmark mode explicitly off and rejects invalid condition input', async () => {
     const disabled = makeEnv(undefined, 'secret-token');
     const off = await handleRequest(
@@ -316,6 +337,27 @@ describe('staging analysis Worker boundary', () => {
     );
     expect(rejected.status).toBe(502);
     expect((await result(rejected)).failure).toMatchObject({ code: 'engine_error' });
+  });
+
+  it('validates a real Python driver v2 response from a fake USI process', async () => {
+    const generated = execFileSync('python3', ['container/benchmark_response_fixture.py'], { encoding: 'utf8' });
+    const driverResponse = JSON.parse(generated) as Record<string, unknown>;
+    const env = makeEnv(() => driverResponse, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const response = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await result(response)).toMatchObject({
+      status: 'success',
+      terminal: null,
+      identityDigests: driverResponse.identityDigests,
+      conditionId: 'standard-2-t1-100ms-mpv2',
+    });
   });
 
   it('rejects benchmark measurements when observed CPU or memory evidence disagrees', async () => {

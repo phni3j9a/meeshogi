@@ -79,7 +79,11 @@ class RunnerTests(unittest.TestCase):
             "status": "ready",
             "driverBootId": "b" * 32,
             "expectedInstanceType": "standard-2",
-            "identityDigests": {"private": "do-not-copy"},
+            "driverVersion": "usi-driver-v1",
+            "contractVersion": "analysis-json-v1",
+            "workerVersionId": "worker-version-id",
+            "workerVersionTag": "benchmark-test",
+            "identityDigests": {**{key: char * 64 for key, char in zip(runner.IDENTITY_DIGEST_KEYS, "abcde")}, "private": "do-not-copy"},
             "runtime": {
                 "osCpuCount": 2, "affinityCpuCount": 1, "cpuMax": "max 100000", "cpuQuota": None,
                 "memoryMaxBytes": 1234, "memTotalBytes": 5_900_000_000,
@@ -87,8 +91,10 @@ class RunnerTests(unittest.TestCase):
             },
         }, 200, 5)
         encoded = json.dumps(safe)
-        self.assertNotIn("identityDigests", encoded)
         self.assertNotIn("do-not-copy", encoded)
+        self.assertNotIn("private", safe["identityDigests"])
+        self.assertEqual(list(safe["identityDigests"]), list(runner.IDENTITY_DIGEST_KEYS))
+        self.assertEqual(safe["workerVersionId"], "worker-version-id")
         self.assertEqual(safe["driverBootId"], "b" * 32)
         self.assertEqual(safe["runtime"]["memoryMaxBytes"], 1234)
         self.assertEqual(safe["runtime"]["memTotalBytes"], 5_900_000_000)
@@ -133,6 +139,67 @@ class RunnerTests(unittest.TestCase):
                 {("positions", "condition-a", "p1", 2)},
             )
             self.assertEqual(runner.read_existing(path, "run-b"), set())
+
+    def test_pinned_image_and_immutable_resume_fingerprint(self) -> None:
+        self.assertEqual(runner.pinned_image_digest("registry.example/image@sha256:" + "a" * 64), "a" * 64)
+        with self.assertRaisesRegex(ValueError, "pinned"):
+            runner.pinned_image_digest("registry.example/image:latest")
+        fingerprint = {"imageDigest": "a" * 64, "fingerprintSha256": "same"}
+        runner.assert_resume_fingerprint(fingerprint, fingerprint, "run-a")
+        with self.assertRaisesRegex(ValueError, "fingerprint changed"):
+            runner.assert_resume_fingerprint(fingerprint, {**fingerprint, "imageDigest": "b" * 64}, "run-a")
+
+    def test_run_fingerprint_hashes_all_measurement_inputs_and_versions(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="meeshogi-runner-test-") as directory:
+            root = Path(directory)
+            conditions = root / "conditions.json"
+            dataset = root / "dataset.json"
+            manifest = root / "run.json"
+            for path, content in ((conditions, "conditions"), (dataset, "dataset"), (manifest, "manifest")):
+                path.write_text(content, encoding="utf-8")
+            health = {
+                "status": "ready",
+                "driverVersion": "driver-v1",
+                "contractVersion": "contract-v1",
+                "workerVersionId": "version-id",
+                "workerVersionTag": "tag",
+                "workerVersionTimestamp": "time",
+                "identityDigests": {key: char * 64 for key, char in zip(runner.IDENTITY_DIGEST_KEYS, "abcde")},
+            }
+            image_ref = "registry.example/meeshogi@sha256:" + "f" * 64
+            first = runner.build_run_fingerprint(
+                image_ref=image_ref,
+                endpoint="https://staging.example/",
+                health=health,
+                conditions_path=conditions,
+                dataset_path=dataset,
+                dataset_manifest_sha256="1" * 64,
+                manifest_path=manifest,
+            )
+            self.assertEqual(first["endpoint"], "https://staging.example")
+            self.assertEqual(first["imageDigest"], "f" * 64)
+            self.assertEqual(first["workerVersionId"], "version-id")
+            self.assertEqual(first["conditionsSha256"], runner.sha256_file(conditions))
+            self.assertEqual(first["datasetSha256"], runner.sha256_file(dataset))
+            self.assertEqual(first["runManifestSha256"], runner.sha256_file(manifest))
+            manifest.write_text("changed manifest", encoding="utf-8")
+            second = runner.build_run_fingerprint(
+                image_ref=image_ref,
+                endpoint="https://staging.example/",
+                health=health,
+                conditions_path=conditions,
+                dataset_path=dataset,
+                dataset_manifest_sha256="1" * 64,
+                manifest_path=manifest,
+            )
+            self.assertNotEqual(first["fingerprintSha256"], second["fingerprintSha256"])
+
+    def test_resume_refuses_attempts_without_run_start_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="meeshogi-runner-test-") as directory:
+            path = Path(directory) / "raw.jsonl"
+            path.write_text(json.dumps({"recordType": "attempt", "runId": "run-a"}) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "no immutable run-start fingerprint"):
+                runner.existing_run_fingerprint(path, "run-a")
 
     def test_interrupted_request_is_finalized_as_a_failure_without_retry(self) -> None:
         with tempfile.TemporaryDirectory(prefix="meeshogi-runner-test-") as directory:

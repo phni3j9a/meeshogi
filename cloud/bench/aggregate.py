@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import statistics
@@ -23,6 +24,9 @@ DO_REQUEST_USD_PER_MILLION = 0.15
 DO_DURATION_USD_PER_MILLION_GB_SECOND = 12.50
 DO_MEMORY_GIB = 128 / 1024
 SLEEP_AFTER_SECONDS = 300
+IDENTITY_DIGEST_KEYS = (
+    "engineSha256", "weightSha256", "optionsSha256", "sourceArchiveSha256", "sourceTreeSha256",
+)
 CONTAINER_SIZES = {
     "standard-2": {"vCpu": 1, "memoryGiB": 6, "diskGb": 12},
     "standard-3": {"vCpu": 2, "memoryGiB": 8, "diskGb": 16},
@@ -181,14 +185,16 @@ def pair_quality(pairs: list[tuple[dict[str, Any], dict[str, Any]]], multipv: in
     }
 
 
-def _reference_map(rows: list[dict[str, Any]], reference_id: str | None) -> dict[tuple[str, str], dict[str, Any]]:
+def _reference_map(
+    rows: list[dict[str, Any]], reference_id: str | None, repetition: int = 1,
+) -> dict[tuple[str, str], dict[str, Any]]:
     if reference_id is None:
         return {}
     return {
         (row["positionId"], row["positionSha256"]): row
         for row in rows
         if row.get("conditionId") == reference_id
-        and row.get("attemptNo") == 1
+        and row.get("attemptNo") == repetition
         and row.get("mode", "positions") == "positions"
         and row.get("comparisonRole", "primary") != "pilot"
         and isinstance(row.get("positionId"), str)
@@ -204,8 +210,12 @@ def _materialize_attempts(records: list[dict[str, Any]]) -> list[dict[str, Any]]
             continue
         key = (row.get("runId"), row.get("mode"), row.get("conditionId"), row.get("positionId"), row.get("attemptNo"))
         if row.get("recordType") == "attempt":
+            if key in complete:
+                raise ValueError(f"duplicate attempt key: {key}")
             complete[key] = row
         else:
+            if key in starts:
+                raise ValueError(f"duplicate attempt-start key: {key}")
             starts[key] = row
     output = list(complete.values())
     for key, start in starts.items():
@@ -223,6 +233,128 @@ def _materialize_attempts(records: list[dict[str, Any]]) -> list[dict[str, Any]]
         })
         output.append(interrupted)
     return output
+
+
+def _canonical_sha256(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _valid_identity_digests(value: Any) -> bool:
+    return isinstance(value, dict) and set(value) == set(IDENTITY_DIGEST_KEYS) and all(
+        isinstance(value.get(key), str) and len(value[key]) == 64
+        and all(char in "0123456789abcdef" for char in value[key])
+        for key in IDENTITY_DIGEST_KEYS
+    )
+
+
+def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
+    run_starts: dict[str, dict[str, Any]] = {}
+    for row in records:
+        if row.get("recordType") != "run-start":
+            continue
+        run_id = row.get("runId")
+        fingerprint = row.get("fingerprint")
+        if not isinstance(run_id, str) or not isinstance(fingerprint, dict):
+            raise ValueError("run-start record lacks runId or fingerprint")
+        if run_id in run_starts:
+            raise ValueError(f"duplicate run-start fingerprint for run {run_id}")
+        supplied_hash = fingerprint.get("fingerprintSha256")
+        unhashed = {key: value for key, value in fingerprint.items() if key != "fingerprintSha256"}
+        if not isinstance(supplied_hash, str) or supplied_hash != _canonical_sha256(unhashed):
+            raise ValueError(f"run {run_id} has an invalid fingerprintSha256")
+        image_digest = fingerprint.get("imageDigest")
+        image_ref = fingerprint.get("imageRef")
+        if not isinstance(image_digest, str) or len(image_digest) != 64 or any(char not in "0123456789abcdef" for char in image_digest):
+            raise ValueError(f"run {run_id} fingerprint lacks a pinned image digest")
+        if not isinstance(image_ref, str) or not image_ref.endswith(f"@sha256:{image_digest}"):
+            raise ValueError(f"run {run_id} imageRef does not match its pinned digest")
+        for key in ("conditionsSha256", "datasetSha256", "datasetManifestSha256", "runManifestSha256"):
+            value = fingerprint.get(key)
+            if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+                raise ValueError(f"run {run_id} fingerprint lacks {key}")
+        if not isinstance(fingerprint.get("endpoint"), str) or not fingerprint["endpoint"].startswith(("http://", "https://")):
+            raise ValueError(f"run {run_id} fingerprint lacks a valid endpoint")
+        if not isinstance(fingerprint.get("driverVersion"), str) or not isinstance(fingerprint.get("contractVersion"), str):
+            raise ValueError(f"run {run_id} fingerprint lacks driverVersion/contractVersion")
+        if not _valid_identity_digests(fingerprint.get("identityDigests")):
+            raise ValueError(f"run {run_id} fingerprint lacks valid artifact identity digests")
+        run_starts[run_id] = row
+
+    attempts = [row for row in records if row.get("recordType") in {"attempt", "attempt-start"}]
+    if attempts and not run_starts:
+        raise ValueError("raw attempts lack immutable run-start fingerprints")
+    common_identity: tuple[Any, ...] | None = None
+    for run_id, row in run_starts.items():
+        fingerprint = row["fingerprint"]
+        identity = (
+            fingerprint["imageDigest"],
+            tuple((key, fingerprint["identityDigests"][key]) for key in IDENTITY_DIGEST_KEYS),
+            fingerprint.get("driverVersion"),
+            fingerprint.get("contractVersion"),
+        )
+        if common_identity is None:
+            common_identity = identity
+        elif identity != common_identity:
+            raise ValueError("aggregation mixes image or artifact identity digests across runs")
+        start_health = row.get("healthAtRunStart")
+        start_digests = start_health.get("identityDigests") if isinstance(start_health, dict) else None
+        if start_digests is not None and start_digests != fingerprint["identityDigests"]:
+            raise ValueError(f"run {run_id} run-start health identity digests differ from its fingerprint")
+
+    for row in attempts:
+        run_id = row.get("runId")
+        if not isinstance(run_id, str) or run_id not in run_starts:
+            raise ValueError(f"attempt references run {run_id!r} without a run-start fingerprint")
+        fingerprint = run_starts[run_id]["fingerprint"]
+        if row.get("runFingerprintSha256") != fingerprint["fingerprintSha256"]:
+            raise ValueError(f"attempt in run {run_id} does not match its immutable fingerprint")
+        if row.get("imageDigest") != fingerprint["imageDigest"] or row.get("identityDigests") != fingerprint["identityDigests"]:
+            raise ValueError(f"attempt in run {run_id} has inconsistent image or artifact identities")
+        response_digests = row.get("responseIdentityDigests")
+        if response_digests is not None and response_digests != fingerprint["identityDigests"]:
+            raise ValueError(f"attempt in run {run_id} response identity digests differ from its fingerprint")
+        response = row.get("response")
+        response_digests = response.get("identityDigests") if isinstance(response, dict) else None
+        if response_digests is not None and response_digests != fingerprint["identityDigests"]:
+            raise ValueError(f"attempt in run {run_id} response identity digests differ from its fingerprint")
+        if isinstance(response, dict):
+            for key in ("driverVersion", "contractVersion"):
+                if isinstance(response.get(key), str) and response[key] != fingerprint[key]:
+                    raise ValueError(f"attempt in run {run_id} response {key} differs from its fingerprint")
+            response_worker_version = response.get("workerVersionId")
+            if isinstance(fingerprint.get("workerVersionId"), str) and response_worker_version is not None:
+                if response_worker_version != fingerprint["workerVersionId"]:
+                    raise ValueError(f"attempt in run {run_id} response Worker version differs from its fingerprint")
+        for field in ("healthAtRunStart", "healthSnapshot", "healthBeforeCold", "healthAfterCold"):
+            health = row.get(field)
+            health_digests = health.get("identityDigests") if isinstance(health, dict) else None
+            if health_digests is not None and health_digests != fingerprint["identityDigests"]:
+                raise ValueError(f"attempt in run {run_id} health identity digests differ from its fingerprint")
+            if isinstance(health, dict):
+                for key in ("driverVersion", "contractVersion"):
+                    if isinstance(health.get(key), str) and health[key] != fingerprint[key]:
+                        raise ValueError(f"attempt in run {run_id} health {key} differs from its fingerprint")
+                health_worker_version = health.get("workerVersionId")
+                if isinstance(fingerprint.get("workerVersionId"), str) and health_worker_version is not None:
+                    if health_worker_version != fingerprint["workerVersionId"]:
+                        raise ValueError(f"attempt in run {run_id} health Worker version differs from its fingerprint")
+
+    return {
+        "imageDigest": common_identity[0] if common_identity else None,
+        "identityDigests": dict(common_identity[1]) if common_identity else None,
+        "driverVersion": common_identity[2] if common_identity else None,
+        "contractVersion": common_identity[3] if common_identity else None,
+        "workerVersionIds": sorted({
+            str(row["fingerprint"].get("workerVersionId"))
+            for row in run_starts.values()
+            if isinstance(row["fingerprint"].get("workerVersionId"), str)
+        }),
+        "runFingerprints": [
+            {"runId": run_id, "fingerprintSha256": row["fingerprint"]["fingerprintSha256"]}
+            for run_id, row in sorted(run_starts.items())
+        ],
+    }
 
 
 def _metric_values(rows: list[dict[str, Any]], field: str) -> list[float | int | None]:
@@ -260,8 +392,9 @@ def summarize_cell(
     quality["attemptsWithoutPrimaryReference"] = paired_without_reference
     metrics = {
         name: value_stats(_metric_values(rows, name))
-        for name in ("completedDepth", "nodes", "engineNps", "derivedNps", "searchElapsedMs", "processElapsedMs", "processCpuSeconds")
+        for name in ("completedDepth", "nodes", "engineNps", "derivedNps", "searchElapsedMs", "processElapsedMs")
     }
+    metrics["engineChildCpuSecondsLowerBound"] = value_stats(_metric_values(rows, "processCpuSeconds"))
     metrics["httpElapsedMs"] = value_stats([row.get("httpElapsedMs") for row in rows])
     if condition.get("multiPV") != 3:
         quality["referenceTop1InCandidateTop3"] = None
@@ -302,6 +435,34 @@ def repetition_variability(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def quality_vs_reference_repetitions(
+    rows: list[dict[str, Any]],
+    reference_repetitions: dict[int, dict[tuple[str, str], dict[str, Any]]],
+    condition: dict[str, Any],
+) -> dict[str, Any]:
+    if condition.get("role") != "candidate":
+        return {}
+    comparisons: dict[str, Any] = {}
+    for repetition, references in reference_repetitions.items():
+        pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        missing = 0
+        for row in rows:
+            reference = references.get((row.get("positionId"), row.get("positionSha256")))
+            if reference is None:
+                missing += 1
+            else:
+                pairs.append((row, reference))
+        comparisons[str(repetition)] = {
+            "referenceRepetition": repetition,
+            "candidateAttempts": len(rows),
+            "candidateAttemptsWithoutReference": missing,
+            "quality": pair_quality(pairs, int(condition.get("multiPV", 0))),
+        }
+        if condition.get("multiPV") != 3:
+            comparisons[str(repetition)]["quality"]["referenceTop1InCandidateTop3"] = None
+    return comparisons
+
+
 def _parse_utc(value: Any) -> float | None:
     if not isinstance(value, str):
         return None
@@ -309,6 +470,10 @@ def _parse_utc(value: Any) -> float | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def _valid_boot_id(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 32 and all(char in "0123456789abcdef" for char in value)
 
 
 def _row_instance(row: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -340,7 +505,7 @@ def _row_instance(row: dict[str, Any]) -> tuple[str | None, str | None]:
 
 def container_cost(rows: list[dict[str, Any]]) -> dict[str, Any]:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    analysis_rows = rows
+    analysis_rows = [row for row in rows if row.get("recordType") in {"attempt", "attempt-start"}]
     events = list(rows)
     health_events: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -349,7 +514,7 @@ def container_cost(rows: list[dict[str, Any]]) -> dict[str, Any]:
             if not isinstance(snapshot, dict) or not isinstance(snapshot.get("requestStartWall"), str):
                 continue
             stamp = snapshot["requestStartWall"]
-            health_events.setdefault(stamp, {
+            event = {
                 "recordType": "health-event",
                 "mode": row.get("mode", "positions"),
                 "conditionId": row.get("conditionId"),
@@ -359,7 +524,10 @@ def container_cost(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "requestEndWall": snapshot.get("requestEndWall"),
                 "httpElapsedMs": snapshot.get("elapsedMs"),
                 "sleepAfterSeconds": row.get("sleepAfterSeconds", SLEEP_AFTER_SECONDS),
-            })
+            }
+            prior = health_events.setdefault(stamp, event)
+            if prior.get("conditionId") is None and isinstance(event.get("conditionId"), str):
+                prior["conditionId"] = event["conditionId"]
     events.extend(health_events.values())
     for row in events:
         instance, boot = _row_instance(row)
@@ -411,12 +579,13 @@ def container_cost(rows: list[dict[str, Any]]) -> dict[str, Any]:
             for condition_id, weight in weights.items():
                 active_by_condition[condition_id] += active_seconds * weight / total_weight
             sessions.append({"instanceType": instance, "bootId": boot, "requestCount": len(segment), "activeSeconds": active_seconds})
-    total_cost = {"cpuUsd": 0.0, "memoryUsd": 0.0, "diskUsd": 0.0}
+    total_cost = {"cpuUsdLowerBound": 0.0, "cpuUsdUpperBound": 0.0, "memoryUsd": 0.0, "diskUsd": 0.0}
     by_instance: dict[str, Any] = {}
     for instance, active_seconds in active_by_instance.items():
         size = CONTAINER_SIZES[instance]
-        cpu_seconds = 0.0
-        measured = True
+        engine_child_cpu_seconds = 0.0
+        engine_child_cpu_attempts = 0
+        engine_child_cpu_missing = 0
         for row in analysis_rows:
             row_instance, _ = _row_instance(row)
             if row_instance != instance:
@@ -425,39 +594,48 @@ def container_cost(rows: list[dict[str, Any]]) -> dict[str, Any]:
             meta = response.get("meta") if isinstance(response, dict) else None
             cpu = meta.get("processCpuSeconds") if isinstance(meta, dict) else None
             if isinstance(cpu, (int, float)) and not isinstance(cpu, bool):
-                cpu_seconds += max(0, float(cpu))
+                engine_child_cpu_seconds += max(0, float(cpu))
+                engine_child_cpu_attempts += 1
             else:
-                measured = False
-                process_ms = meta.get("processElapsedMs") if isinstance(meta, dict) else None
-                elapsed = process_ms if isinstance(process_ms, (int, float)) else row.get("httpElapsedMs")
-                if isinstance(elapsed, (int, float)):
-                    cpu_seconds += size["vCpu"] * max(0, float(elapsed)) / 1000
-        if not measured:
-            # Mark the value as an allocated-vCPU upper bound when any attempt lacks child rusage.
-            basis = "allocated-vCPU × measured process elapsed (HTTP elapsed fallback) upper bound"
-        else:
-            basis = "sum of child process CPU seconds from wait4 rusage"
-        cpu_cost = cpu_seconds * CONTAINER_CPU_USD_PER_VCPU_SECOND
+                engine_child_cpu_missing += 1
+        allocated_cpu_upper_bound = size["vCpu"] * active_seconds
+        cpu_lower_cost = engine_child_cpu_seconds * CONTAINER_CPU_USD_PER_VCPU_SECOND
+        cpu_upper_cost = allocated_cpu_upper_bound * CONTAINER_CPU_USD_PER_VCPU_SECOND
         memory_cost = size["memoryGiB"] * active_seconds * CONTAINER_MEMORY_USD_PER_GIB_SECOND
         disk_cost = size["diskGb"] * active_seconds * CONTAINER_DISK_USD_PER_GB_SECOND
         by_instance[instance] = {
-            "activeSecondsEstimate": active_seconds,
-            "cpuSecondsEstimate": cpu_seconds,
-            "cpuBasis": basis,
-            "cpuUsdGross": cpu_cost,
+            "fullActiveIntervalSecondsUpperBound": active_seconds,
+            "engineChildCpuSecondsLowerBound": engine_child_cpu_seconds,
+            "engineChildCpuAttemptsObserved": engine_child_cpu_attempts,
+            "engineChildCpuAttemptsMissing": engine_child_cpu_missing,
+            "containerAllocatedCpuSecondsUpperBound": allocated_cpu_upper_bound,
+            "engineChildCpuUsdGrossLowerBound": cpu_lower_cost,
+            "containerCpuUsdGrossUpperBound": cpu_upper_cost,
             "memoryUsdGross": memory_cost,
             "diskUsdGross": disk_cost,
         }
-        total_cost["cpuUsd"] += cpu_cost
+        total_cost["cpuUsdLowerBound"] += cpu_lower_cost
+        total_cost["cpuUsdUpperBound"] += cpu_upper_cost
         total_cost["memoryUsd"] += memory_cost
         total_cost["diskUsd"] += disk_cost
-    return {"byInstanceType": by_instance, "byConditionActiveSecondsEstimate": dict(active_by_condition), "sessions": sessions, "grossUsd": total_cost}
+    return {
+        "byInstanceType": by_instance,
+        "byConditionActiveSecondsEstimate": dict(active_by_condition),
+        "sessions": sessions,
+        "activeIntervalAssumptions": (
+            "Per observed boot session: health/analysis HTTP request spans plus inter-request gaps and one configured "
+            "sleepAfter tail. The first observed request latency includes Worker/Container/driver startup when startup "
+            "occurs in that request. Cold idle waits are conservatively represented by the sleepAfter tail; no separate "
+            "Container CPU telemetry is available."
+        ),
+        "grossUsd": total_cost,
+    }
 
 
 def cost_estimate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     attempts = [row for row in rows if row.get("recordType") == "attempt"]
     health_calls: dict[str, dict[str, Any]] = {}
-    for row in attempts:
+    for row in rows:
         for field in ("healthAtRunStart", "healthSnapshot", "healthBeforeCold", "healthAfterCold"):
             item = row.get(field)
             if isinstance(item, dict) and item.get("requestStartWall"):
@@ -484,7 +662,7 @@ def cost_estimate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for row in attempts
     )
     do_upper = len(health_calls) + len(attempts) - do_not_called
-    container = container_cost(attempts)
+    container = container_cost(rows)
     do_wall_seconds = sum(max(0, int(row.get("httpElapsedMs") or 0)) / 1000 for row in attempts) + health_wall_seconds
     condition_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
     condition_definitions: dict[str, dict[str, Any]] = {}
@@ -501,27 +679,28 @@ def cost_estimate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         size = CONTAINER_SIZES.get(instance)
         if size is None:
             continue
-        cpu_seconds = 0.0
-        measured = True
+        engine_child_cpu_seconds = 0.0
+        engine_child_cpu_attempts = 0
+        engine_child_cpu_missing = 0
         for row in cell_rows:
             response = row.get("response")
             meta = response.get("meta") if isinstance(response, dict) else None
             cpu = meta.get("processCpuSeconds") if isinstance(meta, dict) else None
             if isinstance(cpu, (int, float)) and not isinstance(cpu, bool):
-                cpu_seconds += max(0.0, float(cpu))
+                engine_child_cpu_seconds += max(0.0, float(cpu))
+                engine_child_cpu_attempts += 1
             else:
-                measured = False
-                elapsed = meta.get("processElapsedMs") if isinstance(meta, dict) else None
-                if not isinstance(elapsed, (int, float)):
-                    elapsed = row.get("httpElapsedMs")
-                if isinstance(elapsed, (int, float)):
-                    cpu_seconds += size["vCpu"] * max(0.0, float(elapsed)) / 1000
+                engine_child_cpu_missing += 1
         active_seconds = float(container["byConditionActiveSecondsEstimate"].get(measurement_cell, 0.0))
+        allocated_cpu_upper_bound = size["vCpu"] * active_seconds
         container_components = {
-            "activeSecondsEstimate": active_seconds,
-            "cpuSecondsEstimate": cpu_seconds,
-            "cpuBasis": "measured child rusage" if measured else "allocated-vCPU × process elapsed upper bound",
-            "cpuUsdGross": cpu_seconds * CONTAINER_CPU_USD_PER_VCPU_SECOND,
+            "fullActiveIntervalSecondsUpperBound": active_seconds,
+            "engineChildCpuSecondsLowerBound": engine_child_cpu_seconds,
+            "engineChildCpuAttemptsObserved": engine_child_cpu_attempts,
+            "engineChildCpuAttemptsMissing": engine_child_cpu_missing,
+            "containerAllocatedCpuSecondsUpperBound": allocated_cpu_upper_bound,
+            "engineChildCpuUsdGrossLowerBound": engine_child_cpu_seconds * CONTAINER_CPU_USD_PER_VCPU_SECOND,
+            "containerCpuUsdGrossUpperBound": allocated_cpu_upper_bound * CONTAINER_CPU_USD_PER_VCPU_SECOND,
             "memoryUsdGross": size["memoryGiB"] * active_seconds * CONTAINER_MEMORY_USD_PER_GIB_SECOND,
             "diskUsdGross": size["diskGb"] * active_seconds * CONTAINER_DISK_USD_PER_GB_SECOND,
         }
@@ -570,10 +749,10 @@ def cost_estimate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "durableObjectDurationUsdPerMillionGBSecond": DO_DURATION_USD_PER_MILLION_GB_SECOND,
         },
         "formulas": {
-            "containerCpuMeasured": "sum(processCpuSeconds) * containersCpuUsdPerVcpuSecond",
-            "containerCpuFallbackUpperBound": "allocatedVcpu * processElapsedSeconds (or HTTP elapsed fallback) * containersCpuUsdPerVcpuSecond",
-            "containerMemory": "provisionedGiB * estimatedActiveSeconds * containersMemoryUsdPerGiBSecond",
-            "containerDisk": "provisionedGB * estimatedActiveSeconds * containersDiskUsdPerGBSecond",
+            "engineChildCpuLowerBound": "sum(observed engine-child processCpuSeconds from wait4 rusage) * containersCpuUsdPerVcpuSecond; excludes Python driver and other Container CPU",
+            "containerCpuUpperBound": "allocatedVcpu * full observed active-interval upper bound * containersCpuUsdPerVcpuSecond",
+            "containerMemory": "provisionedGiB * full observed active-interval upper bound * containersMemoryUsdPerGiBSecond",
+            "containerDisk": "provisionedGB * full observed active-interval upper bound * containersDiskUsdPerGBSecond",
             "workerRequests": "billable request count bounds * workersRequestUsdPerMillion / 1000000",
             "durableObjectRequests": "request count bounds * durableObjectRequestUsdPerMillion / 1000000",
             "durableObjectDurationProxy": "sum(HTTP elapsed seconds) * 128MiB-in-GiB * durableObjectDurationUsdPerMillionGBSecond / 1000000",
@@ -601,18 +780,24 @@ def cost_estimate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "unknownOrExcluded": [
             "account plan, remaining included allowances, regional egress, Worker CPU, exact DO active duration, and invoice rounding",
-            "memory/disk active duration uses request spans plus configured sleepAfter tail; runtime scheduling may differ",
+            "engine-child CPU is only a lower bound; the allocated-vCPU upper bound assumes each observed Container session remains billable through one sleepAfter tail",
+            "memory/disk duration and Container startup are estimated from observed HTTP request spans; platform scheduling may differ",
         ],
     }
 
 
 def aggregate_records(records: list[dict[str, Any]], conditions: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    provenance = verify_run_provenance(records)
     attempts = _materialize_attempts(records)
     reference_ids = [condition_id for condition_id, condition in conditions.items() if condition.get("role") == "reference"]
     if len(reference_ids) > 1:
         raise ValueError("conditions manifest may contain at most one reference")
     reference_id = reference_ids[0] if reference_ids else None
     references = _reference_map(attempts, reference_id)
+    reference_repetitions = {
+        repetition: _reference_map(attempts, reference_id, repetition)
+        for repetition in (2, 3)
+    }
     rows_by_condition: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in attempts:
         if row.get("conditionId") in conditions:
@@ -632,6 +817,7 @@ def aggregate_records(records: list[dict[str, Any]], conditions: dict[str, dict[
             "overall": summarize_cell(rows, references, condition),
             "byPhase": by_phase,
             "repetitionVariability": repetition_variability(rows),
+            "qualityVsReferenceRepetitions": quality_vs_reference_repetitions(rows, reference_repetitions, condition),
         })
     game_summaries = [
         {key: row.get(key) for key in ("runId", "conditionId", "gameAttemptId", "positionCount", "gameWallMs", "complete", "resumed")}
@@ -639,13 +825,30 @@ def aggregate_records(records: list[dict[str, Any]], conditions: dict[str, dict[
     ]
     cold_rows = [row for row in attempts if row.get("mode") == "cold"]
     cold_confirmed = sum(
-        bool(isinstance(row.get("coldEvidence"), dict) and row["coldEvidence"].get("idleExceededSleepAfter") and row["coldEvidence"].get("bootChanged"))
+        bool(
+            isinstance(row.get("coldEvidence"), dict)
+            and row["coldEvidence"].get("coldConfirmed") is True
+            and row["coldEvidence"].get("idleExceededSleepAfter") is True
+            and isinstance(row["coldEvidence"].get("bootIdBeforeIdle"), str)
+            and isinstance(row["coldEvidence"].get("bootIdFromAnalysisResponse"), str)
+            and row["coldEvidence"]["bootIdBeforeIdle"] != row["coldEvidence"]["bootIdFromAnalysisResponse"]
+        )
         for row in cold_rows
     )
-    cold_status = Counter(
-        row.get("response", {}).get("status") if isinstance(row.get("response"), dict) else "transport"
-        for row in cold_rows
-    )
+    cold_status: Counter[str] = Counter()
+    cold_causes: Counter[str] = Counter()
+    for row in cold_rows:
+        response = row.get("response")
+        status = response.get("status") if isinstance(response, dict) else "transport"
+        evidence = row.get("coldEvidence")
+        response_boot_id = evidence.get("bootIdFromAnalysisResponse") if isinstance(evidence, dict) else None
+        has_response_boot_id = _valid_boot_id(response_boot_id)
+        if not has_response_boot_id and status not in {"failure", "transport"}:
+            cold_status["failure"] += 1
+            cold_causes["failure:analysis_boot_id_missing"] += 1
+        else:
+            cold_status[status if isinstance(status, str) else "unknown"] += 1
+            cold_causes[_failure_cause(row)] += 1
     cold = {
         "attempts": len(cold_rows),
         "successRate": ratio(cold_status["success"], len(cold_rows)),
@@ -657,13 +860,19 @@ def aggregate_records(records: list[dict[str, Any]], conditions: dict[str, dict[
                 "conditionId": row.get("conditionId"),
                 "positionId": row.get("positionId"),
                 "before": row.get("coldEvidence", {}).get("bootIdBeforeIdle") if isinstance(row.get("coldEvidence"), dict) else None,
-                "after": row.get("coldEvidence", {}).get("bootIdAfterAttempt") if isinstance(row.get("coldEvidence"), dict) else None,
+                "analysisResponseBootId": row.get("coldEvidence", {}).get("bootIdFromAnalysisResponse") if isinstance(row.get("coldEvidence"), dict) else None,
+                "healthAfterBootId": row.get("coldEvidence", {}).get("bootIdAfterAttempt") if isinstance(row.get("coldEvidence"), dict) else None,
+                "coldEvidenceFailure": (
+                    "analysis_boot_id_missing"
+                    if not _valid_boot_id(row.get("coldEvidence", {}).get("bootIdFromAnalysisResponse"))
+                    else None
+                ) if isinstance(row.get("coldEvidence"), dict) else "analysis_boot_id_missing",
                 "httpStatus": row.get("httpStatus"),
                 "status": row.get("response", {}).get("status") if isinstance(row.get("response"), dict) else "transport",
             }
             for row in cold_rows
         ],
-        "statusCounts": dict(Counter(_failure_cause(row) for row in cold_rows)),
+        "statusCounts": dict(cold_causes),
     }
     game_rows = [row for row in attempts if row.get("mode") == "game"]
     game_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -686,7 +895,8 @@ def aggregate_records(records: list[dict[str, Any]], conditions: dict[str, dict[
             "perPositionHttpElapsedMs": value_stats([row.get("httpElapsedMs") for row in group]),
         })
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "provenance": provenance,
         "runIds": sorted({row.get("runId") for row in records if isinstance(row.get("runId"), str)}),
         "attemptCount": len(attempts),
         "referenceConditionId": reference_id,
@@ -743,6 +953,39 @@ def markdown_report(value: dict[str, Any]) -> str:
                 http=fmt(metrics["httpElapsedMs"]["median"]),
             )
         )
+    lines.extend([
+        "",
+        "## Candidate quality against reference repetitions 2 and 3",
+        "",
+        "The same candidate attempts are paired independently with each available reference repetition. Ratios show numerator/denominator; missing reference positions are reported separately.",
+        "",
+        "| Candidate | Reference repetition | Candidate attempts | Paired attempts | Missing reference | Top-1 n/d | Top-2 n/d | Top-3 n/d | CP abs diff count, median / p90 | Mate side n/d | Mate distance n/d |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    def ratio_label(value: dict[str, Any] | None) -> str:
+        return "n/a" if not isinstance(value, dict) else f"{value['numerator']}/{value['denominator']}"
+
+    for row in value.get("conditions", []):
+        for repetition, comparison in row.get("qualityVsReferenceRepetitions", {}).items():
+            quality = comparison["quality"]
+            cp = quality["cpAbsDiff"]
+            lines.append(
+                "| {condition} | {rep} | {candidates} | {paired} | {missing} | {top1} | {top2} | {top3} | {cp_count}, {cp50} / {cp90} | {mate_side} | {mate_distance} |".format(
+                    condition=row["condition"]["conditionId"],
+                    rep=repetition,
+                    candidates=comparison["candidateAttempts"],
+                    paired=quality["pairedAttempts"],
+                    missing=comparison["candidateAttemptsWithoutReference"],
+                    top1=ratio_label(quality["top1Agreement"]),
+                    top2=ratio_label(quality["referenceTop1InCandidateTop2"]),
+                    top3=ratio_label(quality["referenceTop1InCandidateTop3"]),
+                    cp_count=cp["count"],
+                    cp50="n/a" if cp["median"] is None else f"{cp['median']:.3f}",
+                    cp90="n/a" if cp["p90"] is None else f"{cp['p90']:.3f}",
+                    mate_side=ratio_label(quality["mateSideAgreement"]),
+                    mate_distance=ratio_label(quality["mateDistanceExactAgreement"]),
+                )
+            )
     lines.extend([
         "",
         "## By phase",

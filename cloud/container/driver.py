@@ -844,11 +844,16 @@ class AnalysisService:
             "contractVersion": "analysis-json-v2",
             "sfen": sfen,
             "perspective": "sente",
+            "terminal": None,
             "conditionId": condition["conditionId"],
             "expectedInstanceType": self.expected_instance_type,
             "driverBootId": DRIVER_BOOT_ID,
             "engineEpoch": engine_epoch,
             "driverVersion": self.identity["driverVersion"],
+            "identityDigests": {
+                key: self.identity[key]
+                for key in ("engineSha256", "weightSha256", "optionsSha256", "sourceArchiveSha256", "sourceTreeSha256")
+            },
             "runtime": runtime_facts(self.expected_instance_type),
             "conditions": {
                 "requested": {key: condition[key] for key in ("conditionId", "instanceType", "threads", "hashMb", "moveTimeMs", "multiPV")},

@@ -6,6 +6,16 @@ export const BENCHMARK_CONTRACT_VERSION = 'analysis-json-v2';
 export const DRIVER_VERSION = 'usi-driver-v1';
 export const MAX_BODY_BYTES = 1024;
 export const MAX_SFEN_BYTES = 256;
+const BENCHMARK_IDENTITY_DIGEST_KEYS = [
+  'engineSha256', 'weightSha256', 'optionsSha256', 'sourceArchiveSha256', 'sourceTreeSha256',
+] as const;
+
+function hasBenchmarkIdentityDigests(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const digests = value as Record<string, unknown>;
+  return Object.keys(digests).length === BENCHMARK_IDENTITY_DIGEST_KEYS.length
+    && BENCHMARK_IDENTITY_DIGEST_KEYS.every((key) => typeof digests[key] === 'string' && /^[0-9a-f]{64}$/u.test(digests[key] as string));
+}
 
 export const SEARCH_CONDITIONS = Object.freeze({
   threads: 1,
@@ -347,6 +357,7 @@ export type BenchmarkDriverFailure = {
   engineEpoch: number;
   expectedInstanceType: string | null;
   runtime: Record<string, unknown>;
+  identityDigests: Record<string, unknown>;
   runtimeMismatch?: string;
 };
 
@@ -362,6 +373,7 @@ export function validateBenchmarkDriverResult(
   if (
     result.schemaVersion !== 2 || result.contractVersion !== BENCHMARK_CONTRACT_VERSION ||
     result.sfen !== sfen || result.perspective !== 'sente' || result.conditionId !== condition.conditionId ||
+    !hasBenchmarkIdentityDigests(result.identityDigests) ||
     !(result.expectedInstanceType === null || result.expectedInstanceType === 'standard-2' || result.expectedInstanceType === 'standard-3') ||
     typeof result.driverBootId !== 'string' || !/^[0-9a-f]{32}$/u.test(result.driverBootId) ||
     !(typeof result.engineEpoch === 'number' && Number.isSafeInteger(result.engineEpoch) && result.engineEpoch >= 0) ||
@@ -397,6 +409,7 @@ export function validateBenchmarkDriverResult(
       engineEpoch: result.engineEpoch,
       expectedInstanceType: result.expectedInstanceType,
       runtime,
+      identityDigests: result.identityDigests,
       runtimeMismatch: evidenceMismatch,
     };
     return value as BenchmarkDriverFailure;
@@ -416,6 +429,7 @@ export function validateBenchmarkDriverResult(
     engineEpoch: result.engineEpoch,
     expectedInstanceType: result.expectedInstanceType,
     runtime,
+    identityDigests: result.identityDigests,
     runtimeMismatch: evidenceMismatch,
   };
   if (!['success', 'incomplete'].includes(String(result.status)) || result.terminal !== null) return null;
