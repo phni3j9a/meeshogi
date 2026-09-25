@@ -43,6 +43,10 @@ meetermのネイティブターミナル描画要件をこのアプリへ転用�
 
 採用する現行モデルを同梱し、未読込・破損・ネイティブモジュール不在では解析エラーを表示する。評価値や候補手を固定のデモ結果へ置き換えない。エンジンとモデルの識別子、探索条件を結果ごとに保存する。
 
+## Issue #19 staging技術ゲート
+
+Issue #19のCloudflare Worker / Containerは、認証・private engine image・同期解析のstaging技術検証に限る。Containerに必要なclass、binding、SQLite migrationと標準lifecycleだけを使い、独自のDO storage・調停・alarm・retry・recoveryを追加しない。モバイルの解析経路や無料初期版の利用条件には接続せず、production・同期・ログイン機能の採用を意味しない。実装と運用条件は[`cloud/README.md`](../cloud/README.md)に記録する。
+
 ## 詰みと戦型
 
 短手数の詰みは通常評価とは別の確定結果として扱う。1手・3手の範囲で合法手・王手回避・打ち歩詰めなどの規則を含めて検証し、手順表示の結果と証明の結果を区別する。Sekireiに必要なAPIがあるかは実装前に調べ、不足する場合は共通ロジックとして実装する。

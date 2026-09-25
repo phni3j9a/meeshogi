@@ -1,0 +1,159 @@
+import { Container, getContainer } from '@cloudflare/containers';
+import {
+  EXPECTED_IDENTITY,
+  SEARCH_CONDITIONS,
+  failure,
+  isValidSfen,
+  legalMoves,
+  MAX_BODY_BYTES,
+  validateDriverResult,
+} from './contract';
+import { Position } from 'tsshogi';
+
+export interface Env {
+  ANALYSIS_INTERNAL_TOKEN?: string;
+  ANALYSIS_CONTAINER: DurableObjectNamespace<AnalysisContainer>;
+}
+
+const ANALYSIS_PATH = '/internal/analyze';
+
+export class AnalysisContainer extends Container<Env> {
+  defaultPort = 8080;
+  sleepAfter = '5m';
+}
+
+function json(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  let difference = a.length ^ b.length;
+  const count = Math.max(a.length, b.length);
+  for (let index = 0; index < count; index++) {
+    difference |= (a.charCodeAt(index) || 0) ^ (b.charCodeAt(index) || 0);
+  }
+  return difference === 0;
+}
+
+async function readBody(request: Request): Promise<Uint8Array | null> {
+  const declaredLength = request.headers.get('content-length');
+  if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) || Number(declaredLength) > MAX_BODY_BYTES)) {
+    return null;
+  }
+  if (!request.body) return new Uint8Array();
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function unauthorized(status: number, code: 'auth_unconfigured' | 'unauthorized'): Response {
+  const message = code === 'auth_unconfigured' ? 'Internal analysis is not configured.' : 'Unauthorized.';
+  return json(failure(code, message), status);
+}
+
+export async function handleRequest(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname !== ANALYSIS_PATH) return json(failure('invalid', 'Not found.'), 404);
+  if (request.method !== 'POST') return json(failure('invalid', 'Method not allowed.'), 405);
+
+  const expectedToken = env.ANALYSIS_INTERNAL_TOKEN;
+  if (!expectedToken) return unauthorized(503, 'auth_unconfigured');
+  const authorization = request.headers.get('authorization') ?? '';
+  if (!authorization.startsWith('Bearer ') || !constantTimeEqual(authorization.slice(7), expectedToken)) {
+    return unauthorized(401, 'unauthorized');
+  }
+
+  if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+    return json(failure('invalid', 'Expected application/json.'), 415);
+  }
+  const bytes = await readBody(request);
+  if (!bytes) return json(failure('invalid', 'Request body exceeds the 1024 byte limit.'), 413);
+
+  let body: unknown;
+  try {
+    body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch {
+    return json(failure('invalid', 'Request body is not valid JSON.'), 400);
+  }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return json(failure('invalid', 'Expected a JSON object with one SFEN field.'), 400);
+  }
+  const record = body as Record<string, unknown>;
+  if (Object.keys(record).length !== 1 || !Object.hasOwn(record, 'sfen') || !isValidSfen(record.sfen)) {
+    const echo = typeof record.sfen === 'string' && !/[\u0000-\u001f\u007f]/u.test(record.sfen)
+      ? record.sfen.slice(0, 256)
+      : null;
+    return json(failure('invalid', 'SFEN must be valid, single-line shogi notation.' , echo), 400);
+  }
+  const sfen = record.sfen;
+  const position = Position.newBySFEN(sfen);
+  if (!position) return json(failure('invalid', 'SFEN is invalid.'), 400);
+  const rootMoves = legalMoves(sfen);
+  if (rootMoves.length === 0) {
+    const terminal: 'checkmate' | 'no-legal-moves' = position.checked ? 'checkmate' : 'no-legal-moves';
+    return json({
+      schemaVersion: 1,
+      sfen,
+      perspective: 'sente',
+      status: 'terminal',
+      terminal,
+      candidates: [],
+      meta: { nodes: null, completedDepth: null, elapsedMs: null },
+      conditions: { requested: SEARCH_CONDITIONS, actual: null },
+      identity: EXPECTED_IDENTITY,
+    });
+  }
+
+  try {
+    const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, 'analysis-mvp-singleton');
+    const internalRequest = new Request('http://analysis-container/analyze', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sfen, legalMoveCount: rootMoves.length }),
+    });
+    const response = await container.fetch(internalRequest);
+    const text = await response.text();
+    if (text.length > 64 * 1024) return json(failure('engine_error', 'Analysis result exceeded the response limit.', sfen), 502);
+    let driverResult: unknown;
+    try {
+      driverResult = JSON.parse(text);
+    } catch {
+      return json(failure('engine_error', 'Analysis container returned an invalid response.', sfen), 502);
+    }
+    const validated = validateDriverResult(driverResult, sfen, rootMoves);
+    if (!validated) return json(failure('engine_error', 'Analysis result failed contract validation.', sfen), 502);
+    if (validated.status === 'failure') {
+      const status = validated.failure.code === 'busy' ? 409 : validated.failure.code === 'timeout' ? 504 : 502;
+      return json(validated, status);
+    }
+    return json(validated);
+  } catch {
+    return json(failure('engine_error', 'Analysis container is unavailable.', sfen), 502);
+  }
+}
+
+export default { fetch: handleRequest };

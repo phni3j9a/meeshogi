@@ -4,6 +4,8 @@
 
 2026年9月23日現在、無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)と関連する#9/#11、Issue #7の解析正しさ修正（PR #13）はマージ済みである。PR #12の画面刷新は最新mainの解析正しさ修正を取り込み、Android emulatorとiOS Simulatorのネイティブ受入を完了した。Expo SDK 57 / React Native 0.86.3、tsshogi 2.3.4、SQLiteとRustの解析経路を採用し、モバイル受入はDevin Cloud常駐セッションへ移行済み（Issue #8）である。GitHub Actionsの`ci.yml`は共通ロジック・型検査・Rustテストを検証し、モバイル受入の代わりにはしない。
 
+Issue #19では別のstaging技術ゲートとして、認証付きCloudflare Workerからprivate YaneuraOu + Suisho11 Plus Containerを呼ぶ1局面APIを検証する。モバイル製品コードから独立しており、端末内解析・ログイン不要の方針を変更しない。offline testとdeploy/smoke/timeoutの手順は[`cloud/README.md`](../cloud/README.md)を参照する。
+
 ### PR #12: 解析画面と駒セット
 
 盤面・評価グラフ・候補手・手送りを再構成し、グラフの横ドラッグで局面を確認できる。設定では黄楊・白木・桜木・青磁を比較して選択でき、SQLite保存後に盤上・持駒・詰み手順へ共通反映する。生成済み23PNGは約0.55MiB。仕様と以前のWeb検証は[画面の改善](design/analysis-refresh.md)・[駒セット](design/piece-sets.md)を参照。
