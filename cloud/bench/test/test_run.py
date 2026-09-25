@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -196,6 +198,97 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertEqual(runner.read_existing(path, "run-b"), set())
 
+    def test_cold_manifest_has_one_finite_unused_name_per_trial(self) -> None:
+        cold_manifest = runner.load_json(BENCH_DIR / "manifests" / "cold-standard-3.json")
+        conditions = runner.load_conditions(runner.DEFAULT_CONDITIONS)
+        targets = runner.targets_for_run(cold_manifest, conditions, BUILD_ID, "standard-3")
+        preflight = [row for row in targets if row["purpose"] == "cold-preflight"]
+        trials = [row for row in targets if row["purpose"] == "cold-trial"]
+        self.assertEqual(len(preflight), 1)
+        self.assertEqual([row["coldTrialNo"] for row in trials], [1, 2, 3])
+        self.assertEqual(len({row["targetId"] for row in trials}), 3)
+        self.assertTrue(all(BUILD_ID in row["targetId"] and row["segmentId"] == "cold-standard-3" for row in trials))
+
+        with tempfile.TemporaryDirectory(prefix="meeshogi-cold-ledger-test-") as directory:
+            path = Path(directory) / "raw.jsonl"
+            trial = trials[0]
+            self.assertFalse(runner.target_seen(path, trial["targetId"]))
+            path.write_text(json.dumps({
+                "recordType": "attempt", "targetId": trial["targetId"],
+                "mode": "cold", "runId": cold_manifest["runId"],
+            }) + "\n", encoding="utf-8")
+            self.assertTrue(runner.target_seen(path, trial["targetId"]))
+
+    def test_cold_runner_dispatches_once_to_each_fresh_target_then_stops_it(self) -> None:
+        manifest = BENCH_DIR / "manifests" / "cold-standard-2.json"
+        conditions = runner.load_conditions(runner.DEFAULT_CONDITIONS)
+        target_rows = runner.targets_for_run(runner.load_json(manifest), conditions, BUILD_ID, "standard-2")
+        preflight = next(row for row in target_rows if row["purpose"] == "cold-preflight")
+        calls: list[dict] = []
+
+        def fake_request_json(url, token, method, body=None, timeout=30):
+            call = {"url": url, "method": method, "body": body, "timeout": timeout}
+            calls.append(call)
+            if url.endswith("/internal/benchmark/health?targetId=" + preflight["targetId"]):
+                payload = {
+                    "status": "ready", "buildId": BUILD_ID, "gitCommit": GIT_COMMIT,
+                    "driverBootId": "b" * 32, "driverVersion": "test-driver", "contractVersion": "test-contract",
+                    "expectedInstanceType": "standard-2", "workerExpectedInstanceType": "standard-2",
+                    "workerBenchmarkEnabled": True, "identityDigests": IDENTITY_DIGESTS,
+                    "targetId": preflight["targetId"], "segmentId": preflight["segmentId"],
+                    "targetPurpose": "cold-preflight", "targetInstanceType": "standard-2",
+                    "expectedBuildId": BUILD_ID, "containerState": "healthy",
+                    "containerStateLastChangeWall": "2026-09-25T00:00:00.000Z",
+                    "runtime": {
+                        "driverBootId": "b" * 32, "expectedInstanceType": "standard-2",
+                        "osCpuCount": 1, "affinityCpuCount": 1, "cpuMax": None, "cpuQuota": None,
+                        "memoryMaxBytes": None, "memTotalBytes": 5_900_000_000, "rootDiskTotalBytes": 12_000_000_000,
+                    },
+                }
+                return 200, payload, 5, None
+            if url.endswith("/internal/benchmark/stop"):
+                return 200, {"stopped": True, "stopCheckedWithoutFetch": True}, 2, None
+            if url.endswith("/internal/benchmark"):
+                return 502, {"schemaVersion": 1, "status": "failure", "failure": {
+                    "code": "engine_error", "message": "Analysis container is unavailable.",
+                }}, 25, None
+            self.fail(f"unexpected request URL {url}")
+
+        with tempfile.TemporaryDirectory(prefix="meeshogi-cold-runner-main-test-") as directory:
+            output_path = Path(directory) / "cold.jsonl"
+            argv = [
+                "run.py", "--manifest", str(manifest), "--expected-build-id", BUILD_ID,
+                "--image-ref", "registry.example/image@sha256:" + "c" * 64,
+                "--base-url", "https://example.invalid", "--output", str(output_path),
+            ]
+            stdout = io.StringIO()
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict("os.environ", {"ANALYSIS_INTERNAL_TOKEN": "secret-token"}),
+                patch.object(runner, "request_json", side_effect=fake_request_json),
+                contextlib.redirect_stdout(stdout),
+            ):
+                self.assertEqual(runner.main(), 0)
+            output_content = output_path.read_text(encoding="utf-8")
+            records = [json.loads(line) for line in output_content.splitlines()]
+
+        attempts = [row for row in records if row.get("recordType") == "attempt"]
+        stops = [row for row in records if row.get("recordType") == "target-stop"]
+        trial_attempts = [call for call in calls if call["url"].endswith("/internal/benchmark")]
+        trial_stops = [row for row in stops if row.get("targetPurpose") == "cold-trial"]
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(len({row["targetId"] for row in attempts}), 3)
+        self.assertEqual(len(trial_attempts), 3)
+        self.assertEqual(len(trial_stops), 3)
+        self.assertEqual([len(row["coldEvidence"]["httpAttempts"]) for row in attempts], [1, 1, 1])
+        self.assertTrue(all(row["coldEvidence"]["timeToFirstSuccessMs"] is None for row in attempts))
+        health_urls = [call["url"] for call in calls if "/internal/benchmark/health" in call["url"]]
+        self.assertEqual(health_urls, [
+            "https://example.invalid/internal/benchmark/health?targetId=" + preflight["targetId"],
+        ])
+        self.assertEqual({row["targetId"] for row in trial_stops}, {row["targetId"] for row in attempts})
+        self.assertNotIn("secret-token", output_content)
+
     def test_pinned_image_and_immutable_resume_fingerprint(self) -> None:
         self.assertEqual(runner.pinned_image_digest("registry.example/image@sha256:" + "a" * 64), "a" * 64)
         with self.assertRaisesRegex(ValueError, "pinned"):
@@ -305,6 +398,25 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(rows[0]["transportError"], "interrupted-before-response")
             self.assertIn(("positions", "condition-a", "p1", 1), runner.read_existing(raw, "run-a"))
             self.assertFalse(pending.exists())
+
+    def test_interrupted_cold_trial_keeps_same_target_and_one_attempt(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="meeshogi-cold-recovery-test-") as directory:
+            raw = Path(directory) / "raw.jsonl"
+            pending = Path(directory) / "raw.jsonl.pending.json"
+            target_id = "bench-standard-2-" + BUILD_ID + "-cold-test-cold-trial-1"
+            pending.write_text(json.dumps({
+                "recordType": "pending", "runId": "run-a", "mode": "cold",
+                "conditionId": "condition-a", "positionId": "p1", "attemptNo": 1,
+                "targetId": target_id, "segmentId": "cold-test",
+                "unusedNameEvidence": {"allowlistedAtDeploy": True, "priorRunnerUseCount": 0},
+                "requestStartWall": "2026-09-25T00:00:00.000Z",
+            }), encoding="utf-8")
+            self.assertTrue(runner.recover_pending(raw, pending))
+            rows = [json.loads(line) for line in raw.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["targetId"], target_id)
+            self.assertEqual(rows[0]["coldEvidence"]["httpAttempts"][0]["transportError"], "interrupted-before-response")
+            self.assertEqual(len(runner.read_existing(raw, "run-a")), 1)
 
 
 if __name__ == "__main__":

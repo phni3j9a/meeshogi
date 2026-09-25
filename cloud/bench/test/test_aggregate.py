@@ -365,8 +365,54 @@ class AggregateTests(unittest.TestCase):
         instance = result["byInstanceType"]["standard-2"]
         self.assertEqual(instance["engineChildCpuSecondsLowerBound"], 0.1)
         self.assertEqual(instance["engineChildCpuAttemptsObserved"], 1)
-        self.assertEqual(instance["containerAllocatedCpuSecondsUpperBound"], 302)
-        self.assertIn("driver startup", result["activeIntervalAssumptions"])
+        self.assertEqual(instance["containerAllocatedCpuSecondsUpperBound"], 2)
+        self.assertIn("No sleepAfter tail is assumed", result["activeIntervalAssumptions"])
+        self.assertFalse(result["sessions"][0]["stopConfirmed"])
+
+    def test_named_target_cost_uses_first_dispatch_through_confirmed_stop(self) -> None:
+        target_id = "bench-standard-3-" + "a" * 32 + "-pilot-segment"
+        records = [
+            {
+                "recordType": "target-health", "targetId": target_id, "segmentId": "pilot-segment",
+                "expectedInstanceType": "standard-3", "requestStartWall": "2026-09-25T00:00:00.000Z",
+                "requestEndWall": "2026-09-25T00:00:05.000Z", "httpElapsedMs": 5000,
+                "health": {"driverBootId": "b" * 32, "status": "ready"},
+            },
+            {
+                "recordType": "attempt", "runId": "pilot", "mode": "positions", "conditionId": "c1",
+                "condition": {"instanceType": "standard-3"}, "targetId": target_id,
+                "expectedInstanceType": "standard-3", "driverBootId": "b" * 32,
+                "requestStartWall": "2026-09-25T00:00:06.000Z", "requestEndWall": "2026-09-25T00:00:10.000Z",
+                "httpElapsedMs": 4000, "response": {"meta": {"processCpuSeconds": 1.0}},
+            },
+            {
+                "recordType": "target-stop", "targetId": target_id, "segmentId": "pilot-segment",
+                "expectedInstanceType": "standard-3", "firstDispatchWall": "2026-09-25T00:00:00.000Z",
+                "requestStartWall": "2026-09-25T00:00:30.000Z", "requestEndWall": "2026-09-25T00:00:31.000Z",
+                "stopConfirmed": True,
+                "stopResponse": {"stateAfter": {"containerState": "stopped", "containerStateLastChangeWall": "2026-09-25T00:00:30.000Z"}},
+            },
+        ]
+        result = aggregate.container_cost(records)
+        session = result["sessions"][0]
+        self.assertEqual(session["targetId"], target_id)
+        self.assertEqual(session["activeSeconds"], 30)
+        self.assertTrue(session["stopConfirmed"])
+        self.assertEqual(result["byInstanceType"]["standard-3"]["containerAllocatedCpuSecondsUpperBound"], 60)
+        self.assertEqual(result["unconfirmedTargets"], [])
+
+    def test_unconfirmed_named_target_is_reported_without_sleep_tail(self) -> None:
+        target_id = "bench-standard-2-" + "a" * 32 + "-segment"
+        result = aggregate.container_cost([{
+            "recordType": "attempt", "targetId": target_id, "expectedInstanceType": "standard-2",
+            "requestStartWall": "2026-09-25T00:00:00.000Z", "requestEndWall": "2026-09-25T00:00:02.000Z",
+            "httpElapsedMs": 2000, "mode": "positions", "conditionId": "c1",
+        }])
+        self.assertEqual(result["byInstanceType"], {})
+        self.assertEqual(result["unconfirmedTargets"], [{
+            "targetId": target_id, "firstDispatchWall": "2026-09-25T00:00:00.000Z", "stopConfirmed": False,
+        }])
+        self.assertIn("Unconfirmed stop events remain listed", result["activeIntervalAssumptions"])
 
     def test_cold_confirmation_requires_analysis_response_boot_id(self) -> None:
         row = {
@@ -386,7 +432,9 @@ class AggregateTests(unittest.TestCase):
         result = aggregate_with_fixture_hash(add_provenance([row]), {})
         self.assertEqual(result["coldStart"]["successRate"], {"numerator": 0, "denominator": 1, "rate": 0})
         self.assertEqual(result["coldStart"]["failureRate"], {"numerator": 1, "denominator": 1, "rate": 1})
-        self.assertEqual(result["coldStart"]["confirmedCold"], {"numerator": 0, "denominator": 1, "rate": 0})
+        self.assertEqual(result["coldStart"]["label"], "new-instance cold start")
+        self.assertFalse(result["coldStart"]["idleSleepResumeVerified"])
+        self.assertEqual(result["coldStart"]["verifiedNewInstanceTarget"], {"numerator": 0, "denominator": 1, "rate": 0})
 
 
 if __name__ == "__main__":

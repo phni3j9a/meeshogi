@@ -5,6 +5,7 @@ VERIFICATION_MODE=false
 BENCHMARK_MODE=false
 INSTANCE_TYPE="standard-2"
 INSTANCE_TYPE_SET=false
+RUN_MANIFESTS=()
 while (($#)); do
   case "$1" in
     --verification) VERIFICATION_MODE=true; shift ;;
@@ -15,7 +16,12 @@ while (($#)); do
       INSTANCE_TYPE_SET=true
       shift 2
       ;;
-    *) echo "usage: deploy-staging.sh [--verification] [--benchmark --instance-type standard-2|standard-3]" >&2; exit 2 ;;
+    --run-manifest)
+      (($# >= 2)) || { echo "--run-manifest requires a JSON path." >&2; exit 2; }
+      RUN_MANIFESTS+=("$2")
+      shift 2
+      ;;
+    *) echo "usage: deploy-staging.sh [--verification] [--benchmark --instance-type standard-2|standard-3 --run-manifest FILE ...]" >&2; exit 2 ;;
   esac
 done
 [[ "$INSTANCE_TYPE" == "standard-2" || "$INSTANCE_TYPE" == "standard-3" ]] || { echo "Unsupported Container instance type." >&2; exit 2; }
@@ -27,6 +33,14 @@ if [[ "$BENCHMARK_MODE" != true && "$INSTANCE_TYPE_SET" == true ]]; then
   echo "--instance-type is available only with --benchmark." >&2
   exit 2
 fi
+if [[ "$BENCHMARK_MODE" == true && ${#RUN_MANIFESTS[@]} -eq 0 ]]; then
+  echo "Benchmark deployment requires at least one --run-manifest." >&2
+  exit 2
+fi
+if [[ "$BENCHMARK_MODE" != true && ${#RUN_MANIFESTS[@]} -gt 0 ]]; then
+  echo "--run-manifest is available only with --benchmark." >&2
+  exit 2
+fi
 if [[ "$BENCHMARK_MODE" == true && "$VERIFICATION_MODE" == true ]]; then
   echo "--verification and --benchmark cannot be combined." >&2
   exit 2
@@ -35,6 +49,8 @@ fi
 unset ANALYSIS_VERIFY_STOP_ENGINE_ONCE
 unset ANALYSIS_BENCHMARK_ENABLED
 unset ANALYSIS_EXPECTED_INSTANCE_TYPE
+unset ANALYSIS_BENCHMARK_BUILD_ID
+unset ANALYSIS_BENCHMARK_TARGETS
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CLOUD_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -53,10 +69,18 @@ TEMP_CONFIG="$(mktemp "$CLOUD_DIR/.wrangler.staging.deploy.XXXXXX.jsonc")"
 cleanup() { rm -f -- "$TEMP_CONFIG"; }
 trap cleanup EXIT INT TERM
 IMAGE_DIGEST="${ANALYSIS_IMAGE_REF##*@sha256:}"
+if [[ "$BENCHMARK_MODE" == true ]]; then
+  : "${ANALYSIS_BUILD_ID:?Set ANALYSIS_BUILD_ID to the build ID printed by build-push-image.sh.}"
+  [[ "$ANALYSIS_BUILD_ID" =~ ^[0-9a-f]{32}$ ]] || { echo "ANALYSIS_BUILD_ID must be 32 lowercase hex characters." >&2; exit 2; }
+fi
 if [[ "$VERIFICATION_MODE" == true ]]; then
   python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST" --verification-stop-engine-once
 elif [[ "$BENCHMARK_MODE" == true ]]; then
-  python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST" --benchmark --instance-type "$INSTANCE_TYPE"
+  RENDER_ARGS=("$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST" --benchmark --instance-type "$INSTANCE_TYPE" --build-id "$ANALYSIS_BUILD_ID")
+  for manifest in "${RUN_MANIFESTS[@]}"; do
+    RENDER_ARGS+=(--run-manifest "$manifest")
+  done
+  python3 "$SCRIPT_DIR/render-config.py" "${RENDER_ARGS[@]}"
 else
   python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST"
 fi

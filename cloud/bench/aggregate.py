@@ -11,7 +11,7 @@ import re
 import statistics
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -24,7 +24,6 @@ WORKER_CPU_USD_PER_MILLION_MS = 0.02
 DO_REQUEST_USD_PER_MILLION = 0.15
 DO_DURATION_USD_PER_MILLION_GB_SECOND = 12.50
 DO_MEMORY_GIB = 128 / 1024
-SLEEP_AFTER_SECONDS = 300
 IDENTITY_DIGEST_KEYS = (
     "engineSha256", "weightSha256", "optionsSha256", "sourceArchiveSha256", "sourceTreeSha256",
 )
@@ -620,81 +619,180 @@ def _row_instance(row: dict[str, Any]) -> tuple[str | None, str | None]:
 
 
 def container_cost(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     analysis_rows = [row for row in rows if row.get("recordType") in {"attempt", "attempt-start"}]
-    events = list(rows)
-    health_events: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        for field in ("healthAtRunStart", "healthSnapshot", "healthBeforeCold", "healthAfterCold"):
-            snapshot = row.get(field)
-            if not isinstance(snapshot, dict) or not isinstance(snapshot.get("requestStartWall"), str):
-                continue
-            stamp = snapshot["requestStartWall"]
-            event = {
-                "recordType": "health-event",
-                "mode": row.get("mode", "positions"),
-                "conditionId": row.get("conditionId"),
-                "expectedInstanceType": snapshot.get("expectedInstanceType") or snapshot.get("workerExpectedInstanceType"),
-                "driverBootId": snapshot.get("driverBootId"),
-                "requestStartWall": snapshot.get("requestStartWall"),
-                "requestEndWall": snapshot.get("requestEndWall"),
-                "httpElapsedMs": snapshot.get("elapsedMs"),
-                "sleepAfterSeconds": row.get("sleepAfterSeconds", SLEEP_AFTER_SECONDS),
-            }
-            prior = health_events.setdefault(stamp, event)
-            if prior.get("conditionId") is None and isinstance(event.get("conditionId"), str):
-                prior["conditionId"] = event["conditionId"]
-    events.extend(health_events.values())
-    for row in events:
-        instance, boot = _row_instance(row)
-        if instance in CONTAINER_SIZES and boot:
-            grouped[(instance, boot)].append(row)
     active_by_instance: Counter[str] = Counter()
     active_by_condition: Counter[str] = Counter()
     sessions: list[dict[str, Any]] = []
-    for (instance, boot), attempts in grouped.items():
-        attempts.sort(key=lambda row: _parse_utc(row.get("requestStartWall")) or 0)
-        segments: list[list[dict[str, Any]]] = []
-        current: list[dict[str, Any]] = []
-        previous_end: float | None = None
+    unconfirmed_targets: list[dict[str, Any]] = []
+    unpriced_targets: list[dict[str, Any]] = []
+    target_events: dict[str, list[tuple[float, str, dict[str, Any]]]] = defaultdict(list)
+    target_types: dict[str, str | None] = {}
+
+    def add_target_event(target_id: Any, stamp_value: Any, kind: str, row: dict[str, Any], instance: Any = None) -> None:
+        stamp = _parse_utc(stamp_value)
+        if not isinstance(target_id, str) or stamp is None:
+            return
+        target_events[target_id].append((stamp, kind, row))
+        if target_id not in target_types or target_types[target_id] is None:
+            target_types[target_id] = instance if isinstance(instance, str) else None
+
+    for row in rows:
+        record_type = row.get("recordType")
+        target_id = row.get("targetId")
+        instance = row.get("expectedInstanceType") or row.get("targetInstanceType")
+        if record_type == "target-health":
+            add_target_event(target_id, row.get("requestStartWall"), "start", row, instance)
+        elif record_type == "target-stop":
+            if isinstance(row.get("firstDispatchWall"), str):
+                add_target_event(target_id, row.get("firstDispatchWall"), "start", row, instance)
+            add_target_event(target_id, row.get("requestEndWall"), "stop", row, instance)
+        elif record_type in {"attempt", "attempt-start"} and isinstance(target_id, str):
+            add_target_event(target_id, row.get("requestStartWall"), "start", row, instance)
+
+        if record_type in {"run-start", "run-resume-check"}:
+            snapshot = row.get("healthAtRunStart")
+            if isinstance(snapshot, dict):
+                add_target_event(
+                    snapshot.get("targetId"), snapshot.get("requestStartWall"), "start", snapshot,
+                    snapshot.get("expectedInstanceType") or snapshot.get("workerExpectedInstanceType"),
+                )
+        for field in ("healthAtRunStart", "healthSnapshot"):
+            snapshot = row.get(field)
+            if isinstance(snapshot, dict) and isinstance(snapshot.get("targetId"), str):
+                add_target_event(
+                    snapshot.get("targetId"), snapshot.get("requestStartWall"), "start", snapshot,
+                    snapshot.get("targetInstanceType") or snapshot.get("expectedInstanceType"),
+                )
+
+    def allocate_interval(instance: str, target_id: str, start: float, end: float, attempts: list[dict[str, Any]], label: str, stop_row: dict[str, Any] | None) -> None:
+        active_seconds = max(0.0, end - start)
+        active_by_instance[instance] += active_seconds
+        weights: Counter[str] = Counter()
         for row in attempts:
-            start = _parse_utc(row.get("requestStartWall"))
-            end = _parse_utc(row.get("requestEndWall"))
-            if start is None or end is None:
-                continue
-            sleep_after = row.get("sleepAfterSeconds")
-            sleep_after = sleep_after if isinstance(sleep_after, (int, float)) else SLEEP_AFTER_SECONDS
-            if current and previous_end is not None and start - previous_end > sleep_after:
-                segments.append(current)
-                current = []
-            current.append(row)
-            previous_end = end
-        if current:
-            segments.append(current)
-        for segment in segments:
-            first = _parse_utc(segment[0].get("requestStartWall"))
-            last = _parse_utc(segment[-1].get("requestEndWall"))
-            if first is None or last is None:
-                continue
-            tail = segment[-1].get("sleepAfterSeconds")
-            tail = float(tail) if isinstance(tail, (int, float)) else SLEEP_AFTER_SECONDS
-            request_secs = sum(max(0, int(row.get("httpElapsedMs") or 0)) / 1000 for row in segment)
-            gaps = 0.0
-            for left, right in zip(segment, segment[1:]):
-                left_end = _parse_utc(left.get("requestEndWall"))
-                right_start = _parse_utc(right.get("requestStartWall"))
-                if left_end is not None and right_start is not None:
-                    gaps += max(0.0, right_start - left_end)
-            active_seconds = request_secs + gaps + tail
-            active_by_instance[instance] += active_seconds
-            weights: Counter[str] = Counter()
-            for row in segment:
-                condition_key = f"{row.get('mode', 'positions')}:{row.get('conditionId')}"
-                weights[condition_key] += max(0.001, int(row.get("httpElapsedMs") or 0) / 1000)
-            total_weight = sum(weights.values())
+            condition_key = f"{row.get('mode', 'positions')}:{row.get('conditionId')}"
+            weights[condition_key] += max(0.001, int(row.get("httpElapsedMs") or 0) / 1000)
+        total_weight = sum(weights.values())
+        if total_weight:
             for condition_id, weight in weights.items():
                 active_by_condition[condition_id] += active_seconds * weight / total_weight
-            sessions.append({"instanceType": instance, "bootId": boot, "requestCount": len(segment), "activeSeconds": active_seconds})
+        sessions.append({
+            "instanceType": instance,
+            "targetId": target_id,
+            "requestCount": len(attempts),
+            "startWall": datetime.fromtimestamp(start, tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "stopWall": datetime.fromtimestamp(end, tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "activeSeconds": active_seconds,
+            "stopConfirmed": True,
+            "intervalBasis": label,
+            "bootIds": sorted({row.get("driverBootId") for row in attempts if isinstance(row.get("driverBootId"), str)}),
+            "stopState": ((stop_row or {}).get("stopResponse") or {}).get("containerState"),
+        })
+
+    for target_id, events in target_events.items():
+        events.sort(key=lambda event: (event[0], 0 if event[1] == "start" else 1))
+        current_start: float | None = None
+        current_attempts: list[dict[str, Any]] = []
+        stopped_rows: list[dict[str, Any]] = []
+        for stamp, kind, row in events:
+            if kind == "start":
+                if current_start is None:
+                    current_start = stamp
+                    current_attempts = []
+                if row.get("recordType") in {"attempt", "attempt-start"}:
+                    current_attempts.append(row)
+                continue
+            confirmed = row.get("stopConfirmed") is True
+            response = row.get("stopResponse") if isinstance(row.get("stopResponse"), dict) else {}
+            state_after = response.get("stateAfter") if isinstance(response.get("stateAfter"), dict) else {}
+            terminal_wall = _parse_utc(state_after.get("containerStateLastChangeWall"))
+            stop_at = terminal_wall if terminal_wall is not None else stamp
+            if confirmed and current_start is not None:
+                instance = target_types.get(target_id)
+                if instance in CONTAINER_SIZES:
+                    allocate_interval(instance, target_id, current_start, stop_at, current_attempts, "first target dispatch to confirmed stopped state", row)
+                else:
+                    unpriced_targets.append({
+                        "targetId": target_id,
+                        "activeSecondsObserved": max(0.0, stop_at - current_start),
+                        "reason": "instance type is unavailable for this target",
+                        "stopConfirmed": True,
+                    })
+                current_start = None
+                current_attempts = []
+                stopped_rows.append(row)
+            elif confirmed and current_start is None:
+                state_before = response.get("stateBefore") if isinstance(response.get("stateBefore"), dict) else {}
+                prior_state_change = _parse_utc(state_before.get("containerStateLastChangeWall"))
+                observed_since_transition = (
+                    max(0.0, stop_at - prior_state_change)
+                    if prior_state_change is not None and state_before.get("containerState") in {"running", "healthy", "stopping"}
+                    else 0.0 if state_before.get("containerState") in {"stopped", "stopped_with_code"}
+                    else None
+                )
+                unpriced_targets.append({
+                    "targetId": target_id,
+                    "activeSecondsSinceLastStateTransition": observed_since_transition,
+                    "reason": "target was already active before the raw ledger observed its start",
+                    "stopConfirmed": True,
+                })
+            else:
+                unconfirmed_targets.append({"targetId": target_id, "firstDispatchWall": row.get("firstDispatchWall"), "stopConfirmed": False})
+        if current_start is not None:
+            unconfirmed_targets.append({
+                "targetId": target_id,
+                "firstDispatchWall": datetime.fromtimestamp(current_start, tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                "stopConfirmed": bool(stopped_rows),
+            })
+
+    # Older raw files lack named targets and stop events. Keep their observed window
+    # as a lower bound; never add an assumed sleepAfter tail.
+    legacy_groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    legacy_health: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        if isinstance(row.get("targetId"), str):
+            continue
+        instance, boot = _row_instance(row)
+        if instance not in CONTAINER_SIZES or not boot:
+            continue
+        if row.get("recordType") in {"attempt", "attempt-start"}:
+            legacy_groups[(instance, boot)].append(row)
+        for field in ("healthAtRunStart", "healthSnapshot"):
+            snapshot = row.get(field)
+            if not isinstance(snapshot, dict) or snapshot.get("targetId"):
+                continue
+            snapshot_instance = snapshot.get("expectedInstanceType") or snapshot.get("workerExpectedInstanceType")
+            if snapshot_instance == instance and snapshot.get("driverBootId") == boot:
+                legacy_health[(instance, boot, str(snapshot.get("requestStartWall")))] = snapshot
+    for (instance, boot), attempts in legacy_groups.items():
+        stamps = [
+            stamp for row in attempts
+            for stamp in (_parse_utc(row.get("requestStartWall")), _parse_utc(row.get("requestEndWall")))
+            if stamp is not None
+        ]
+        stamps.extend(
+            stamp for (health_instance, health_boot, _key), snapshot in legacy_health.items()
+            if health_instance == instance and health_boot == boot
+            for stamp in (_parse_utc(snapshot.get("requestStartWall")), _parse_utc(snapshot.get("requestEndWall")))
+            if stamp is not None
+        )
+        if not stamps:
+            continue
+        start, end = min(stamps), max(stamps)
+        active_seconds = max(0.0, end - start)
+        active_by_instance[instance] += active_seconds
+        weights: Counter[str] = Counter()
+        for row in attempts:
+            condition_key = f"{row.get('mode', 'positions')}:{row.get('conditionId')}"
+            weights[condition_key] += max(0.001, int(row.get("httpElapsedMs") or 0) / 1000)
+        weight_total = sum(weights.values())
+        if weight_total:
+            for condition_id, weight in weights.items():
+                active_by_condition[condition_id] += active_seconds * weight / weight_total
+        sessions.append({
+            "instanceType": instance, "bootId": boot, "targetId": None,
+            "requestCount": len(attempts), "activeSeconds": active_seconds,
+            "stopConfirmed": False, "intervalBasis": "legacy observed request window lower bound",
+        })
     total_cost = {"cpuUsdLowerBound": 0.0, "cpuUsdUpperBound": 0.0, "memoryUsd": 0.0, "diskUsd": 0.0}
     by_instance: dict[str, Any] = {}
     for instance, active_seconds in active_by_instance.items():
@@ -738,11 +836,14 @@ def container_cost(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "byInstanceType": by_instance,
         "byConditionActiveSecondsEstimate": dict(active_by_condition),
         "sessions": sessions,
+        "unconfirmedTargets": unconfirmed_targets,
+        "unpricedTargets": unpriced_targets,
         "activeIntervalAssumptions": (
-            "Per observed boot session: health/analysis HTTP request spans plus inter-request gaps and one configured "
-            "sleepAfter tail. The first observed request latency includes Worker/Container/driver startup when startup "
-            "occurs in that request. Cold idle waits are conservatively represented by the sleepAfter tail; no separate "
-            "Container CPU telemetry is available."
+            "Named benchmark targets use first recorded target dispatch through Container getState confirmation of "
+            "stopped; serial segment and coexistence/idle time until stop are included. No sleepAfter tail is assumed. "
+            "Legacy unnamed rows contribute only their observed request window as a lower bound. The pre-existing "
+            "singleton is stopped for capacity control but cannot be priced unless its actual instance type and start "
+            "time were recorded. Unconfirmed stop events remain listed and are not treated as bounded intervals."
         ),
         "grossUsd": total_cost,
     }
@@ -752,6 +853,15 @@ def cost_estimate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     attempts = [row for row in rows if row.get("recordType") == "attempt"]
     health_calls: dict[str, dict[str, Any]] = {}
     for row in rows:
+        if row.get("recordType") == "target-health" and isinstance(row.get("requestStartWall"), str):
+            health_calls[row["requestStartWall"]] = {
+                "status": "ready" if row.get("httpStatus") == 200 else None,
+                "elapsedMs": row.get("httpElapsedMs"),
+                "driverBootId": (
+                    row.get("health", {}).get("driverBootId")
+                    if isinstance(row.get("health"), dict) else None
+                ),
+            }
         for field in ("healthAtRunStart", "healthSnapshot", "healthBeforeCold", "healthAfterCold"):
             item = row.get(field)
             if isinstance(item, dict) and item.get("requestStartWall"):
@@ -896,8 +1006,9 @@ def cost_estimate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "unknownOrExcluded": [
             "account plan, remaining included allowances, regional egress, Worker CPU, exact DO active duration, and invoice rounding",
-            "engine-child CPU is only a lower bound; the allocated-vCPU upper bound assumes each observed Container session remains billable through one sleepAfter tail",
-            "memory/disk duration and Container startup are estimated from observed HTTP request spans; platform scheduling may differ",
+            "engine-child CPU is only a lower bound; named Container upper bounds use each recorded dispatch-to-confirmed-stop interval",
+            "unconfirmed named targets are not assigned a bounded duration, and legacy unnamed rows include only their observed request window",
+            "Container platform billing timestamps may differ from Worker dispatch and stopped-state evidence",
         ],
     }
 
@@ -951,14 +1062,15 @@ def aggregate_records(
         for row in records if row.get("recordType") == "game-summary"
     ]
     cold_rows = [row for row in attempts if row.get("mode") == "cold"]
-    cold_confirmed = sum(
+    verified_new_instance = sum(
         bool(
-            isinstance(row.get("coldEvidence"), dict)
-            and row["coldEvidence"].get("coldConfirmed") is True
-            and row["coldEvidence"].get("idleExceededSleepAfter") is True
-            and isinstance(row["coldEvidence"].get("bootIdBeforeIdle"), str)
-            and isinstance(row["coldEvidence"].get("bootIdFromAnalysisResponse"), str)
-            and row["coldEvidence"]["bootIdBeforeIdle"] != row["coldEvidence"]["bootIdFromAnalysisResponse"]
+            isinstance(row.get("targetId"), str)
+            and isinstance(row.get("segmentId"), str)
+            and isinstance(row.get("unusedNameEvidence"), dict)
+            and row["unusedNameEvidence"].get("allowlistedAtDeploy") is True
+            and row["unusedNameEvidence"].get("priorRunnerUseCount") == 0
+            and row["unusedNameEvidence"].get("healthOrWarmupBeforeFirstAnalysis") is False
+            and isinstance(row.get("requestStartWall"), str)
         )
         for row in cold_rows
     )
@@ -967,7 +1079,7 @@ def aggregate_records(
     for row in cold_rows:
         status = _attempt_status(row)
         evidence = row.get("coldEvidence")
-        response_boot_id = evidence.get("bootIdFromAnalysisResponse") if isinstance(evidence, dict) else None
+        response_boot_id = evidence.get("responseBootId") if isinstance(evidence, dict) else None
         has_response_boot_id = _valid_boot_id(response_boot_id)
         if not has_response_boot_id and status not in {"failure", "transport"}:
             cold_status["failure"] += 1
@@ -976,23 +1088,40 @@ def aggregate_records(
             cold_status[status if isinstance(status, str) else "unknown"] += 1
             cold_causes[_failure_cause(row)] += 1
     cold = {
+        "label": "new-instance cold start",
+        "idleSleepResumeVerified": False,
         "attempts": len(cold_rows),
         "successRate": ratio(cold_status["success"], len(cold_rows)),
         "incompleteRate": ratio(cold_status["incomplete"], len(cold_rows)),
         "failureRate": ratio(cold_status["failure"] + cold_status["transport"], len(cold_rows)),
-        "confirmedCold": ratio(cold_confirmed, len(cold_rows)),
-        "bootIds": [
+        "verifiedNewInstanceTarget": ratio(verified_new_instance, len(cold_rows)),
+        "firstHttpWallMs": value_stats([
+            row.get("coldEvidence", {}).get("firstHttpWallMs")
+            for row in cold_rows if isinstance(row.get("coldEvidence"), dict)
+        ]),
+        "timeToFirstSuccessMs": value_stats([
+            row.get("coldEvidence", {}).get("timeToFirstSuccessMs")
+            for row in cold_rows if isinstance(row.get("coldEvidence"), dict)
+        ]),
+        "trials": [
             {
                 "conditionId": row.get("conditionId"),
                 "positionId": row.get("positionId"),
-                "before": row.get("coldEvidence", {}).get("bootIdBeforeIdle") if isinstance(row.get("coldEvidence"), dict) else None,
-                "analysisResponseBootId": row.get("coldEvidence", {}).get("bootIdFromAnalysisResponse") if isinstance(row.get("coldEvidence"), dict) else None,
-                "healthAfterBootId": row.get("coldEvidence", {}).get("bootIdAfterAttempt") if isinstance(row.get("coldEvidence"), dict) else None,
+                "coldTrialId": row.get("coldTrialId"),
+                "targetId": row.get("targetId"),
+                "segmentId": row.get("segmentId"),
+                "firstDispatchWall": row.get("coldEvidence", {}).get("firstDispatchWall") if isinstance(row.get("coldEvidence"), dict) else row.get("requestStartWall"),
+                "firstHttpWallMs": row.get("coldEvidence", {}).get("firstHttpWallMs") if isinstance(row.get("coldEvidence"), dict) else None,
+                "timeToFirstSuccessMs": row.get("coldEvidence", {}).get("timeToFirstSuccessMs") if isinstance(row.get("coldEvidence"), dict) else None,
+                "analysisResponseBootId": row.get("coldEvidence", {}).get("responseBootId") if isinstance(row.get("coldEvidence"), dict) else None,
+                "analysisResponseRuntime": row.get("coldEvidence", {}).get("responseRuntime") if isinstance(row.get("coldEvidence"), dict) else None,
+                "httpAttempts": row.get("coldEvidence", {}).get("httpAttempts") if isinstance(row.get("coldEvidence"), dict) else None,
                 "coldEvidenceFailure": (
                     "analysis_boot_id_missing"
-                    if not _valid_boot_id(row.get("coldEvidence", {}).get("bootIdFromAnalysisResponse"))
+                    if not _valid_boot_id(row.get("coldEvidence", {}).get("responseBootId"))
                     else None
                 ) if isinstance(row.get("coldEvidence"), dict) else "analysis_boot_id_missing",
+                "unusedNameEvidence": row.get("unusedNameEvidence"),
                 "httpStatus": row.get("httpStatus"),
                 "status": row.get("response", {}).get("status") if isinstance(row.get("response"), dict) else "transport",
             }

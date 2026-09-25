@@ -29,7 +29,14 @@ class RenderConfigTests(unittest.TestCase):
             if verification:
                 command.append("--verification-stop-engine-once")
             if benchmark is not None:
-                command.extend(["--benchmark", "--instance-type", benchmark])
+                manifest = CLOUD_DIR / "bench" / "manifests" / (
+                    "pilot-standard-2.json" if benchmark == "standard-2" else "pilot-reference-standard-3.json"
+                )
+                command.extend([
+                    "--benchmark", "--instance-type", benchmark,
+                    "--build-id", "c" * 32,
+                    "--run-manifest", str(manifest),
+                ])
             environment = os.environ.copy()
             environment["ANALYSIS_VERIFY_STOP_ENGINE_ONCE"] = inherited_flag
             environment["ANALYSIS_BENCHMARK_ENABLED"] = "1"
@@ -44,8 +51,11 @@ class RenderConfigTests(unittest.TestCase):
 
         self.assertNotIn("ANALYSIS_VERIFY_STOP_ENGINE_ONCE", normal.get("vars", {}))
         self.assertNotIn("ANALYSIS_BENCHMARK_ENABLED", normal.get("vars", {}))
+        self.assertNotIn("ANALYSIS_BENCHMARK_BUILD_ID", normal.get("vars", {}))
+        self.assertNotIn("ANALYSIS_BENCHMARK_TARGETS", normal.get("vars", {}))
         self.assertEqual(normal["vars"]["ANALYSIS_EXPECTED_INSTANCE_TYPE"], "standard-2")
         self.assertEqual(normal["containers"][0]["instance_type"], "standard-2")
+        self.assertEqual(normal["containers"][0]["max_instances"], 1)
         self.assertEqual(normal["version_metadata"], {"binding": "CF_VERSION_METADATA"})
         self.assertEqual(
             verification["vars"]["ANALYSIS_VERIFY_STOP_ENGINE_ONCE"],
@@ -57,6 +67,12 @@ class RenderConfigTests(unittest.TestCase):
         self.assertEqual(standard_three["vars"]["ANALYSIS_BENCHMARK_ENABLED"], "1")
         self.assertEqual(standard_three["vars"]["ANALYSIS_EXPECTED_INSTANCE_TYPE"], "standard-3")
         self.assertEqual(standard_three["containers"][0]["instance_type"], "standard-3")
+        self.assertEqual(standard_three["containers"][0]["max_instances"], 2)
+        self.assertEqual(standard_three["vars"]["ANALYSIS_BENCHMARK_BUILD_ID"], "c" * 32)
+        targets = json.loads(standard_three["vars"]["ANALYSIS_BENCHMARK_TARGETS"])
+        self.assertEqual(targets[1]["targetId"], f"bench-standard-3-{'c' * 32}-pilot-reference-standard-3")
+        self.assertEqual(targets[1]["purpose"], "measurement")
+        self.assertTrue(all(row["targetId"] != "arbitrary-name" for row in targets))
         self.assertNotIn("ANALYSIS_VERIFY_STOP_ENGINE_ONCE", standard_three.get("vars", {}))
 
     def test_benchmark_render_requires_explicit_supported_instance_type(self) -> None:
@@ -75,6 +91,16 @@ class RenderConfigTests(unittest.TestCase):
         result = subprocess.run(["bash", str(deploy), "--benchmark"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertIn("requires an explicit --instance-type", result.stderr)
+
+    def test_deploy_benchmark_mode_requires_a_finite_run_manifest(self) -> None:
+        deploy = CLOUD_DIR / "scripts/deploy-staging.sh"
+        result = subprocess.run(
+            ["bash", str(deploy), "--benchmark", "--instance-type", "standard-3"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires at least one --run-manifest", result.stderr)
 
 
 if __name__ == "__main__":

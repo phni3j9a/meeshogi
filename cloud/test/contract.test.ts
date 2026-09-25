@@ -136,6 +136,14 @@ function benchmarkSuccess(sfen: string, conditionId: string): Record<string, any
   };
 }
 
+const TEST_TARGET_ID = `bench-standard-2-${'d'.repeat(32)}-test-segment`;
+const TEST_COLD_TARGET_ID = `${TEST_TARGET_ID}-cold-trial-1`;
+const TEST_SEGMENT_ID = 'test-segment';
+
+function benchmarkBody(sfen: string, conditionId: string) {
+  return { sfen, conditionId, targetId: TEST_TARGET_ID, segmentId: TEST_SEGMENT_ID };
+}
+
 function makeEnv(
   response?: (payload: unknown) => unknown | Response,
   token?: string,
@@ -143,13 +151,30 @@ function makeEnv(
   containerHealth: Record<string, unknown> | Response = DRIVER_HEALTH,
   benchmarkEnabled = false,
   expectedInstanceType: 'standard-2' | 'standard-3' = 'standard-2',
-): Env & { calls: number[]; forwardedPaths: string[] } {
+): Env & {
+  calls: number[];
+  forwardedPaths: string[];
+  targetNames: string[];
+  fetchTargets: string[];
+  destroyTargets: string[];
+  stateReads: string[];
+} {
   const calls: number[] = [];
   const forwardedPaths: string[] = [];
+  const targetNames: string[] = [];
+  const doStates = new Map<string, { status: 'running' | 'healthy' | 'stopping' | 'stopped' | 'stopped_with_code'; lastChange: number; exitCode?: number }>();
+  const fetchTargets: string[] = [];
+  const destroyTargets: string[] = [];
+  const stateReads: string[] = [];
   const binding = {
-    getByName: () => ({
+    getByName: (name: string) => {
+      targetNames.push(name);
+      if (!doStates.has(name)) doStates.set(name, { status: 'stopped', lastChange: 0 });
+      return {
       fetch: async (request: Request) => {
         calls.push(1);
+        fetchTargets.push(name);
+        doStates.set(name, { status: 'healthy', lastChange: 1790340000000 });
         const path = new URL(request.url).pathname;
         forwardedPaths.push(path);
         if (path === '/health') {
@@ -163,16 +188,48 @@ function makeEnv(
             : success((payload as { sfen: string }).sfen);
         return result instanceof Response ? result : Response.json(result);
       },
-    }),
+      getState: async () => {
+        stateReads.push(name);
+        return doStates.get(name)!;
+      },
+      destroy: async () => {
+        destroyTargets.push(name);
+        doStates.set(name, { status: 'stopped', lastChange: 1790340001000 });
+      },
+      };
+    },
   };
   return {
     ANALYSIS_INTERNAL_TOKEN: token,
     ANALYSIS_VERIFY_STOP_ENGINE_ONCE: verificationFlag,
     ANALYSIS_BENCHMARK_ENABLED: benchmarkEnabled ? '1' : undefined,
     ANALYSIS_EXPECTED_INSTANCE_TYPE: expectedInstanceType,
+    ANALYSIS_BENCHMARK_BUILD_ID: 'd'.repeat(32),
+    ANALYSIS_BENCHMARK_TARGETS: JSON.stringify([
+      {
+        targetId: TEST_TARGET_ID,
+        segmentId: TEST_SEGMENT_ID,
+        instanceType: expectedInstanceType,
+        buildId: 'd'.repeat(32),
+        purpose: 'measurement',
+      },
+      {
+        targetId: TEST_COLD_TARGET_ID,
+        segmentId: TEST_SEGMENT_ID,
+        instanceType: expectedInstanceType,
+        buildId: 'd'.repeat(32),
+        purpose: 'cold-trial',
+        coldTrialNo: 1,
+      },
+      { targetId: 'analysis-mvp-singleton', segmentId: 'preexisting-singleton', instanceType: null, buildId: null, purpose: 'capacity-control' },
+    ]),
     ANALYSIS_CONTAINER: binding as unknown as Env['ANALYSIS_CONTAINER'],
     calls,
     forwardedPaths,
+    targetNames,
+    fetchTargets,
+    destroyTargets,
+    stateReads,
   };
 }
 
@@ -229,6 +286,7 @@ describe('staging analysis Worker boundary', () => {
       workerExpectedInstanceType: 'standard-2',
     });
     expect(verificationEnv.forwardedPaths).toEqual(['/health']);
+    expect(verificationEnv.targetNames).toEqual(['analysis-mvp-singleton']);
 
     const unavailableEnv = makeEnv(undefined, 'secret-token', '1', new Response('not ready', { status: 503 }));
     const unavailable = await handleRequest(health, unavailableEnv);
@@ -261,7 +319,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, 'standard-2-t1-100ms-mpv2')),
       }),
       disabled,
     );
@@ -273,7 +331,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, 'standard-2-t1-100ms-mpv2')),
       }),
       enabled,
     );
@@ -284,7 +342,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'reference-standard-3-t2-10000ms-mpv3' }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, 'reference-standard-3-t2-10000ms-mpv3')),
       }),
       enabled,
     );
@@ -295,7 +353,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'unknown' }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, 'unknown')),
       }),
       enabled,
     );
@@ -309,7 +367,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, 'standard-2-t1-100ms-mpv2')),
       }),
       env,
     );
@@ -324,6 +382,7 @@ describe('staging analysis Worker boundary', () => {
     });
     expect(validPayload).not.toHaveProperty('identity');
     expect(env.forwardedPaths).toEqual(['/benchmark']);
+    expect(env.fetchTargets).toEqual([TEST_TARGET_ID]);
     expect(env.calls).toHaveLength(1);
 
     const invalidObservation = benchmarkSuccess(STARTPOS, 'standard-2-t1-100ms-mpv2');
@@ -336,7 +395,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, 'standard-2-t1-100ms-mpv2')),
       }),
       invalidEnv,
     );
@@ -357,7 +416,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, 'standard-2-t1-100ms-mpv2')),
       }),
       env,
     );
@@ -401,7 +460,7 @@ describe('staging analysis Worker boundary', () => {
         new Request('https://staging.example/internal/benchmark', {
           method: 'POST',
           headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-          body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+          body: JSON.stringify(benchmarkBody(STARTPOS, 'standard-2-t1-100ms-mpv2')),
         }),
         env,
       );
@@ -443,7 +502,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, 'standard-2-t1-100ms-mpv2')),
       }),
       env,
     );
@@ -463,13 +522,15 @@ describe('staging analysis Worker boundary', () => {
         new Request('https://staging.example/internal/benchmark', {
           method: 'POST',
           headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-          body: JSON.stringify({ sfen, conditionId: 'standard-2-t1-100ms-mpv2' }),
+          body: JSON.stringify(benchmarkBody(sfen, 'standard-2-t1-100ms-mpv2')),
         }),
         env,
       );
       expect(response.status).toBe(200);
       expect(await result(response)).toMatchObject({ status: 'terminal', terminal });
       expect(env.forwardedPaths).toEqual(['/health']);
+      expect(env.fetchTargets).toEqual([TEST_TARGET_ID]);
+      expect(env.targetNames).toEqual([TEST_TARGET_ID]);
     }
   });
 
@@ -486,7 +547,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: condition!.conditionId }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, condition!.conditionId)),
       }),
       env,
     );
@@ -503,7 +564,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        body: JSON.stringify(benchmarkBody(STARTPOS, 'standard-2-t1-100ms-mpv2')),
       }),
       env,
     );
@@ -522,7 +583,7 @@ describe('staging analysis Worker boundary', () => {
       new Request('https://staging.example/internal/benchmark', {
         method: 'POST',
         headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ sfen: TERMINAL_MATE, conditionId: 'standard-2-t1-100ms-mpv2' }),
+        body: JSON.stringify(benchmarkBody(TERMINAL_MATE, 'standard-2-t1-100ms-mpv2')),
       }),
       env,
     );
@@ -534,6 +595,136 @@ describe('staging analysis Worker boundary', () => {
       runtime: { osCpuCount: 1, affinityCpuCount: 1, memTotalBytes: 5.5 * GIB, rootDiskTotalBytes: 32 * GIB },
     });
     expect(env.forwardedPaths).toEqual(['/health']);
+    expect(env.targetNames).toEqual([TEST_TARGET_ID]);
+  });
+
+  it('authenticates benchmark target health and rejects target names outside the deploy allowlist', async () => {
+    const disabled = makeEnv(undefined, 'secret-token');
+    const disabledHealth = await handleRequest(
+      new Request(`https://staging.example/internal/benchmark/health?targetId=${TEST_TARGET_ID}`, { method: 'GET' }),
+      disabled,
+    );
+    expect(disabledHealth.status).toBe(404);
+    expect(disabled.targetNames).toEqual([]);
+
+    const env = makeEnv(undefined, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const unauthenticated = await handleRequest(
+      new Request(`https://staging.example/internal/benchmark/health?targetId=${TEST_TARGET_ID}`, { method: 'GET' }),
+      env,
+    );
+    expect(unauthenticated.status).toBe(401);
+
+    const arbitrary = await handleRequest(
+      new Request('https://staging.example/internal/benchmark/health?targetId=arbitrary-name', {
+        method: 'GET', headers: { authorization: 'Bearer secret-token' },
+      }),
+      env,
+    );
+    expect(arbitrary.status).toBe(400);
+    expect(env.targetNames).toEqual([]);
+
+    const coldHealth = await handleRequest(
+      new Request(`https://staging.example/internal/benchmark/health?targetId=${TEST_COLD_TARGET_ID}`, {
+        method: 'GET', headers: { authorization: 'Bearer secret-token' },
+      }),
+      env,
+    );
+    expect(coldHealth.status).toBe(400);
+    expect(env.fetchTargets).toEqual([]);
+
+    const arbitraryAnalysisBody = { ...benchmarkBody(STARTPOS, 'standard-2-t1-100ms-mpv2'), targetId: 'arbitrary-name' };
+    const arbitraryAnalysis = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify(arbitraryAnalysisBody),
+      }),
+      env,
+    );
+    expect(arbitraryAnalysis.status).toBe(400);
+    expect(env.targetNames).toEqual([]);
+
+    const valid = await handleRequest(
+      new Request(`https://staging.example/internal/benchmark/health?targetId=${TEST_TARGET_ID}`, {
+        method: 'GET', headers: { authorization: 'Bearer secret-token' },
+      }),
+      env,
+    );
+    expect(valid.status).toBe(200);
+    expect(await result(valid)).toMatchObject({
+      targetId: TEST_TARGET_ID,
+      segmentId: TEST_SEGMENT_ID,
+      targetInstanceType: 'standard-2',
+      expectedBuildId: 'd'.repeat(32),
+      containerState: 'healthy',
+    });
+    expect(env.fetchTargets).toEqual([TEST_TARGET_ID]);
+  });
+
+  it('stops only allowlisted targets and verifies destruction without fetching them', async () => {
+    const disabled = makeEnv(undefined, 'secret-token');
+    const off = await handleRequest(
+      new Request('https://staging.example/internal/benchmark/stop', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ targetId: TEST_TARGET_ID }),
+      }),
+      disabled,
+    );
+    expect(off.status).toBe(404);
+    expect(disabled.targetNames).toEqual([]);
+
+    const env = makeEnv(undefined, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const unauthenticated = await handleRequest(
+      new Request('https://staging.example/internal/benchmark/stop', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ targetId: TEST_TARGET_ID }),
+      }),
+      env,
+    );
+    expect(unauthenticated.status).toBe(401);
+
+    const stoppedWhileCold = await handleRequest(
+      new Request('https://staging.example/internal/benchmark/stop', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ targetId: TEST_TARGET_ID }),
+      }),
+      env,
+    );
+    expect(stoppedWhileCold.status).toBe(200);
+    expect(await result(stoppedWhileCold)).toMatchObject({ stopped: true, stopCheckedWithoutFetch: true });
+    expect(env.calls).toHaveLength(0);
+    expect(env.destroyTargets).toEqual([]);
+
+    const warm = await handleRequest(
+      new Request(`https://staging.example/internal/benchmark/health?targetId=${TEST_TARGET_ID}`, {
+        method: 'GET', headers: { authorization: 'Bearer secret-token' },
+      }),
+      env,
+    );
+    expect(warm.status).toBe(200);
+    const callsBeforeStop = env.calls.length;
+    const stopped = await handleRequest(
+      new Request('https://staging.example/internal/benchmark/stop', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ targetId: TEST_TARGET_ID }),
+      }),
+      env,
+    );
+    expect(stopped.status).toBe(200);
+    expect(await result(stopped)).toMatchObject({ stopped: true, containerState: 'stopped', stopCheckedWithoutFetch: true });
+    expect(env.calls).toHaveLength(callsBeforeStop);
+    expect(env.destroyTargets).toEqual([TEST_TARGET_ID]);
+    expect(env.stateReads.filter((name) => name === TEST_TARGET_ID)).toHaveLength(5);
+
+    const arbitrary = await handleRequest(
+      new Request('https://staging.example/internal/benchmark/stop', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ targetId: 'not-listed' }),
+      }),
+      env,
+    );
+    expect(arbitrary.status).toBe(400);
   });
 
   it('does not allow an analysis request field or header to toggle the verification stop', async () => {
@@ -566,6 +757,7 @@ describe('staging analysis Worker boundary', () => {
     expect(ordinaryResponse.status).toBe(200);
     expect(ordinaryContainer.envVars).toEqual({ ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
     expect(ordinaryEnv.calls).toHaveLength(1);
+    expect(ordinaryEnv.targetNames).toEqual(['analysis-mvp-singleton']);
   });
 
   it('preserves validated one-shot timeout and fresh-engine evidence from the Container', async () => {

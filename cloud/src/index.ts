@@ -21,6 +21,8 @@ export interface Env {
   ANALYSIS_VERIFY_STOP_ENGINE_ONCE?: string;
   ANALYSIS_BENCHMARK_ENABLED?: string;
   ANALYSIS_EXPECTED_INSTANCE_TYPE?: 'standard-2' | 'standard-3';
+  ANALYSIS_BENCHMARK_BUILD_ID?: string;
+  ANALYSIS_BENCHMARK_TARGETS?: string;
   CF_VERSION_METADATA?: WorkerVersionMetadata;
   ANALYSIS_CONTAINER: DurableObjectNamespace<AnalysisContainer>;
 }
@@ -38,6 +40,10 @@ function workerVersionFields(env: Env): Record<string, string> {
 const ANALYSIS_PATH = '/internal/analyze';
 const HEALTH_PATH = '/internal/health';
 const BENCHMARK_PATH = '/internal/benchmark';
+const BENCHMARK_HEALTH_PATH = '/internal/benchmark/health';
+const BENCHMARK_STOP_PATH = '/internal/benchmark/stop';
+const SINGLETON_TARGET_ID = 'analysis-mvp-singleton';
+const TARGET_ID_RE = /^bench-(standard-2|standard-3)-[0-9a-f]{32}-[a-z0-9][a-z0-9-]{0,63}(?:-cold-trial-[1-9][0-9]*)?$/u;
 const IDENTITY_DIGEST_KEYS = [
   'engineSha256',
   'weightSha256',
@@ -216,8 +222,180 @@ async function readJsonBody(request: Request): Promise<{ record: Record<string, 
   return { record: body as Record<string, unknown> };
 }
 
+type BenchmarkTarget = {
+  targetId: string;
+  segmentId: string;
+  instanceType: 'standard-2' | 'standard-3' | null;
+  buildId: string | null;
+  purpose: 'measurement' | 'cold-preflight' | 'cold-trial' | 'capacity-control';
+  coldTrialNo?: number;
+};
+
+type ContainerStateView = {
+  status: 'running' | 'healthy' | 'stopping' | 'stopped' | 'stopped_with_code';
+  lastChange: number;
+  exitCode?: number;
+};
+
+function benchmarkTargetMap(env: Env): Map<string, BenchmarkTarget> | null {
+  if (typeof env.ANALYSIS_BENCHMARK_TARGETS !== 'string') return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(env.ANALYSIS_BENCHMARK_TARGETS);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > 24) return null;
+  const targets = new Map<string, BenchmarkTarget>();
+  for (const value of raw) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (typeof row.targetId !== 'string' || typeof row.segmentId !== 'string' || typeof row.purpose !== 'string') return null;
+    if (targets.has(row.targetId)) return null;
+    if (row.targetId === SINGLETON_TARGET_ID) {
+      if (row.segmentId !== 'preexisting-singleton' || row.purpose !== 'capacity-control'
+        || row.instanceType !== null || row.buildId !== null) return null;
+      targets.set(row.targetId, row as BenchmarkTarget);
+      continue;
+    }
+    if (!TARGET_ID_RE.test(row.targetId)
+      || !/^[a-z0-9][a-z0-9-]{0,39}$/u.test(row.segmentId)
+      || !['standard-2', 'standard-3'].includes(String(row.instanceType))
+      || typeof row.buildId !== 'string'
+      || !/^[0-9a-f]{32}$/u.test(row.buildId)
+      || !['measurement', 'cold-preflight', 'cold-trial'].includes(row.purpose)) return null;
+    const trial = row.coldTrialNo;
+    if (row.purpose === 'cold-trial' ? !Number.isSafeInteger(trial) || Number(trial) < 1 : trial !== undefined) return null;
+    const targetPrefix = `bench-${String(row.instanceType)}-${row.buildId}-`;
+    const expectedTargetId = row.purpose === 'cold-preflight'
+      ? `${targetPrefix}${row.segmentId}-preflight`
+      : row.purpose === 'cold-trial'
+        ? `${targetPrefix}${row.segmentId}-cold-trial-${String(trial)}`
+        : `${targetPrefix}${row.segmentId}`;
+    if (row.targetId !== expectedTargetId) return null;
+    targets.set(row.targetId, row as BenchmarkTarget);
+  }
+  if (!targets.has(SINGLETON_TARGET_ID)) return null;
+  return targets;
+}
+
+function selectBenchmarkTarget(env: Env, targetId: unknown, segmentId?: unknown): BenchmarkTarget | null {
+  if (typeof targetId !== 'string') return null;
+  const target = benchmarkTargetMap(env)?.get(targetId);
+  if (!target || target.purpose === 'capacity-control') return null;
+  if (typeof segmentId === 'string' && segmentId !== target.segmentId) return null;
+  if (target.instanceType !== env.ANALYSIS_EXPECTED_INSTANCE_TYPE
+    || target.buildId !== env.ANALYSIS_BENCHMARK_BUILD_ID) return null;
+  return target;
+}
+
+function containerStateFields(state: ContainerStateView): Record<string, unknown> {
+  const allowed = new Set(['running', 'healthy', 'stopping', 'stopped', 'stopped_with_code']);
+  return {
+    containerState: allowed.has(state.status) ? state.status : 'unknown',
+    containerStateLastChangeWall: Number.isFinite(state.lastChange)
+      ? new Date(state.lastChange).toISOString()
+      : null,
+    ...(typeof state.exitCode === 'number' ? { containerExitCode: state.exitCode } : {}),
+  };
+}
+
+function benchmarkTargetFields(target: BenchmarkTarget, state?: ContainerStateView): Record<string, unknown> {
+  return {
+    targetId: target.targetId,
+    segmentId: target.segmentId,
+    targetPurpose: target.purpose,
+    targetInstanceType: target.instanceType,
+    expectedBuildId: target.buildId,
+    ...(state ? containerStateFields(state) : {}),
+  };
+}
+
+function isStopped(state: ContainerStateView): boolean {
+  return state.status === 'stopped' || state.status === 'stopped_with_code';
+}
+
+async function handleBenchmarkHealth(request: Request, env: Env): Promise<Response> {
+  if (env.ANALYSIS_BENCHMARK_ENABLED !== '1') return json(failure('invalid', 'Not found.'), 404);
+  if (request.method !== 'GET') return json(failure('invalid', 'Method not allowed.'), 405);
+  const authFailure = authorize(request, env);
+  if (authFailure) return authFailure;
+  const target = selectBenchmarkTarget(env, new URL(request.url).searchParams.get('targetId'));
+  if (!target || target.purpose === 'cold-trial') {
+    return json(failure('invalid', 'Unknown benchmark target.'), 400);
+  }
+  try {
+    const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, target.targetId);
+    const response = await container.fetch(new Request('http://analysis-container/health', { method: 'GET' }));
+    if (!response.ok) return json({ ...failure('engine_error', 'Analysis container health is unavailable.'), ...benchmarkTargetFields(target) }, 502);
+    const text = await response.text();
+    if (text.length > 8192) return json({ ...failure('engine_error', 'Analysis container health exceeded the response limit.'), ...benchmarkTargetFields(target) }, 502);
+    let driverHealth: unknown;
+    try {
+      driverHealth = JSON.parse(text);
+    } catch {
+      return json({ ...failure('engine_error', 'Analysis container returned an invalid health response.'), ...benchmarkTargetFields(target) }, 502);
+    }
+    if (!isDriverHealth(driverHealth)) {
+      return json({ ...failure('engine_error', 'Analysis container health failed contract validation.'), ...benchmarkTargetFields(target) }, 502);
+    }
+    const state = await container.getState() as ContainerStateView;
+    return json({
+      ...driverHealth,
+      ...workerVersionFields(env),
+      workerVerifyStopEngineOnceEnabled: env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1',
+      workerBenchmarkEnabled: true,
+      workerExpectedInstanceType: env.ANALYSIS_EXPECTED_INSTANCE_TYPE ?? null,
+      ...benchmarkTargetFields(target, state),
+    });
+  } catch {
+    return json({ ...failure('engine_error', 'Analysis container health is unavailable.'), ...benchmarkTargetFields(target) }, 502);
+  }
+}
+
+async function handleBenchmarkStop(request: Request, env: Env): Promise<Response> {
+  if (env.ANALYSIS_BENCHMARK_ENABLED !== '1') return json(failure('invalid', 'Not found.'), 404);
+  if (request.method !== 'POST') return json(failure('invalid', 'Method not allowed.'), 405);
+  const authFailure = authorize(request, env);
+  if (authFailure) return authFailure;
+  const parsed = await readJsonBody(request);
+  if (parsed instanceof Response) return parsed;
+  const { record } = parsed;
+  if (Object.keys(record).length !== 1 || typeof record.targetId !== 'string') {
+    return json(failure('invalid', 'Expected only a listed targetId.'), 400);
+  }
+  const target = benchmarkTargetMap(env)?.get(record.targetId);
+  if (!target) return json(failure('invalid', 'Unknown benchmark target.'), 400);
+  if (target.purpose !== 'capacity-control'
+    && (target.instanceType !== env.ANALYSIS_EXPECTED_INSTANCE_TYPE || target.buildId !== env.ANALYSIS_BENCHMARK_BUILD_ID)) {
+    return json(failure('invalid', 'Benchmark target is not bound to this deploy.'), 400);
+  }
+  try {
+    const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, target.targetId);
+    const stateBefore = await container.getState() as ContainerStateView;
+    if (!isStopped(stateBefore)) await container.destroy();
+    const stateAfter = await container.getState() as ContainerStateView;
+    const stopped = isStopped(stateAfter);
+    return json({
+      stopped,
+      ...benchmarkTargetFields(target, stateAfter),
+      stateBefore: containerStateFields(stateBefore),
+      stateAfter: containerStateFields(stateAfter),
+      stopCheckedWithoutFetch: true,
+    }, stopped ? 200 : 409);
+  } catch {
+    return json({
+      stopped: false,
+      ...benchmarkTargetFields(target),
+      stopCheckedWithoutFetch: true,
+    }, 502);
+  }
+}
+
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname === BENCHMARK_HEALTH_PATH) return handleBenchmarkHealth(request, env);
+  if (url.pathname === BENCHMARK_STOP_PATH) return handleBenchmarkStop(request, env);
   if (url.pathname === HEALTH_PATH) {
     if (request.method !== 'GET') return json(failure('invalid', 'Method not allowed.'), 405);
     const authFailure = authorize(request, env);
@@ -256,14 +434,19 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const parsed = await readJsonBody(request);
     if (parsed instanceof Response) return parsed;
     const { record } = parsed;
-    if (Object.keys(record).length !== 2 || !Object.hasOwn(record, 'sfen') || !Object.hasOwn(record, 'conditionId') || !isValidSfen(record.sfen)) {
-      return json(failure('invalid', 'Expected only a valid SFEN and a manifest condition ID.'), 400);
+    if (Object.keys(record).length !== 4 || !Object.hasOwn(record, 'sfen') || !Object.hasOwn(record, 'conditionId')
+      || !Object.hasOwn(record, 'targetId') || !Object.hasOwn(record, 'segmentId') || !isValidSfen(record.sfen)) {
+      return json(failure('invalid', 'Expected a valid SFEN, manifest condition ID, targetId, and segmentId.'), 400);
     }
     if (typeof record.conditionId !== 'string') return json(failure('invalid', 'Unknown benchmark condition.'), 400);
     const condition = BENCHMARK_CONDITION_BY_ID.get(record.conditionId);
     if (!condition) return json(failure('invalid', 'Unknown benchmark condition.'), 400);
     if (env.ANALYSIS_EXPECTED_INSTANCE_TYPE !== condition.instanceType) {
       return json(failure('instance_mismatch', 'Benchmark condition does not match the deployed instance type.', record.sfen), 409);
+    }
+    const target = selectBenchmarkTarget(env, record.targetId, record.segmentId);
+    if (!target || target.instanceType !== condition.instanceType) {
+      return json(failure('invalid', 'Unknown benchmark target or segment.'), 400);
     }
     const sfen = record.sfen;
     const rootMoves = legalMoves(sfen);
@@ -272,24 +455,25 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (rootMoves.length === 0) {
       const terminal: 'checkmate' | 'no-legal-moves' = position.checked ? 'checkmate' : 'no-legal-moves';
       try {
-        const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, 'analysis-mvp-singleton');
+        const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, target.targetId);
         const healthResponse = await container.fetch(new Request('http://analysis-container/health', { method: 'GET' }));
-        if (!healthResponse.ok) return json(failure('engine_error', 'Analysis container health is unavailable.', sfen), 502);
+        if (!healthResponse.ok) return json({ ...failure('engine_error', 'Analysis container health is unavailable.', sfen), ...benchmarkTargetFields(target) }, 502);
         const healthText = await healthResponse.text();
-        if (healthText.length > 8192) return json(failure('engine_error', 'Analysis container health exceeded the response limit.', sfen), 502);
+        if (healthText.length > 8192) return json({ ...failure('engine_error', 'Analysis container health exceeded the response limit.', sfen), ...benchmarkTargetFields(target) }, 502);
         let driverHealth: unknown;
         try {
           driverHealth = JSON.parse(healthText);
         } catch {
-          return json(failure('engine_error', 'Analysis container returned an invalid health response.', sfen), 502);
+          return json({ ...failure('engine_error', 'Analysis container returned an invalid health response.', sfen), ...benchmarkTargetFields(target) }, 502);
         }
-        if (!isDriverHealth(driverHealth)) return json(failure('engine_error', 'Analysis container health failed contract validation.', sfen), 502);
+        if (!isDriverHealth(driverHealth)) return json({ ...failure('engine_error', 'Analysis container health failed contract validation.', sfen), ...benchmarkTargetFields(target) }, 502);
         const runtime = driverHealth.runtime as Record<string, unknown>;
+        const targetState = await container.getState() as ContainerStateView;
         const runtimeMismatch = driverHealth.expectedInstanceType !== condition.instanceType
           ? 'driver_expected_instance_type_mismatch'
           : benchmarkRuntimeMismatch(runtime, condition.instanceType);
         if (runtimeMismatch) {
-          return json(benchmarkInstanceFailure(
+          return json({ ...benchmarkInstanceFailure(
             sfen,
             condition.conditionId,
             String(driverHealth.expectedInstanceType),
@@ -300,7 +484,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
             runtime,
             driverHealth.identityDigests as Record<string, unknown>,
             runtimeMismatch,
-          ), 409);
+          ), ...benchmarkTargetFields(target, targetState) }, 409);
         }
         return json({
           schemaVersion: 2,
@@ -319,47 +503,49 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           gitCommit: driverHealth.gitCommit,
           identityDigests: driverHealth.identityDigests,
           runtime,
+          ...benchmarkTargetFields(target, targetState),
           conditions: { requested: condition, actual: null },
           meta: { nodes: null, completedDepth: null, searchElapsedMs: null, engineNps: null, derivedNps: null, processElapsedMs: null, processCpuSeconds: null },
         });
       } catch {
-        return json(failure('engine_error', 'Analysis container health is unavailable.', sfen), 502);
+        return json({ ...failure('engine_error', 'Analysis container health is unavailable.', sfen), ...benchmarkTargetFields(target) }, 502);
       }
     }
     try {
-      const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, 'analysis-mvp-singleton');
+      const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, target.targetId);
       const internalRequest = new Request('http://analysis-container/benchmark', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ sfen, legalMoveCount: rootMoves.length, conditionId: condition.conditionId }),
       });
       const response = await container.fetch(internalRequest);
+      const targetState = await container.getState() as ContainerStateView;
       const text = await response.text();
-      if (text.length > 64 * 1024) return json(failure('engine_error', 'Benchmark result exceeded the response limit.', sfen), 502);
+      if (text.length > 64 * 1024) return json({ ...failure('engine_error', 'Benchmark result exceeded the response limit.', sfen), ...benchmarkTargetFields(target, targetState) }, 502);
       let driverResult: unknown;
       try {
         driverResult = JSON.parse(text);
       } catch {
-        return json(failure('engine_error', 'Analysis container returned an invalid response.', sfen), 502);
+        return json({ ...failure('engine_error', 'Analysis container returned an invalid response.', sfen), ...benchmarkTargetFields(target, targetState) }, 502);
       }
       const diagnostic: BenchmarkValidationDiagnostic = {};
       const validated = validateBenchmarkDriverResult(driverResult, sfen, rootMoves, condition, diagnostic);
       if (!validated) {
-        return json(failure(
+        return json({ ...failure(
           'engine_error',
           'Benchmark result failed contract validation.',
           sfen,
           benchmarkValidationDetail(diagnostic, driverResult, response.status),
-        ), 502);
+        ), ...benchmarkTargetFields(target, targetState) }, 502);
       }
       if (validated.status === 'failure') {
         const failureRecord = validated.failure as { code: string };
         const status = failureRecord.code === 'busy' || failureRecord.code === 'instance_mismatch' ? 409 : failureRecord.code === 'timeout' ? 504 : 502;
-        return json(validated, status);
+        return json({ ...validated, ...benchmarkTargetFields(target, targetState) }, status);
       }
-      return json({ ...validated, ...workerVersionFields(env) });
+      return json({ ...validated, ...workerVersionFields(env), ...benchmarkTargetFields(target, targetState) });
     } catch {
-      return json(failure('engine_error', 'Analysis container is unavailable.', sfen), 502);
+      return json({ ...failure('engine_error', 'Analysis container is unavailable.', sfen), ...benchmarkTargetFields(target) }, 502);
     }
   }
   if (url.pathname !== ANALYSIS_PATH) return json(failure('invalid', 'Not found.'), 404);
