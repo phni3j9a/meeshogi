@@ -29,6 +29,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Cloud Worker contract and fake USI checks
+        run: |
+          npm ci --prefix cloud
+          npm run check --prefix cloud
       - run: npx expo install --check
       - run: python3 scripts/ci/test_devin_cloud.py
       - run: rustup toolchain install 1.96.0 --profile minimal --no-self-update

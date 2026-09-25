@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "meeshogi-analysis-mvp-staging",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-25",
+  "account_id": "__ACCOUNT_ID__",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] }
+  ],
+  "containers": [
+    {
+      "name": "meeshogi-analysis-mvp-staging-analysis",
+      "class_name": "AnalysisContainer",
+      "image": "registry.cloudflare.com/__ACCOUNT_ID__/meeshogi-analysis-mvp-staging@sha256:__IMAGE_DIGEST__",
+      "max_instances": 1,
+      "instance_type": "standard-2"
+    }
+  ]
+}

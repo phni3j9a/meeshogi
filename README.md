@@ -12,6 +12,8 @@ PR #12では、[棋譜解析画面の改善](docs/design/analysis-refresh.md)と
 
 Issue #7の修正では、公開fixtureを使うA/B/C/Dのhost診断に加え、製品コード`6a54ff5`でAndroid emulator・iOS Simulatorの新規ビルド・起動・受入フロー・両OSスクリーンショット目視まで検証済みです（両OSともMaestro 15フロー成功・失敗0。iOSは別検査として書き出しKIFとfixtureのバイト一致も確認）。証拠は `evidence/android-20260922`（run `20260922T203618Z-74028`）と `evidence/ios-20260922`（run `20260922T204527Z-37636`）に保存しています。実機での動作・性能は未検証です。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
 
+Issue #19では、モバイル製品から独立した認証付きCloudflare staging解析ゲートを構築し、private image build・4 fixture smoke・timeout/recoveryを実環境で検証済みです。初期版アプリは引き続き端末内で解析し、このWorkerへの接続やログインを利用条件にしません。このゲートはproduction serviceではありません。検証結果と手順は[cloud README](cloud/README.md)を参照してください。
+
 全局解析では、native境界で検証済みの初回反復の予算不足だけをその局面の欠測として扱い、後続局面の解析を続けます。処理が最後まで走っても不足が残る場合は解析済み件数と探索量不足の件数を分けて表示し、全局面の有効結果が揃った場合だけ全局解析完了と表示します。不完全な候補は保存せず、再起動後は保存済み結果と欠測だけを表示します。
 
 ## 開発
