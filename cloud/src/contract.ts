@@ -91,7 +91,10 @@ export function isValidSfen(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_SFEN_BYTES) return false;
   if (new TextEncoder().encode(value).byteLength > MAX_SFEN_BYTES) return false;
   if (/[\u0000-\u001f\u007f]/u.test(value) || value.trim() !== value) return false;
-  if (!/^[1-9KkLlNnSsGgBbRrPp/+ bw-]+$/u.test(value)) return false;
+  if (!/^[0-9KkLlNnSsGgBbRrPp/+ bw-]+$/u.test(value)) return false;
+  const fields = value.split(' ');
+  if (fields.length !== 4 || !/^[1-9][0-9]*$/u.test(fields[3])) return false;
+  if (fields[2] !== '-' && !/^(?:[1-9][0-9]*)?[PLNSGBRplnsgbr](?:(?:[1-9][0-9]*)?[PLNSGBRplnsgbr])*$/u.test(fields[2])) return false;
   return Position.isValidSFEN(value);
 }
 

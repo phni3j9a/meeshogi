@@ -37,7 +37,7 @@ KILL_GRACE_SECONDS = 1.0
 HANDSHAKE_TIMEOUT_SECONDS = 20.0
 READY_TIMEOUT_SECONDS = 45.0
 MOVE_RE = re.compile(r"^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$")
-SFEN_RE = re.compile(r"^[1-9KkLlNnSsGgBbRrPp/+ bw-]+$")
+SFEN_RE = re.compile(r"^[0-9KkLlNnSsGgBbRrPp/+ bw-]+$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 DRIVER_BOOT_ID = uuid.uuid4().hex
 
@@ -241,7 +241,7 @@ class MultiPvCollector:
     def __init__(self, effective_multi_pv: int, side_to_move: str):
         self.effective_multi_pv = effective_multi_pv
         self.side_to_move = side_to_move
-        self.by_depth: dict[int, dict[int, dict[str, Any]]] = {}
+        self.pending_by_depth: dict[int, dict[int, dict[str, Any]]] = {}
         self.completed: dict[int, list[dict[str, Any]]] = {}
         self.nodes: int | None = None
         self.engine_time: int | None = None
@@ -255,13 +255,15 @@ class MultiPvCollector:
         if record["engineTime"] is not None:
             self.engine_time = max(self.engine_time or 0, record["engineTime"])
         depth = record["depth"]
-        self.by_depth.setdefault(depth, {})[record["rank"]] = record
+        if record["rank"] == 1 or depth not in self.pending_by_depth:
+            self.pending_by_depth[depth] = {}
+        self.pending_by_depth[depth][record["rank"]] = record
         block = self._completed_block(depth)
         if block is not None:
             self.completed[depth] = block
 
     def _completed_block(self, depth: int) -> list[dict[str, Any]] | None:
-        ranks = self.by_depth.get(depth, {})
+        ranks = self.pending_by_depth.get(depth, {})
         if any(rank not in ranks or not ranks[rank]["exact"] or not ranks[rank]["score"] for rank in range(1, self.effective_multi_pv + 1)):
             return None
         block = [ranks[rank] for rank in range(1, self.effective_multi_pv + 1)]

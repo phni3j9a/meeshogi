@@ -206,6 +206,23 @@ class DriverTests(unittest.TestCase):
         collector.observe("info depth 5 multipv 2 score cp -20 lowerbound nodes 500 pv 2g2f")
         self.assertEqual(collector.best_block[0], 4)
 
+    def test_same_depth_partial_block_keeps_previous_complete_snapshot_until_replaced(self) -> None:
+        collector = MultiPvCollector(2, "b")
+        collector.observe("info depth 4 multipv 1 score cp 40 nodes 400 pv 7g7f")
+        collector.observe("info depth 4 multipv 2 score cp 20 nodes 400 pv 2g2f")
+        original = collector.best_block
+        self.assertEqual(original[0], 4)
+
+        collector.observe("info depth 4 multipv 1 score cp 50 nodes 500 pv 6g6f")
+        collector.observe("info depth 4 multipv 2 score cp 30 upperbound nodes 500 pv 2g2f")
+        self.assertEqual(collector.best_block, original)
+
+        collector.observe("info depth 4 multipv 1 score cp 60 nodes 600 pv 5g5f")
+        collector.observe("info depth 4 multipv 2 score cp 30 nodes 600 pv 2g2f")
+        self.assertEqual(collector.best_block[0], 4)
+        self.assertEqual([entry["score"]["value"] for entry in collector.best_block[1]], [60, 30])
+        self.assertEqual([entry["pv"][0] for entry in collector.best_block[1]], ["5g5f", "2g2f"])
+
     def test_duplicate_root_moves_do_not_complete_multi_pv(self) -> None:
         collector = MultiPvCollector(2, "b")
         collector.observe("info depth 3 multipv 1 score cp 40 nodes 400 pv 7g7f")
@@ -218,6 +235,15 @@ class DriverTests(unittest.TestCase):
         self.assertFalse(is_valid_sfen(STARTPOS + "\nquit"))
         self.assertFalse(is_valid_sfen(STARTPOS + "\u0001"))
         self.assertFalse(is_valid_sfen(STARTPOS + " ;system"))
+
+    def test_sfen_move_numbers_containing_zero_are_valid_but_zero_fields_are_not(self) -> None:
+        for move_number in ("10", "20", "100"):
+            with self.subTest(move_number=move_number):
+                self.assertTrue(is_valid_sfen(STARTPOS.rsplit(" ", 1)[0] + " " + move_number))
+        self.assertTrue(is_valid_sfen(STARTPOS.replace(" b - 1", " b 10P 10")))
+        self.assertFalse(is_valid_sfen(STARTPOS.replace("lnsgkgsnl", "0nsgkgsnl")))
+        self.assertFalse(is_valid_sfen(STARTPOS.replace(" b - 1", " b 0P 10")))
+        self.assertFalse(is_valid_sfen(STARTPOS.replace(" b - 1", " b - 0")))
 
     def test_manifest_digest_mismatch_fails_closed(self) -> None:
         bad_manifest = dict(self.manifest)

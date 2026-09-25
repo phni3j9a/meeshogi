@@ -266,6 +266,31 @@ describe('staging analysis Worker boundary', () => {
     expect(isValidSfen(`${STARTPOS}\r\n`)).toBe(false);
   });
 
+  it('accepts legal SFEN move numbers containing zero at the Worker boundary', async () => {
+    const baseSuccess = success(STARTPOS);
+    const env = makeEnv(
+      (payload) => ({ ...baseSuccess, sfen: (payload as { sfen: string }).sfen }),
+      'secret-token',
+    );
+
+    for (const moveNumber of ['10', '20', '100']) {
+      const sfen = STARTPOS.replace(/ 1$/u, ` ${moveNumber}`);
+      expect(isValidSfen(sfen)).toBe(true);
+      const response = await handleRequest(
+        request(JSON.stringify({ sfen }), { token: 'secret-token', contentType: 'application/json' }),
+        env,
+      );
+      expect(response.status).toBe(200);
+      expect(await result(response)).toMatchObject({ status: 'success', sfen });
+    }
+
+    expect(env.calls).toHaveLength(3);
+    expect(isValidSfen(STARTPOS.replace('lnsgkgsnl', '0nsgkgsnl'))).toBe(false);
+    expect(isValidSfen(STARTPOS.replace(' b - 1', ' b 10P 10'))).toBe(true);
+    expect(isValidSfen(STARTPOS.replace(' b - 1', ' b 0P 10'))).toBe(false);
+    expect(isValidSfen(STARTPOS.replace(' b - 1', ' b - 0'))).toBe(false);
+  });
+
   it('distinguishes checkmate and no-legal-moves without starting engine work', async () => {
     const env = makeEnv(undefined, 'secret-token');
     const checkmate = await handleRequest(
