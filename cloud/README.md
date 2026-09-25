@@ -107,6 +107,16 @@ unset ANALYSIS_INTERNAL_TOKEN
 
 The verifier passes `--verification` only to its first deploy invocation; the normal deploy ignores the inherited environment flag and the renderer enables it only when given its explicit verification argument. Output is limited to non-secret JSON evidence including HTTP/failure status, driver boot ID, engine epoch/PID, wait return code, and smoke fixture IDs. A unit test alone does not count as staging timeout evidence.
 
+## staging検証結果 (#19)
+
+2026-09-25に実stagingで検証した（imageは`a7e5db6`からbuild、Worker/driverは`bd436e3`）。最終imageは `registry.cloudflare.com/<account>/meeshogi-analysis-mvp-staging@sha256:7f6419e171fff65fa0c4531f1421580f085d288cef0c34fc960cb97d7a7bf624`、runtime baseは `ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254`。build時のUSI smoke（`usiok` / `readyok`）は成功した。
+
+- Registry manifestとtag一覧への匿名GET、および認証なしの解析POSTはいずれもHTTP 401。
+- 通常smokeは4 fixtureすべて成功。startposは3候補・depth 19（約966k nodes、約2.2秒）、synthetic middlegameはdepth 19、mate-in-oneはmate score、checkmate fixtureは終局・候補なし・探索値なしを確認した。
+- timeout検証ではhealthが `enabled=true, consumed=false` を報告し、注入した停止でHTTP 504 `timeout` とengine reap（PID 4、wait rc `-9`）を確認した。同じboot IDで次の独立要求はHTTP 200となり、新しいengine epoch/PIDで成功した。通常modeで再deploy後は `enabled=false` となり、4 fixture smokeも再成功した。
+- Wrangler SSHはHTTP 404 `Deployment not found`。instances APIは空で、要求成功中もWranglerの状態は `inactive` / location・version nullだったため、SSHとinstance状態確認は検証ゲートに採用しなかった。
+- deploy直後はContainer起動中の要求がtyped 502になることがある。Python urllib既定User-AgentはCloudflare error 1010（HTTP 403）になった。
+
 ## Remaining limits
 
 This verifies the #19 staging technical gate only. It does not integrate cloud analysis into the mobile app, establish production service behavior, demonstrate commercial distribution rights for the Plus model, or claim performance for consumer devices. The archive and source-tree hashes are recorded instead of a fabricated upstream Git commit.

@@ -45,7 +45,7 @@ meetermのネイティブターミナル描画要件をこのアプリへ転用�
 
 ## Issue #19 staging技術ゲート
 
-Issue #19のCloudflare Worker / Containerは、認証・private engine image・同期解析のstaging技術検証に限る。Containerに必要なclass、binding、SQLite migrationと標準lifecycleだけを使い、独自のDO storage・調停・alarm・retry・recoveryを追加しない。モバイルの解析経路や無料初期版の利用条件には接続せず、production・同期・ログイン機能の採用を意味しない。実装と運用条件は[`cloud/README.md`](../cloud/README.md)に記録する。
+Issue #19のCloudflare Worker / Containerは、認証・private engine image・同期解析のstaging技術検証に限り、2026-09-25に実環境でsmokeとtimeout/recoveryを確認済み。Containerに必要なclass、binding、SQLite migrationと標準lifecycleだけを使い、独自のDO storage・調停・alarm・retry・recoveryを追加しない。モバイルの解析経路や無料初期版の利用条件には接続せず、production・同期・ログイン機能の採用を意味しない。実装と検証結果・運用条件は[`cloud/README.md`](../cloud/README.md)に記録する。
 
 ## 詰みと戦型
 
