@@ -19,6 +19,8 @@ cleanup() { rm -f -- "$TEMP_CONFIG"; }
 trap cleanup EXIT INT TERM
 IMAGE_DIGEST="${ANALYSIS_IMAGE_REF##*@sha256:}"
 python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST"
+# The rendered config contains the optional public key; Wrangler does not need key material or its path.
+unset ANALYSIS_SSH_PUBLIC_KEY ANALYSIS_SSH_PRIVATE_KEY
 
 # Create the Worker and its Container before adding the secret. Requests fail closed while it is unset.
 internal_token="$ANALYSIS_INTERNAL_TOKEN"

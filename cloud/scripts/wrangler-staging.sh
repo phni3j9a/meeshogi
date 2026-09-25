@@ -14,4 +14,4 @@ IMAGE_DIGEST="${BASH_REMATCH[1]}"
 TEMP_CONFIG="$(mktemp "$CLOUD_DIR/.wrangler.staging.operator.XXXXXX.jsonc")"
 trap 'rm -f -- "$TEMP_CONFIG"' EXIT INT TERM
 python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST"
-./node_modules/.bin/wrangler "$@" --config "$TEMP_CONFIG"
+./node_modules/.bin/wrangler --config "$TEMP_CONFIG" "$@"

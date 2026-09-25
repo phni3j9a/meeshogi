@@ -398,7 +398,10 @@ class EngineSession:
                 parts = line.split()
                 if len(parts) < 2:
                     raise DriverError("engine_error", "Engine returned a malformed bestmove.")
-                return parts[1]
+                move = parts[1]
+                if move not in {"resign", "win", "none", "(none)", "0000"} and not MOVE_RE.fullmatch(move):
+                    raise DriverError("engine_error", "Engine returned a malformed bestmove.")
+                return move
 
     def stop_and_reap(self) -> None:
         if self.process is None:

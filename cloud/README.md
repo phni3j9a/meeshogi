@@ -89,58 +89,34 @@ The smoke prints each fixture ID and measured result fields. It never prints the
 
 ## Operator-only timeout and recovery check
 
-This procedure is run by Main after deployment. The Container SSH feature is available only through authenticated Wrangler access; it does not expose the engine or SSH on a public port. No source or runtime fault route is enabled.
+This check uses a throwaway SSH key and an SSH-enabled deployment only for the verification window. Normal staging config has no SSH block. The renderer adds `ssh: { enabled: true }` and its sibling `authorized_keys` array only when `ANALYSIS_SSH_PUBLIC_KEY` is present; the key must be a single valid `ssh-ed25519` line. Wrangler access still requires the operator's authenticated Cloudflare account.
 
-1. In Terminal A, set `ANALYSIS_STAGING_URL`, `CLOUDFLARE_ACCOUNT_ID`, `ANALYSIS_IMAGE_REF`, and `ANALYSIS_INTERNAL_TOKEN`, then start one fixed start-position request:
+Set the normal staging inputs (`ANALYSIS_STAGING_URL`, `CLOUDFLARE_ACCOUNT_ID`, `ANALYSIS_IMAGE_REF`, and `ANALYSIS_INTERNAL_TOKEN`), then generate a disposable key, deploy with its public key, and run the automated timeout/recovery check:
 
-   ```sh
-   python3 cloud/scripts/timeout-request.py > /tmp/meeshogi-timeout-result.json &
-   echo $!
-   ```
+```sh
+key_dir="$(mktemp -d "${TMPDIR:-/tmp}/meeshogi-timeout-key.XXXXXX")"
+chmod 700 "$key_dir"
+ssh-keygen -q -t ed25519 -N '' -C 'meeshogi-issue19-timeout-verification' -f "$key_dir/id_ed25519"
+chmod 600 "$key_dir/id_ed25519"
+export ANALYSIS_SSH_PUBLIC_KEY="$(cat "$key_dir/id_ed25519.pub")"
+export ANALYSIS_SSH_PRIVATE_KEY="$key_dir/id_ed25519"
+bash cloud/scripts/deploy-staging.sh
+python3 cloud/scripts/verify-timeout-staging.py
+unset ANALYSIS_SSH_PUBLIC_KEY ANALYSIS_SSH_PRIVATE_KEY ANALYSIS_INTERNAL_TOKEN
+rm -rf -- "$key_dir"
+```
 
-2. While it runs, use another terminal to list the staging Container and connect to that instance. The temporary config is rendered and cleaned by the wrapper:
+The operator script resolves the Container **application ID** by name from `containers list --json`, then reads the **instance ID** from `containers instances <APPLICATION_ID> --json`. It opens the Wrangler `--stdio` SSH proxy before sending a normal start-position analysis request in the background, stops only the running engine PID, checks the HTTP 504 typed `timeout`, and confirms that PID is gone. It then sends a separate request and verifies HTTP 200 success with a different engine PID. Finally it redeploys after removing `ANALYSIS_SSH_PUBLIC_KEY` from the deployment environment and reruns the four-position smoke. Its JSON output contains only verification status, failure code, PIDs, elapsed measurements, and artifact identity; Wrangler and smoke command output is captured.
 
-   ```sh
-   bash cloud/scripts/wrangler-staging.sh containers list
-   bash cloud/scripts/wrangler-staging.sh containers ssh <container-id>
-   ```
+For manual inspection while the temporary public key is deployed, use the application ID only with `instances`, then use an instance ID with `ssh`:
 
-3. In the authenticated SSH shell, wait for the engine child, record its PID, and stop only that process:
+```sh
+bash cloud/scripts/wrangler-staging.sh containers list --json
+bash cloud/scripts/wrangler-staging.sh containers instances <APPLICATION_ID> --json
+bash cloud/scripts/wrangler-staging.sh containers ssh <INSTANCE_ID>
+```
 
-   ```sh
-   while :; do
-     for comm in /proc/[0-9]*/comm; do
-       read -r name < "$comm" || continue
-       if [ "$name" = engine ]; then
-         engine_pid="${comm#/proc/}"
-         engine_pid="${engine_pid%/comm}"
-         echo "stopping engine pid $engine_pid"
-         kill -STOP "$engine_pid"
-         break 2
-       fi
-     done
-     sleep 0.05
-   done
-   ```
-
-   The request should return with HTTP 504 and `status: "failure"`, `failure.code: "timeout"`. The driver sends `stop`, then terminates/kills and waits for that child. Record the stopped PID shown by the shell.
-
-4. Confirm the response and that the recorded process has been reaped, then send an independent normal request through the same Worker and Container route:
-
-   ```sh
-   python3 - <<'PY'
-   import json
-   from pathlib import Path
-   response=json.loads(Path('/tmp/meeshogi-timeout-result.json').read_text())
-   assert response['httpStatus'] == 504
-   assert response['body']['failure']['code'] == 'timeout'
-   print('typed timeout confirmed')
-   PY
-   ```
-
-   After reconnecting with the same Wrangler Container ID, verify `test ! -e /proc/<stopped-pid>`. Then run the fixed smoke from the previous section. Its first independent start-position request must return a complete result with positive `nodes` and `completedDepth` and a fresh engine process.
-
-If Wrangler SSH is unavailable for the account, do not add a public fault endpoint. Use a short-lived verification image/config with a smaller engine deadline, record that temporary setting in the verification output, remove it after the timeout request, redeploy the regular fixed conditions, and rerun the start-position smoke. A unit test alone does not count as staging timeout evidence.
+Keep the private key in the temporary directory, never commit or paste it, and remove it with the directory after the procedure. The final redeploy and smoke are attempted even if timeout verification fails. A unit test alone does not count as staging timeout evidence.
 
 ## Remaining limits
 

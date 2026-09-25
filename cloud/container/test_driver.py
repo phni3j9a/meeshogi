@@ -72,6 +72,10 @@ for command in iter(commands.get, None):
         if scenario == "resign":
             print("bestmove resign", flush=True)
             continue
+        if scenario == "bad-bestmove":
+            emit_info()
+            print("bestmove bogus", flush=True)
+            continue
         if scenario == "shortfall":
             print("info depth 2 multipv 1 score cp 42 nodes 1000 time 12 pv 7g7f 3c3d", flush=True)
         elif scenario == "bound":
@@ -215,6 +219,12 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(result["status"], "incomplete")
         self.assertEqual(result["engineOutcome"], "resign")
         self.assertEqual(result["candidates"], [])
+
+    def test_malformed_bestmove_fails_even_after_a_complete_multi_pv_block(self) -> None:
+        code, result = self.request(self.service("bad-bestmove"))
+        self.assertEqual(code, 502)
+        self.assertEqual(result["status"], "failure")
+        self.assertEqual(result["failure"]["code"], "engine_error")
 
     def test_timeout_stops_kills_reaps_busy_request_and_next_is_fresh(self) -> None:
         service = self.service("hang-once")

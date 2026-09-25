@@ -22,7 +22,9 @@ def main() -> int:
     request = urllib.request.Request(
         url.rstrip("/") + "/internal/analyze",
         data=body,
-        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json",
+                 # Cloudflare rejects the default Python-urllib User-Agent with error 1010 (HTTP 403).
+                 "User-Agent": "meeshogi-staging-operator/1"},
         method="POST",
     )
     try:
