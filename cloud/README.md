@@ -79,13 +79,15 @@ The smoke sends four requests in order: the checked-in `non-mate-startpos` fixtu
 
 ```sh
 export ANALYSIS_STAGING_URL='https://<deployed-worker-subdomain>.workers.dev'
+export CLOUDFLARE_ACCOUNT_ID='<32-character-account-id>'
+export ANALYSIS_IMAGE_REF='registry.cloudflare.com/<account-id>/meeshogi-analysis-mvp-staging@sha256:<image-digest>'
 read -r -s -p 'Internal analysis token: ' ANALYSIS_INTERNAL_TOKEN
 export ANALYSIS_INTERNAL_TOKEN
 python3 cloud/scripts/smoke-staging.py
 unset ANALYSIS_INTERNAL_TOKEN
 ```
 
-The smoke prints each fixture ID and measured result fields. It never prints the token. A failure is reported without treating fake-engine CI as staging evidence.
+The smoke uses the authenticated Wrangler profile to resolve the Container application and instance states. After a deploy, the first analysis request can arrive while the Container is inactive or its port is still starting. The Containers package returns a plain-text 500/503 for some startup failures; the Worker converts that response, or a thrown fetch error, into a typed HTTP 502 JSON failure with `failure.code: "engine_error"`. The smoke sends start-position warm-up requests every five seconds until one succeeds, for up to ten minutes, then waits for Wrangler to report a `running` instance before starting the fixtures. It prints each fixture ID and measured result fields. It never prints the token. A failure includes HTTP status, response status/failure code or a short non-JSON body preview, and instance states.
 
 ## Operator-only timeout and recovery check
 
@@ -106,7 +108,7 @@ unset ANALYSIS_SSH_PUBLIC_KEY ANALYSIS_SSH_PRIVATE_KEY ANALYSIS_INTERNAL_TOKEN
 rm -rf -- "$key_dir"
 ```
 
-The operator script resolves the Container **application ID** by name from `containers list --json`, then reads the **instance ID** from `containers instances <APPLICATION_ID> --json`. It opens the Wrangler `--stdio` SSH proxy before sending a normal start-position analysis request in the background, stops only the running engine PID, checks the HTTP 504 typed `timeout`, and confirms that PID is gone. It then sends a separate request and verifies HTTP 200 success with a different engine PID. Finally it redeploys after removing `ANALYSIS_SSH_PUBLIC_KEY` from the deployment environment and reruns the four-position smoke. Its JSON output contains only verification status, failure code, PIDs, elapsed measurements, and artifact identity; Wrangler and smoke command output is captured.
+The operator script sends start-position warm-up requests every five seconds until one succeeds, for up to ten minutes, then polls Wrangler until the instance state is `running`. It resolves the Container **application ID** by name from `containers list --json`, then uses the **instance ID** from `containers instances <APPLICATION_ID> --json`. It opens the Wrangler `--stdio` SSH proxy before sending a normal start-position analysis request in the background, stops only the running engine PID, checks the HTTP 504 typed `timeout`, and confirms that PID is gone. It then sends a separate request and verifies HTTP 200 success with a different engine PID. Finally it redeploys after removing `ANALYSIS_SSH_PUBLIC_KEY` from the deployment environment, repeats the bounded readiness wait, and runs the four-position smoke. Its JSON output contains only verification status, failure code, PIDs, elapsed measurements, artifact identity, and non-secret failure diagnostics; Wrangler and smoke command output is captured.
 
 For manual inspection while the temporary public key is deployed, use the application ID only with `instances`, then use an instance ID with `ssh`:
 

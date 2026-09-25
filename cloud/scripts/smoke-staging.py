@@ -6,10 +6,15 @@ from __future__ import annotations
 import json
 import os
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
+from staging_readiness import (
+    HttpObservation,
+    ReadinessError,
+    collect_instance_states,
+    post_analysis,
+    wait_until_ready,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 START_ID = "non-mate-startpos"
@@ -42,29 +47,17 @@ def load_positions() -> list[dict[str, str]]:
     ]
 
 
-def request_analysis(url: str, token: str, sfen: str) -> tuple[int, dict[str, Any]]:
-    body = json.dumps({"sfen": sfen}, separators=(",", ":")).encode("utf-8")
-    request = urllib.request.Request(
-        url.rstrip("/") + "/internal/analyze",
-        data=body,
-        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json",
-                 # Cloudflare rejects the default Python-urllib User-Agent with error 1010 (HTTP 403).
-                 "User-Agent": "meeshogi-staging-operator/1"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return response.status, json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        try:
-            return error.code, json.loads(error.read().decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return error.code, {}
+def request_analysis(url: str, token: str, sfen: str) -> HttpObservation:
+    return post_analysis(url, token, sfen, timeout=30)
 
 
-def check_result(position: dict[str, str], status: int, value: dict[str, Any]) -> None:
-    if status != 200 or value.get("schemaVersion") != 1 or value.get("sfen") != position["sfen"]:
-        raise RuntimeError(f"{position['id']}: HTTP or response echo check failed (HTTP {status}).")
+def check_result(position: dict[str, str], observation: HttpObservation) -> None:
+    status = observation.http_status
+    value = observation.payload
+    if status != 200:
+        raise RuntimeError(f"{position['id']}: analysis request failed.")
+    if value.get("schemaVersion") != 1 or value.get("sfen") != position["sfen"]:
+        raise RuntimeError(f"{position['id']}: response echo check failed.")
     if value.get("identity") != EXPECTED_IDENTITY:
         raise RuntimeError(f"{position['id']}: artifact identity mismatch.")
     if value.get("perspective") != "sente":
@@ -106,28 +99,96 @@ def main() -> int:
     url = os.environ.get("ANALYSIS_STAGING_URL", "")
     token = os.environ.get("ANALYSIS_INTERNAL_TOKEN", "")
     if not url or not token:
-        print("Set ANALYSIS_STAGING_URL and ANALYSIS_INTERNAL_TOKEN; the token is never printed.", file=sys.stderr)
+        print(json.dumps({
+            "phase": "readiness",
+            "status": "failed",
+            "check": "required-inputs",
+            "httpStatus": None,
+            "responseStatus": None,
+            "failureCode": None,
+            "instanceStates": [{"state": "unavailable"}],
+        }, separators=(",", ":")), file=sys.stderr)
         return 2
     if not url.startswith("https://"):
-        print("ANALYSIS_STAGING_URL must use HTTPS.", file=sys.stderr)
+        print(json.dumps({
+            "phase": "readiness",
+            "status": "failed",
+            "check": "https-required",
+            "httpStatus": None,
+            "responseStatus": None,
+            "failureCode": None,
+            "instanceStates": [{"state": "unavailable"}],
+        }, separators=(",", ":")), file=sys.stderr)
         return 2
+    readiness: dict[str, Any] | None = None
+    last_observation = HttpObservation(None, {})
     try:
-        for position in load_positions():
-            status, value = request_analysis(url, token, position["sfen"])
-            check_result(position, status, value)
-            meta = value["meta"]
+        positions = load_positions()
+        try:
+            readiness = wait_until_ready(url, token, positions[0]["sfen"], os.environ)
+        except ReadinessError as error:
             print(json.dumps({
-                "id": position["id"],
-                "status": value["status"],
-                "terminal": value["terminal"],
-                "candidateCount": len(value["candidates"]),
-                "nodes": meta["nodes"],
-                "completedDepth": meta["completedDepth"],
-                "elapsedMs": meta["elapsedMs"],
-                "mateReported": any(candidate["score"]["kind"] == "mate" for candidate in value["candidates"]),
-            }, separators=(",", ":")))
+                "phase": "readiness",
+                "status": "failed",
+                "check": error.check,
+                **error.diagnostics(),
+            }, separators=(",", ":")), file=sys.stderr)
+            return 1
+        last_observation = readiness["observation"]
+        print(json.dumps({
+            "phase": "readiness",
+            "status": "success",
+            "httpStatus": readiness["observation"].http_status,
+            "responseStatus": readiness["observation"].payload.get("status"),
+            "warmupAttempts": readiness["attempts"],
+            "instanceStates": readiness["instanceStates"],
+        }, separators=(",", ":")))
+        for position in positions:
+            observation = request_analysis(url, token, position["sfen"])
+            last_observation = observation
+            status, value = observation.http_status, observation.payload
+            try:
+                check_result(position, observation)
+                meta = value["meta"]
+                result = {
+                    "id": position["id"],
+                    "status": value["status"] if value["status"] in {"success", "terminal"} else "invalid",
+                    "terminal": value["terminal"] if value["terminal"] in {None, "checkmate"} else "invalid",
+                    "candidateCount": len(value["candidates"]),
+                    "nodes": meta["nodes"],
+                    "completedDepth": meta["completedDepth"],
+                    "elapsedMs": meta["elapsedMs"],
+                    "mateReported": any(candidate["score"]["kind"] == "mate" for candidate in value["candidates"]),
+                }
+            except Exception as error:
+                diagnostic = observation.diagnostics()
+                check = (
+                    f"{position['id']}: HTTP {diagnostic['httpStatus']}; "
+                    f"response status={diagnostic['responseStatus']}; "
+                    f"failure.code={diagnostic['failureCode']}; {error}"
+                )
+                print(json.dumps({
+                    "phase": "fixture",
+                    "status": "failed",
+                    "check": check,
+                    **observation.diagnostics(),
+                    "instanceStates": collect_instance_states(readiness["appId"], os.environ),
+                }, separators=(",", ":")), file=sys.stderr)
+                return 1
+            print(json.dumps(result, separators=(",", ":")))
     except Exception as error:
-        print(f"Staging smoke failed: {error}", file=sys.stderr)
+        instance_states = (
+            collect_instance_states(readiness["appId"], os.environ)
+            if readiness is not None
+            else [{"state": "unavailable"}]
+        )
+        print(json.dumps({
+            "phase": "smoke",
+            "status": "failed",
+            "check": f"unexpected-error: {type(error).__name__}",
+            **last_observation.diagnostics(),
+            "instanceStates": instance_states,
+        }, separators=(",", ":")), file=sys.stderr)
         return 1
     print("staging smoke passed: 4 fixed public/synthetic positions")
     return 0

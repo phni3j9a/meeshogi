@@ -46,14 +46,15 @@ function success(sfen: string, multiPV = Math.min(3, legalMoves(sfen).length)): 
   };
 }
 
-function makeEnv(response?: (payload: unknown) => unknown, token?: string): Env & { calls: number[] } {
+function makeEnv(response?: (payload: unknown) => unknown | Response, token?: string): Env & { calls: number[] } {
   const calls: number[] = [];
   const binding = {
     getByName: () => ({
       fetch: async (request: Request) => {
         calls.push(1);
         const payload = await request.json();
-        return Response.json(response ? response(payload) : success((payload as { sfen: string }).sfen));
+        const result = response ? response(payload) : success((payload as { sfen: string }).sfen);
+        return result instanceof Response ? result : Response.json(result);
       },
     }),
   };
@@ -175,6 +176,47 @@ describe('staging analysis Worker boundary', () => {
       candidates: [{ score: { kind: 'cp' } }, { score: { kind: 'cp' } }],
       conditions: { requested: { multiPV: 3 }, actual: { multiPV: 2 } },
     });
+  });
+
+  it('returns typed JSON when Container port startup returns a plain-text unavailable response', async () => {
+    const env = makeEnv(
+      () => new Response('Failed to start container: port not ready', { status: 500 }),
+      'secret-token',
+    );
+    const response = await handleRequest(
+      request(JSON.stringify({ sfen: STARTPOS }), { token: 'secret-token', contentType: 'application/json' }),
+      env,
+    );
+
+    expect(response.status).toBe(502);
+    const payload = await result(response);
+    expect(payload).toMatchObject({
+      schemaVersion: 1,
+      sfen: STARTPOS,
+      status: 'failure',
+      failure: { code: 'engine_error', message: 'Analysis container returned an invalid response.' },
+    });
+    expect(JSON.stringify(payload)).not.toContain('port not ready');
+  });
+
+  it('returns typed JSON when Container fetch rejects during startup', async () => {
+    const env = makeEnv(() => {
+      throw new Error('internal container-start detail');
+    }, 'secret-token');
+    const response = await handleRequest(
+      request(JSON.stringify({ sfen: STARTPOS }), { token: 'secret-token', contentType: 'application/json' }),
+      env,
+    );
+
+    expect(response.status).toBe(502);
+    const payload = await result(response);
+    expect(payload).toMatchObject({
+      schemaVersion: 1,
+      sfen: STARTPOS,
+      status: 'failure',
+      failure: { code: 'engine_error', message: 'Analysis container is unavailable.' },
+    });
+    expect(JSON.stringify(payload)).not.toContain('internal container-start detail');
   });
 
   it('accepts sente-perspective cp and mate scores but rejects an illegal PV', async () => {

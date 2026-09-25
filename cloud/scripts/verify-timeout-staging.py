@@ -14,18 +14,24 @@ import stat
 import subprocess
 import sys
 import threading
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
+from staging_readiness import (
+    HttpObservation,
+    ReadinessError,
+    collect_instance_states,
+    post_analysis,
+    wait_until_ready,
+)
 
 CLOUD_DIR = Path(__file__).resolve().parents[1]
 WRANGLER_WRAPPER = CLOUD_DIR / "scripts/wrangler-staging.sh"
 DEPLOY_SCRIPT = CLOUD_DIR / "scripts/deploy-staging.sh"
 SMOKE_SCRIPT = CLOUD_DIR / "scripts/smoke-staging.py"
-TARGET_CONTAINER = "meeshogi-analysis-mvp-staging-analysis"
 STARTPOS = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
+LAST_HTTP = HttpObservation(None, {})
+LAST_INSTANCE_STATES: list[dict[str, Any]] = [{"state": "unavailable"}]
+LAST_APP_ID: str | None = None
 
 
 class VerificationError(Exception):
@@ -77,28 +83,14 @@ def validate_inputs() -> tuple[str, str, Path]:
 
 
 def request_analysis(url: str, token: str) -> tuple[int | None, dict[str, Any]]:
-    body = json.dumps({"sfen": STARTPOS}, separators=(",", ":")).encode("utf-8")
-    request = urllib.request.Request(
-        url + "/internal/analyze",
-        data=body,
-        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json",
-                 # Cloudflare rejects the default Python-urllib User-Agent with error 1010 (HTTP 403).
-                 "User-Agent": "meeshogi-staging-operator/1"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            return response.status, json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        try:
-            return error.code, json.loads(error.read().decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return error.code, {}
-    except Exception:
-        return None, {}
+    global LAST_HTTP
+    LAST_HTTP = post_analysis(url, token, STARTPOS)
+    return LAST_HTTP.http_status, LAST_HTTP.payload
 
 
 def start_background_request(url: str, token: str) -> tuple[threading.Thread, queue.Queue[tuple[int | None, dict[str, Any]]]]:
+    global LAST_HTTP
+    LAST_HTTP = HttpObservation(None, {})
     result: queue.Queue[tuple[int | None, dict[str, Any]]] = queue.Queue(maxsize=1)
     worker = threading.Thread(target=lambda: result.put(request_analysis(url, token)), daemon=True)
     worker.start()
@@ -116,62 +108,6 @@ def finish_background_request(
     if status is None:
         raise VerificationError("analysis-transport")
     return status, payload
-
-
-def wrangler_json(args: list[str], env: dict[str, str]) -> list[dict[str, Any]]:
-    try:
-        completed = subprocess.run(
-            ["bash", str(WRANGLER_WRAPPER), *args],
-            cwd=CLOUD_DIR,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-    except (OSError, subprocess.SubprocessError) as error:
-        raise VerificationError("wrangler-command") from error
-    if completed.returncode != 0:
-        raise VerificationError("wrangler-command")
-    try:
-        value = json.loads(completed.stdout)
-    except json.JSONDecodeError as error:
-        raise VerificationError("wrangler-json") from error
-    if isinstance(value, dict):
-        value = value.get("instances", value.get("containers"))
-    if not isinstance(value, list) or any(not isinstance(row, dict) for row in value):
-        raise VerificationError("wrangler-json-shape")
-    return value
-
-
-def resolve_app_id(env: dict[str, str]) -> str:
-    containers = wrangler_json(["containers", "list", "--json"], env)
-    matches = [row for row in containers if row.get("name") == TARGET_CONTAINER]
-    if len(matches) != 1 or not isinstance(matches[0].get("id"), str) or not matches[0]["id"]:
-        raise VerificationError("container-app-id")
-    return matches[0]["id"]
-
-
-def running_instance_id(app_id: str, env: dict[str, str]) -> str | None:
-    instances = wrangler_json(["containers", "instances", app_id, "--json"], env)
-    running = [row for row in instances if row.get("state") == "running"]
-    if len(running) > 1:
-        raise VerificationError("multiple-running-instances")
-    if not running:
-        return None
-    instance_id = running[0].get("id")
-    if not isinstance(instance_id, str) or not instance_id:
-        raise VerificationError("container-instance-id")
-    return instance_id
-
-
-def wait_for_running_instance(app_id: str, env: dict[str, str]) -> str:
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        instance_id = running_instance_id(app_id, env)
-        if instance_id:
-            return instance_id
-        time.sleep(2)
-    raise VerificationError("container-instance-not-running")
 
 
 def start_ssh_command(
@@ -318,15 +254,21 @@ def require_analysis_identity(payload: dict[str, Any], expected: dict[str, Any] 
 
 
 def verify_timeout(url: str, token: str, private_key: Path) -> None:
+    global LAST_APP_ID, LAST_INSTANCE_STATES, LAST_HTTP
     env = child_environment(include_ssh_key=True)
-    app_id = resolve_app_id(env)
-    instance_id = running_instance_id(app_id, env)
-    if instance_id is None:
-        warmup_status, warmup = request_analysis(url, token)
-        require_analysis_identity(warmup)
-        if warmup_status != 200 or warmup.get("status") != "success":
-            raise VerificationError("instance-warmup")
-        instance_id = wait_for_running_instance(app_id, env)
+    readiness = wait_until_ready(url, token, STARTPOS, env)
+    LAST_HTTP = readiness["observation"]
+    LAST_APP_ID = readiness["appId"]
+    LAST_INSTANCE_STATES = readiness["instanceStates"]
+    instance_id = readiness["instanceId"]
+    require_analysis_identity(LAST_HTTP.payload)
+    print(json.dumps({
+        "phase": "readiness",
+        "httpStatus": LAST_HTTP.http_status,
+        "status": LAST_HTTP.payload.get("status"),
+        "warmupAttempts": readiness["attempts"],
+        "instanceStates": LAST_INSTANCE_STATES,
+    }, separators=(",", ":")))
 
     stop_script = start_ssh_command(instance_id, private_key, wait_for_engine_script(stop=True), env)
     first_worker, first_result = start_background_request(url, token)
@@ -385,6 +327,7 @@ def verify_timeout(url: str, token: str, private_key: Path) -> None:
 
 
 def redeploy_normal_and_smoke() -> tuple[bool, bool]:
+    global LAST_APP_ID, LAST_INSTANCE_STATES, LAST_HTTP
     env = child_environment(include_ssh_key=False, include_token=True)
     try:
         deploy = subprocess.run(
@@ -398,6 +341,54 @@ def redeploy_normal_and_smoke() -> tuple[bool, bool]:
         deployed = deploy.returncode == 0
     except (OSError, subprocess.SubprocessError):
         deployed = False
+    if deployed:
+        if not env.get("ANALYSIS_STAGING_URL") or not env.get("ANALYSIS_INTERNAL_TOKEN"):
+            LAST_HTTP = HttpObservation(None, {})
+            LAST_INSTANCE_STATES = collect_instance_states(LAST_APP_ID, env)
+            print(json.dumps({
+                "phase": "normal-readiness",
+                "status": "failed",
+                "check": "required-inputs",
+                **diagnostics(),
+            }, separators=(",", ":")), file=sys.stderr)
+            return True, False
+        try:
+            readiness = wait_until_ready(
+                env["ANALYSIS_STAGING_URL"],
+                env["ANALYSIS_INTERNAL_TOKEN"],
+                STARTPOS,
+                env,
+            )
+            LAST_HTTP = readiness["observation"]
+            LAST_APP_ID = readiness["appId"]
+            LAST_INSTANCE_STATES = readiness["instanceStates"]
+            print(json.dumps({
+                "phase": "normal-readiness",
+                "httpStatus": LAST_HTTP.http_status,
+                "status": LAST_HTTP.payload.get("status"),
+                "warmupAttempts": readiness["attempts"],
+                "instanceStates": LAST_INSTANCE_STATES,
+            }, separators=(",", ":")))
+        except ReadinessError as error:
+            LAST_HTTP = error.observation
+            LAST_INSTANCE_STATES = error.instance_states
+            print(json.dumps({
+                "phase": "normal-readiness",
+                "status": "failed",
+                "check": error.check,
+                **error.diagnostics(),
+            }, separators=(",", ":")), file=sys.stderr)
+            return True, False
+    else:
+        LAST_HTTP = HttpObservation(None, {})
+        LAST_INSTANCE_STATES = collect_instance_states(LAST_APP_ID, env)
+        print(json.dumps({
+            "phase": "normal-deploy",
+            "status": "failed",
+            "check": "deploy",
+            **diagnostics(),
+        }, separators=(",", ":")), file=sys.stderr)
+        return False, False
     try:
         smoke = subprocess.run(
             [sys.executable, str(SMOKE_SCRIPT)],
@@ -408,12 +399,43 @@ def redeploy_normal_and_smoke() -> tuple[bool, bool]:
             timeout=300,
         )
         smoke_passed = deployed and smoke.returncode == 0
+        if not smoke_passed:
+            smoke_failure = None
+            for line in reversed(smoke.stderr.splitlines()):
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict) and "httpStatus" in parsed and "instanceStates" in parsed:
+                    smoke_failure = parsed
+                    break
+            print(json.dumps({
+                "phase": "normal-smoke",
+                "status": "failed",
+                "diagnostics": smoke_failure or diagnostics(),
+            }, separators=(",", ":")), file=sys.stderr)
     except (OSError, subprocess.SubprocessError):
         smoke_passed = False
+        print(json.dumps({
+            "phase": "normal-smoke",
+            "status": "failed",
+            "check": "smoke-process",
+            "diagnostics": diagnostics(),
+        }, separators=(",", ":")), file=sys.stderr)
     return deployed, smoke_passed
 
 
+def diagnostics() -> dict[str, Any]:
+    return {**LAST_HTTP.diagnostics(), "instanceStates": LAST_INSTANCE_STATES}
+
+
+def refresh_instance_diagnostics() -> None:
+    global LAST_INSTANCE_STATES
+    LAST_INSTANCE_STATES = collect_instance_states(LAST_APP_ID, child_environment(include_ssh_key=False))
+
+
 def main() -> int:
+    global LAST_HTTP, LAST_INSTANCE_STATES
     phase = "inputs"
     verification_ok = False
     try:
@@ -421,10 +443,16 @@ def main() -> int:
         phase = "timeout-and-recovery"
         verify_timeout(url, token, private_key)
         verification_ok = True
+    except ReadinessError as error:
+        LAST_HTTP = error.observation
+        LAST_INSTANCE_STATES = error.instance_states
+        print(json.dumps({"phase": phase, "status": "failed", "check": error.check, **error.diagnostics()}, separators=(",", ":")), file=sys.stderr)
     except VerificationError as error:
-        print(json.dumps({"phase": phase, "status": "failed", "check": str(error)}, separators=(",", ":")), file=sys.stderr)
+        refresh_instance_diagnostics()
+        print(json.dumps({"phase": phase, "status": "failed", "check": str(error), **diagnostics()}, separators=(",", ":")), file=sys.stderr)
     except Exception:
-        print(json.dumps({"phase": phase, "status": "failed", "check": "unexpected-error"}, separators=(",", ":")), file=sys.stderr)
+        refresh_instance_diagnostics()
+        print(json.dumps({"phase": phase, "status": "failed", "check": "unexpected-error", **diagnostics()}, separators=(",", ":")), file=sys.stderr)
     finally:
         phase = "normal-redeploy-and-smoke"
         deployed, smoke_passed = redeploy_normal_and_smoke()
@@ -432,6 +460,7 @@ def main() -> int:
             "phase": phase,
             "deployWithoutSsh": "passed" if deployed else "failed",
             "smoke": "passed" if smoke_passed else "failed",
+            **({"diagnostics": diagnostics()} if not deployed or not smoke_passed else {}),
         }, separators=(",", ":")))
     return 0 if verification_ok and deployed and smoke_passed else 1
 
