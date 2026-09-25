@@ -27,6 +27,9 @@ DO_MEMORY_GIB = 128 / 1024
 IDENTITY_DIGEST_KEYS = (
     "engineSha256", "weightSha256", "optionsSha256", "sourceArchiveSha256", "sourceTreeSha256",
 )
+# Health snapshots use the driver health contract recorded in the run fingerprint.
+# Benchmark analysis responses have their own public contract version.
+BENCHMARK_RESPONSE_CONTRACT_VERSION = "analysis-json-v2"
 CONTAINER_SIZES = {
     "standard-2": {"vCpu": 1, "memoryGiB": 6, "diskGb": 12},
     "standard-3": {"vCpu": 2, "memoryGiB": 8, "diskGb": 16},
@@ -396,6 +399,10 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
             or start_health.get("gitCommit") != fingerprint["gitCommit"]
         ):
             raise ValueError(f"run {run_id} run-start health image build identity differs from its fingerprint")
+        if isinstance(start_health, dict):
+            for key in ("driverVersion", "contractVersion"):
+                if isinstance(start_health.get(key), str) and start_health[key] != fingerprint[key]:
+                    raise ValueError(f"run {run_id} run-start health {key} differs from its fingerprint")
 
     for row in attempts:
         run_id = row.get("runId")
@@ -430,9 +437,15 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
         if isinstance(response, dict):
             if response.get("buildId") != fingerprint["buildId"] or response.get("gitCommit") != fingerprint["gitCommit"]:
                 raise ValueError(f"attempt in run {run_id} response image build identity differs from its fingerprint")
-            for key in ("driverVersion", "contractVersion"):
-                if isinstance(response.get(key), str) and response[key] != fingerprint[key]:
-                    raise ValueError(f"attempt in run {run_id} response {key} differs from its fingerprint")
+            if isinstance(response.get("driverVersion"), str) and response["driverVersion"] != fingerprint["driverVersion"]:
+                raise ValueError(f"attempt in run {run_id} response driverVersion differs from its fingerprint")
+            if (
+                isinstance(response.get("contractVersion"), str)
+                and response["contractVersion"] != BENCHMARK_RESPONSE_CONTRACT_VERSION
+            ):
+                raise ValueError(
+                    f"attempt in run {run_id} response contractVersion differs from the benchmark response contract"
+                )
             response_worker_version = response.get("workerVersionId")
             if isinstance(fingerprint.get("workerVersionId"), str) and response_worker_version is not None:
                 if response_worker_version != fingerprint["workerVersionId"]:
@@ -460,6 +473,8 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
         "identityDigests": dict(common_identity[3]) if common_identity else None,
         "driverVersion": common_identity[4] if common_identity else None,
         "contractVersion": common_identity[5] if common_identity else None,
+        "healthContractVersion": common_identity[5] if common_identity else None,
+        "benchmarkResponseContractVersion": BENCHMARK_RESPONSE_CONTRACT_VERSION,
         "workerVersionIds": sorted({
             str(row["fingerprint"].get("workerVersionId"))
             for row in run_starts.values()
@@ -1153,6 +1168,13 @@ def aggregate_records(
         raise ValueError("conditions manifest may contain at most one reference")
     reference_id = reference_ids[0] if reference_ids else None
     _reject_duplicate_reference_attempts(attempts, reference_id)
+    primary_reference_attempt_count = sum(
+        row.get("conditionId") == reference_id
+        and row.get("attemptNo") == 1
+        and row.get("mode", "positions") == "positions"
+        and row.get("comparisonRole", "primary") != "pilot"
+        for row in attempts
+    ) if reference_id is not None else 0
     references = _reference_map(attempts, reference_id)
     reference_repetitions = {
         repetition: _reference_map(attempts, reference_id, repetition)
@@ -1286,6 +1308,7 @@ def aggregate_records(
         "runIds": sorted({row.get("runId") for row in records if isinstance(row.get("runId"), str)}),
         "attemptCount": len(attempts),
         "referenceConditionId": reference_id,
+        "primaryReferenceAttemptCount": primary_reference_attempt_count,
         "conditions": per_condition,
         "gameWallTimes": game_summaries,
         "gameAnalysis": game_analysis,
@@ -1295,48 +1318,128 @@ def aggregate_records(
 
 
 def markdown_report(value: dict[str, Any]) -> str:
+    def fmt(number: Any) -> str:
+        if number is None:
+            return "n/a"
+        if isinstance(number, bool):
+            return str(number)
+        if isinstance(number, int):
+            return f"{number:,}"
+        if isinstance(number, float):
+            return f"{number:,.3f}".rstrip("0").rstrip(".")
+        return str(number)
+
+    def ratio_label(stat: dict[str, Any] | None) -> str:
+        if not isinstance(stat, dict):
+            return "n/a"
+        rate = stat.get("rate")
+        percent = "n/a" if rate is None else f"{rate:.1%}"
+        return f"{stat.get('numerator', 0)}/{stat.get('denominator', 0)} ({percent})"
+
+    def metric_label(stat: dict[str, Any], denominator: int) -> str:
+        return f"{fmt(stat.get('median'))} (n={stat.get('count', 0)}/{denominator})"
+
+    provenance = value.get("provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    reference_id = value.get("referenceConditionId")
+    reference_attempts = value.get("primaryReferenceAttemptCount")
+    if reference_id is None:
+        reference_summary = "Primary reference: not present; quality comparisons are n/a."
+    elif reference_attempts == 0:
+        reference_summary = (
+            f"Primary reference: {reference_id}; primary attemptNo=1 rows: 0. "
+            "Quality comparisons are n/a because reference rows are missing."
+        )
+    elif isinstance(reference_attempts, int):
+        reference_summary = f"Primary reference: {reference_id}; primary attemptNo=1 rows: {reference_attempts}."
+    else:
+        reference_summary = f"Primary reference: {reference_id}; primary row count is unavailable."
+
     lines = [
         "# Issue #20 benchmark aggregate",
         "",
         f"Run IDs: {', '.join(value.get('runIds', [])) or 'none'}  ",
         f"Attempts: {value.get('attemptCount', 0)}  ",
-        f"Primary reference: {value.get('referenceConditionId') or 'not present'}",
+        "Contract versions: health `{}`; benchmark response `{}`  ".format(
+            provenance.get("healthContractVersion", provenance.get("contractVersion") or "n/a"),
+            provenance.get("benchmarkResponseContractVersion", "n/a"),
+        ),
+        reference_summary,
         "",
-        "| Condition | Attempts | Success | Incomplete | Failure | Top-1 agreement | Ref top-1 in top-2 | Ref top-1 in top-3 | Mate side / distance | CP abs diff median / p90 | Depth median | Nodes median | Search ms median | HTTP ms median |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "Status cells show numerator/attempt denominator and percentage; failures include transport failures.",
+        "",
+        "## Overall outcomes",
+        "",
+        "| Condition | Attempts | Success n/d | Incomplete n/d | Failure n/d | Paired to reference | Missing reference | Top-1 agreement n/d |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in value.get("conditions", []):
         overall = row["overall"]
         quality = overall["qualityVsPrimaryReference"]
-        metrics = overall["metrics"]
-        top1 = quality["top1Agreement"]["rate"]
-        top2 = quality["referenceTop1InCandidateTop2"]["rate"]
-        top3_stat = quality["referenceTop1InCandidateTop3"]
-        top3 = top3_stat["rate"] if isinstance(top3_stat, dict) else None
-        mate_side = quality["mateSideAgreement"]["rate"]
-        mate_distance = quality["mateDistanceExactAgreement"]["rate"]
-        cp = quality["cpAbsDiff"]
         condition_id = row["condition"]["conditionId"]
-        def fmt(x: Any) -> str:
-            return "n/a" if x is None else f"{x:.3f}" if isinstance(x, float) else str(x)
         lines.append(
-            "| {id} | {n} | {s} | {i} | {f} | {top1} | {top2} | {top3} | {mate_side} / {mate_distance} | {cp50} / {cp90} | {depth} | {nodes} | {search} | {http} |".format(
+            "| {id} | {n} | {success} | {incomplete} | {failure} | {paired} | {missing} | {top1} |".format(
                 id=condition_id,
                 n=overall["attempts"],
-                s=fmt(overall["successRate"]["rate"]),
-                i=fmt(overall["incompleteRate"]["rate"]),
-                f=fmt(overall["failureRate"]["rate"]),
-                top1=fmt(top1),
-                top2=fmt(top2),
-                top3=fmt(top3),
-                mate_side=fmt(mate_side),
-                mate_distance=fmt(mate_distance),
+                success=ratio_label(overall["successRate"]),
+                incomplete=ratio_label(overall["incompleteRate"]),
+                failure=ratio_label(overall["failureRate"]),
+                paired=quality["pairedAttempts"],
+                missing=quality["attemptsWithoutPrimaryReference"],
+                top1=ratio_label(quality["top1Agreement"]),
+            )
+        )
+    lines.extend([
+        "",
+        "## Overall search and request metrics",
+        "",
+        "Median is followed by valid sample count / attempt count. NPS is reported from the engine response and from nodes divided by reported search time.",
+        "",
+        "| Condition | Depth | Nodes | Engine NPS | Derived NPS | Search ms | Process ms | HTTP ms |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    for row in value.get("conditions", []):
+        overall = row["overall"]
+        metrics = overall["metrics"]
+        attempts = overall["attempts"]
+        lines.append(
+            "| {condition} | {depth} | {nodes} | {engine_nps} | {derived_nps} | {search} | {process} | {http} |".format(
+                condition=row["condition"]["conditionId"],
+                depth=metric_label(metrics["completedDepth"], attempts),
+                nodes=metric_label(metrics["nodes"], attempts),
+                engine_nps=metric_label(metrics["engineNps"], attempts),
+                derived_nps=metric_label(metrics["derivedNps"], attempts),
+                search=metric_label(metrics["searchElapsedMs"], attempts),
+                process=metric_label(metrics["processElapsedMs"], attempts),
+                http=metric_label(metrics["httpElapsedMs"], attempts),
+            )
+        )
+    lines.extend([
+        "",
+        "## Quality against the primary reference",
+        "",
+        "Quality ratios use successful paired analyses. When no primary reference rows exist, paired counts and ratios remain zero / n/a.",
+        "",
+        "| Candidate | Paired | Missing reference | Top-1 n/d | Top-2 n/d | Top-3 n/d | CP abs diff count, median / p90 | Mate side n/d | Mate distance n/d |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    for row in value.get("conditions", []):
+        quality = row["overall"]["qualityVsPrimaryReference"]
+        cp = quality["cpAbsDiff"]
+        lines.append(
+            "| {condition} | {paired} | {missing} | {top1} | {top2} | {top3} | {cp_count}, {cp50} / {cp90} | {mate_side} | {mate_distance} |".format(
+                condition=row["condition"]["conditionId"],
+                paired=quality["pairedAttempts"],
+                missing=quality["attemptsWithoutPrimaryReference"],
+                top1=ratio_label(quality["top1Agreement"]),
+                top2=ratio_label(quality["referenceTop1InCandidateTop2"]),
+                top3=ratio_label(quality["referenceTop1InCandidateTop3"]),
+                cp_count=cp["count"],
                 cp50=fmt(cp["median"]),
                 cp90=fmt(cp["p90"]),
-                depth=fmt(metrics["completedDepth"]["median"]),
-                nodes=fmt(metrics["nodes"]["median"]),
-                search=fmt(metrics["searchElapsedMs"]["median"]),
-                http=fmt(metrics["httpElapsedMs"]["median"]),
+                mate_side=ratio_label(quality["mateSideAgreement"]),
+                mate_distance=ratio_label(quality["mateDistanceExactAgreement"]),
             )
         )
     lines.extend([
@@ -1348,9 +1451,6 @@ def markdown_report(value: dict[str, Any]) -> str:
         "| Candidate | Reference repetition | Candidate attempts | Paired attempts | Missing reference | Top-1 n/d | Top-2 n/d | Top-3 n/d | CP abs diff count, median / p90 | Mate side n/d | Mate distance n/d |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ])
-    def ratio_label(value: dict[str, Any] | None) -> str:
-        return "n/a" if not isinstance(value, dict) else f"{value['numerator']}/{value['denominator']}"
-
     for row in value.get("conditions", []):
         for repetition, comparison in row.get("qualityVsReferenceRepetitions", {}).items():
             quality = comparison["quality"]
@@ -1376,25 +1476,51 @@ def markdown_report(value: dict[str, Any]) -> str:
         "",
         "## By phase",
         "",
-        "| Condition | Phase | Attempts | Success | Incomplete | Failure | Top-1 agreement | Ref top-1 in top-2 | CP abs diff median / p90 |",
+        "### Outcomes and reference coverage",
+        "",
+        "| Condition | Phase | Attempts | Success n/d | Incomplete n/d | Failure n/d | Paired | Missing reference | Top-1 n/d |",
         "|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ])
     for row in value.get("conditions", []):
         for phase, summary in row.get("byPhase", {}).items():
             quality = summary["qualityVsPrimaryReference"]
-            cp = quality["cpAbsDiff"]
             lines.append(
-                "| {condition} | {phase} | {attempts} | {success} | {incomplete} | {failure} | {top1} | {top2} | {cp50} / {cp90} |".format(
+                "| {condition} | {phase} | {attempts} | {success} | {incomplete} | {failure} | {paired} | {missing} | {top1} |".format(
                     condition=row["condition"]["conditionId"],
                     phase=phase,
                     attempts=summary["attempts"],
-                    success="n/a" if summary["successRate"]["rate"] is None else f"{summary['successRate']['rate']:.3f}",
-                    incomplete="n/a" if summary["incompleteRate"]["rate"] is None else f"{summary['incompleteRate']['rate']:.3f}",
-                    failure="n/a" if summary["failureRate"]["rate"] is None else f"{summary['failureRate']['rate']:.3f}",
-                    top1="n/a" if quality["top1Agreement"]["rate"] is None else f"{quality['top1Agreement']['rate']:.3f}",
-                    top2="n/a" if quality["referenceTop1InCandidateTop2"]["rate"] is None else f"{quality['referenceTop1InCandidateTop2']['rate']:.3f}",
-                    cp50="n/a" if cp["median"] is None else f"{cp['median']:.3f}",
-                    cp90="n/a" if cp["p90"] is None else f"{cp['p90']:.3f}",
+                    success=ratio_label(summary["successRate"]),
+                    incomplete=ratio_label(summary["incompleteRate"]),
+                    failure=ratio_label(summary["failureRate"]),
+                    paired=quality["pairedAttempts"],
+                    missing=quality["attemptsWithoutPrimaryReference"],
+                    top1=ratio_label(quality["top1Agreement"]),
+                )
+            )
+    lines.extend([
+        "",
+        "### Search and request metrics",
+        "",
+        "Median is followed by valid sample count / phase attempt count.",
+        "",
+        "| Condition | Phase | Depth | Nodes | Engine NPS | Derived NPS | Search ms | Process ms | HTTP ms |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    for row in value.get("conditions", []):
+        for phase, summary in row.get("byPhase", {}).items():
+            metrics = summary["metrics"]
+            attempts = summary["attempts"]
+            lines.append(
+                "| {condition} | {phase} | {depth} | {nodes} | {engine_nps} | {derived_nps} | {search} | {process} | {http} |".format(
+                    condition=row["condition"]["conditionId"],
+                    phase=phase,
+                    depth=metric_label(metrics["completedDepth"], attempts),
+                    nodes=metric_label(metrics["nodes"], attempts),
+                    engine_nps=metric_label(metrics["engineNps"], attempts),
+                    derived_nps=metric_label(metrics["derivedNps"], attempts),
+                    search=metric_label(metrics["searchElapsedMs"], attempts),
+                    process=metric_label(metrics["processElapsedMs"], attempts),
+                    http=metric_label(metrics["httpElapsedMs"], attempts),
                 )
             )
     lines.extend([

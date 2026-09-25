@@ -90,6 +90,8 @@ def add_provenance(rows: list[dict]) -> list[dict]:
                     row["response"]["identityDigests"] = IDENTITY_DIGESTS
                     row["response"]["buildId"] = BUILD_ID
                     row["response"]["gitCommit"] = GIT_COMMIT
+                    row["response"]["driverVersion"] = "usi-driver-v1"
+                    row["response"]["contractVersion"] = "analysis-json-v2"
                     row["responseIdentityDigests"] = IDENTITY_DIGESTS
     return starts + rows
 
@@ -194,7 +196,47 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(rep2["top1Agreement"], {"numerator": 1, "denominator": 2, "rate": 0.5})
         self.assertEqual(rep3["top1Agreement"], {"numerator": 2, "denominator": 2, "rate": 1})
         self.assertEqual(rep3["mateDistanceExactAgreement"], {"numerator": 1, "denominator": 1, "rate": 1})
-        self.assertIn("Candidate quality against reference repetitions 2 and 3", aggregate.markdown_report(result))
+        report = aggregate.markdown_report(result)
+        self.assertIn("Candidate quality against reference repetitions 2 and 3", report)
+        self.assertIn("Success n/d", report)
+        self.assertIn("Engine NPS", report)
+        self.assertIn("Process ms", report)
+
+    def test_benchmark_response_contract_is_distinct_from_health_contract(self) -> None:
+        row = success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20})
+        records = add_provenance([row])
+        start = next(item for item in records if item.get("recordType") == "run-start")
+        self.assertEqual(start["fingerprint"]["contractVersion"], "analysis-json-v1")
+        self.assertEqual(start["healthAtRunStart"]["contractVersion"], "analysis-json-v1")
+        self.assertEqual(row["response"]["contractVersion"], "analysis-json-v2")
+        provenance = aggregate.verify_run_provenance(records)
+        self.assertEqual(provenance["contractVersion"], "analysis-json-v1")
+        self.assertEqual(provenance["healthContractVersion"], "analysis-json-v1")
+        self.assertEqual(provenance["benchmarkResponseContractVersion"], "analysis-json-v2")
+
+        row["response"]["contractVersion"] = "analysis-json-v3"
+        with self.assertRaisesRegex(ValueError, "response contractVersion differs from the benchmark response contract"):
+            aggregate.verify_run_provenance(records)
+
+        row["response"]["contractVersion"] = "analysis-json-v2"
+        start["healthAtRunStart"]["contractVersion"] = "analysis-json-v2"
+        with self.assertRaisesRegex(ValueError, "run-start health contractVersion differs from its fingerprint"):
+            aggregate.verify_run_provenance(records)
+
+    def test_missing_primary_reference_is_reported_as_missing(self) -> None:
+        row = success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20})
+        result = aggregate_with_fixture_hash(
+            add_provenance([row]),
+            {REFERENCE["conditionId"]: REFERENCE, CANDIDATE["conditionId"]: CANDIDATE},
+        )
+        self.assertEqual(result["primaryReferenceAttemptCount"], 0)
+        candidate = next(item for item in result["conditions"] if item["condition"]["role"] == "candidate")
+        quality = candidate["overall"]["qualityVsPrimaryReference"]
+        self.assertEqual(quality["attemptsWithoutPrimaryReference"], 1)
+        self.assertIsNone(quality["top1Agreement"]["rate"])
+        report = aggregate.markdown_report(result)
+        self.assertIn("primary attemptNo=1 rows: 0", report)
+        self.assertIn("Quality comparisons are n/a because reference rows are missing", report)
 
     def test_repetition_variability_and_markdown_preserve_missing_data(self) -> None:
         first = success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20}, ["2g2f"], rep=1)
