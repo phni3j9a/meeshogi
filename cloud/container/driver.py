@@ -45,6 +45,7 @@ MOVE_RE = re.compile(r"^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$")
 SFEN_RE = re.compile(r"^[0-9KkLlNnSsGgBbRrPp/+ bw-]+$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 DRIVER_BOOT_ID = uuid.uuid4().hex
+GIB = 1 << 30
 
 
 class DriverError(Exception):
@@ -211,6 +212,60 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
+def parse_mem_total_bytes(text: str | None) -> int | None:
+    if text is None:
+        return None
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[0] == "MemTotal:" and fields[2] == "kB":
+            try:
+                value = int(fields[1]) * 1024
+                return value if value > 0 else None
+            except ValueError:
+                return None
+    return None
+
+
+def mem_total_bytes() -> int | None:
+    return parse_mem_total_bytes(_read_text(Path("/proc/meminfo")))
+
+
+def root_disk_total_bytes() -> int | None:
+    try:
+        facts = os.statvfs("/")
+        total = facts.f_blocks * facts.f_frsize
+        return total if total > 0 else None
+    except (AttributeError, OSError, OverflowError):
+        return None
+
+
+def benchmark_runtime_mismatch(runtime: dict[str, Any], expected_instance_type: str | None) -> str | None:
+    if expected_instance_type not in {"standard-2", "standard-3"}:
+        return "driver_expected_instance_type_mismatch"
+    expected_cpu = 1 if expected_instance_type == "standard-2" else 2
+    expected_memory = (6 if expected_instance_type == "standard-2" else 8) * GIB
+    lower_memory = expected_memory - (3 * GIB // 2)
+    upper_memory = expected_memory + (GIB // 4)
+    if runtime.get("expectedInstanceType") != expected_instance_type:
+        return "driver_expected_instance_type_mismatch"
+    if runtime.get("osCpuCount") != expected_cpu or runtime.get("affinityCpuCount") != expected_cpu:
+        return "cpu_count_mismatch"
+    mem_total = runtime.get("memTotalBytes")
+    if not isinstance(mem_total, int) or not lower_memory <= mem_total <= upper_memory:
+        return "mem_total_mismatch"
+    cpu_quota = runtime.get("cpuQuota")
+    if cpu_quota is not None and (
+        not isinstance(cpu_quota, (int, float)) or abs(float(cpu_quota) - expected_cpu) > 0.05
+    ):
+        return "cpu_quota_mismatch"
+    memory_limit = runtime.get("memoryMaxBytes")
+    if memory_limit is not None and (
+        not isinstance(memory_limit, int) or not lower_memory <= memory_limit <= upper_memory
+    ):
+        return "memory_limit_mismatch"
+    return None
+
+
 def runtime_facts(expected_instance_type: str | None) -> dict[str, Any]:
     cpu_max = _read_text(Path("/sys/fs/cgroup/cpu.max"))
     cpu_quota: float | None = None
@@ -255,6 +310,8 @@ def runtime_facts(expected_instance_type: str | None) -> dict[str, Any]:
         "cpuMax": cpu_max,
         "cpuQuota": cpu_quota,
         "memoryMaxBytes": memory_bytes,
+        "memTotalBytes": mem_total_bytes(),
+        "rootDiskTotalBytes": root_disk_total_bytes(),
     }
 
 
@@ -746,10 +803,20 @@ class AnalysisService:
         condition = self.benchmark_conditions.get(condition_id)
         if condition is None:
             return 400, {"schemaVersion": 2, "contractVersion": "analysis-json-v2", "sfen": sfen, "status": "failure", "failure": {"code": "invalid", "message": "Unknown benchmark condition."}}
-        if self.expected_instance_type is None or condition["instanceType"] != self.expected_instance_type:
-            return 409, {"schemaVersion": 2, "contractVersion": "analysis-json-v2", "sfen": sfen, "status": "failure", "failure": {"code": "invalid", "message": "Benchmark condition does not match the deployed instance type."}}
+        effective = min(condition["multiPV"], legal_move_count)
+        result = self._benchmark_base(sfen, condition, effective, self.engine_epoch)
+        mismatch = benchmark_runtime_mismatch(result["runtime"], self.expected_instance_type)
+        if condition["instanceType"] != self.expected_instance_type:
+            mismatch = "condition_instance_type_mismatch"
+        if mismatch:
+            result.update({
+                "status": "failure",
+                "failure": {"code": "instance_mismatch", "message": "Container runtime evidence does not match the benchmark condition."},
+                "runtimeMismatch": mismatch,
+            })
+            return 409, result
         if not self.busy.acquire(blocking=False):
-            return 409, self._benchmark_base(sfen, condition, min(condition["multiPV"], legal_move_count), self.engine_epoch) | {
+            return 409, result | {
                 "status": "failure", "failure": {"code": "busy", "message": "An analysis is already running."},
             }
         try:

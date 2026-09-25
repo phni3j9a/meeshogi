@@ -132,7 +132,10 @@ def safe_health(payload: dict[str, Any] | None, http_status: int | None, elapsed
         "workerBenchmarkEnabled": payload.get("workerBenchmarkEnabled") if isinstance(payload.get("workerBenchmarkEnabled"), bool) else None,
         "runtime": {
             key: runtime_record.get(key)
-            for key in ("osCpuCount", "affinityCpuCount", "cpuMax", "cpuQuota", "memoryMaxBytes")
+            for key in (
+                "osCpuCount", "affinityCpuCount", "cpuMax", "cpuQuota", "memoryMaxBytes",
+                "memTotalBytes", "rootDiskTotalBytes",
+            )
         },
     }
 

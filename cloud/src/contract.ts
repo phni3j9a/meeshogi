@@ -50,6 +50,7 @@ export type FailureCode =
   | 'busy'
   | 'timeout'
   | 'identity_mismatch'
+  | 'instance_mismatch'
   | 'engine_error';
 
 export type Score =
@@ -299,7 +300,7 @@ function safeNonNegativeNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
-export function hasBenchmarkRuntime(value: unknown, expectedInstanceType: string, driverBootId?: string): boolean {
+export function hasBenchmarkRuntime(value: unknown, expectedInstanceType: string | null, driverBootId?: string): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const runtime = value as Record<string, unknown>;
   if (
@@ -309,9 +310,29 @@ export function hasBenchmarkRuntime(value: unknown, expectedInstanceType: string
     !(runtime.affinityCpuCount === null || safePositiveInteger(runtime.affinityCpuCount)) ||
     !(runtime.cpuMax === null || typeof runtime.cpuMax === 'string') ||
     !(runtime.cpuQuota === null || safeNonNegativeNumber(runtime.cpuQuota)) ||
-    !(runtime.memoryMaxBytes === null || safePositiveInteger(runtime.memoryMaxBytes))
+    !(runtime.memoryMaxBytes === null || safePositiveInteger(runtime.memoryMaxBytes)) ||
+    !(runtime.memTotalBytes === null || safePositiveInteger(runtime.memTotalBytes)) ||
+    !(runtime.rootDiskTotalBytes === null || safePositiveInteger(runtime.rootDiskTotalBytes))
   ) return false;
   return driverBootId === undefined || runtime.driverBootId === driverBootId;
+}
+
+export function benchmarkRuntimeMismatch(value: unknown, expectedInstanceType: string): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'runtime_missing';
+  const runtime = value as Record<string, unknown>;
+  const expectedCpu = expectedInstanceType === 'standard-2' ? 1 : 2;
+  const expectedMemory = (expectedInstanceType === 'standard-2' ? 6 : 8) * 1024 ** 3;
+  const minimumMemory = expectedMemory - 1.5 * 1024 ** 3;
+  const maximumMemory = expectedMemory + 0.25 * 1024 ** 3;
+  if (runtime.expectedInstanceType !== expectedInstanceType) return 'driver_expected_instance_type_mismatch';
+  if (runtime.osCpuCount !== expectedCpu || runtime.affinityCpuCount !== expectedCpu) return 'cpu_count_mismatch';
+  if (typeof runtime.memTotalBytes !== 'number' || !Number.isSafeInteger(runtime.memTotalBytes)
+    || runtime.memTotalBytes < minimumMemory || runtime.memTotalBytes > maximumMemory) return 'mem_total_mismatch';
+  if (runtime.cpuQuota !== null && (typeof runtime.cpuQuota !== 'number'
+    || Math.abs(runtime.cpuQuota - expectedCpu) > 0.05)) return 'cpu_quota_mismatch';
+  if (runtime.memoryMaxBytes !== null && (typeof runtime.memoryMaxBytes !== 'number'
+    || runtime.memoryMaxBytes < minimumMemory || runtime.memoryMaxBytes > maximumMemory)) return 'memory_limit_mismatch';
+  return null;
 }
 
 export type BenchmarkDriverFailure = {
@@ -320,12 +341,13 @@ export type BenchmarkDriverFailure = {
   sfen: string;
   perspective: 'sente';
   status: 'failure';
-  failure: { code: 'busy' | 'timeout' | 'identity_mismatch' | 'engine_error'; message: string };
+  failure: { code: 'busy' | 'timeout' | 'identity_mismatch' | 'instance_mismatch' | 'engine_error'; message: string };
   conditionId: string;
   driverBootId: string;
   engineEpoch: number;
-  expectedInstanceType: string;
+  expectedInstanceType: string | null;
   runtime: Record<string, unknown>;
+  runtimeMismatch?: string;
 };
 
 /** Validate the benchmark-only contract without changing v1 validation semantics. */
@@ -340,11 +362,11 @@ export function validateBenchmarkDriverResult(
   if (
     result.schemaVersion !== 2 || result.contractVersion !== BENCHMARK_CONTRACT_VERSION ||
     result.sfen !== sfen || result.perspective !== 'sente' || result.conditionId !== condition.conditionId ||
-    result.expectedInstanceType !== condition.instanceType ||
+    !(result.expectedInstanceType === null || result.expectedInstanceType === 'standard-2' || result.expectedInstanceType === 'standard-3') ||
     typeof result.driverBootId !== 'string' || !/^[0-9a-f]{32}$/u.test(result.driverBootId) ||
     !(typeof result.engineEpoch === 'number' && Number.isSafeInteger(result.engineEpoch) && result.engineEpoch >= 0) ||
     typeof result.driverVersion !== 'string' || result.driverVersion.length === 0 ||
-    !hasBenchmarkRuntime(result.runtime, condition.instanceType)
+    !hasBenchmarkRuntime(result.runtime, result.expectedInstanceType)
   ) return null;
   const runtime = result.runtime as Record<string, unknown>;
   if (runtime.driverBootId !== result.driverBootId) return null;
@@ -353,9 +375,49 @@ export function validateBenchmarkDriverResult(
     const failureValue = result.failure;
     if (typeof failureValue !== 'object' || failureValue === null || Array.isArray(failureValue)) return null;
     const failureRecord = failureValue as Record<string, unknown>;
-    if (!['busy', 'timeout', 'identity_mismatch', 'engine_error'].includes(String(failureRecord.code))) return null;
-    return typeof failureRecord.message === 'string' ? value as BenchmarkDriverFailure : null;
+    if (!['busy', 'timeout', 'identity_mismatch', 'instance_mismatch', 'engine_error'].includes(String(failureRecord.code))) return null;
+    if (typeof failureRecord.message !== 'string') return null;
+    const evidenceMismatch = result.expectedInstanceType !== condition.instanceType
+      ? 'driver_expected_instance_type_mismatch'
+      : benchmarkRuntimeMismatch(runtime, condition.instanceType);
+    if (failureRecord.code === 'instance_mismatch') {
+      return evidenceMismatch || result.runtimeMismatch === 'condition_instance_type_mismatch'
+        ? value as BenchmarkDriverFailure
+        : null;
+    }
+    if (evidenceMismatch) return {
+      schemaVersion: 2,
+      contractVersion: BENCHMARK_CONTRACT_VERSION,
+      sfen,
+      perspective: 'sente',
+      status: 'failure',
+      failure: { code: 'instance_mismatch', message: 'Container runtime evidence does not match the benchmark condition.' },
+      conditionId: condition.conditionId,
+      driverBootId: result.driverBootId,
+      engineEpoch: result.engineEpoch,
+      expectedInstanceType: result.expectedInstanceType,
+      runtime,
+      runtimeMismatch: evidenceMismatch,
+    };
+    return value as BenchmarkDriverFailure;
   }
+  const evidenceMismatch = result.expectedInstanceType !== condition.instanceType
+    ? 'driver_expected_instance_type_mismatch'
+    : benchmarkRuntimeMismatch(runtime, condition.instanceType);
+  if (evidenceMismatch) return {
+    schemaVersion: 2,
+    contractVersion: BENCHMARK_CONTRACT_VERSION,
+    sfen,
+    perspective: 'sente',
+    status: 'failure',
+    failure: { code: 'instance_mismatch', message: 'Container runtime evidence does not match the benchmark condition.' },
+    conditionId: condition.conditionId,
+    driverBootId: result.driverBootId,
+    engineEpoch: result.engineEpoch,
+    expectedInstanceType: result.expectedInstanceType,
+    runtime,
+    runtimeMismatch: evidenceMismatch,
+  };
   if (!['success', 'incomplete'].includes(String(result.status)) || result.terminal !== null) return null;
   if (!safePositiveInteger(result.engineEpoch)) return null;
 

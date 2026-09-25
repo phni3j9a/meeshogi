@@ -8,21 +8,45 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import patch
 
+import driver as driver_module
 from driver import (
     AnalysisService,
     IdentityMismatch,
     MultiPvCollector,
+    benchmark_runtime_mismatch,
     driver_get_response,
     is_valid_sfen,
+    mem_total_bytes,
+    parse_mem_total_bytes,
     parse_info_line,
+    root_disk_total_bytes,
     verify_identity,
 )
 
 
 STARTPOS = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
 OPTIONS = b"FV_SCALE 40\n"
+GIB = 1 << 30
+
+
+def benchmark_runtime(expected_instance_type: str | None) -> dict:
+    expected_cpu = 1 if expected_instance_type == "standard-2" else 2
+    expected_memory = (6 if expected_instance_type == "standard-2" else 8) * GIB
+    return {
+        "driverBootId": driver_module.DRIVER_BOOT_ID,
+        "expectedInstanceType": expected_instance_type,
+        "osCpuCount": expected_cpu,
+        "affinityCpuCount": expected_cpu,
+        "cpuMax": None,
+        "cpuQuota": None,
+        "memoryMaxBytes": None,
+        "memTotalBytes": expected_memory - (GIB // 2),
+        "rootDiskTotalBytes": 32 * GIB,
+    }
 
 FAKE_ENGINE = r'''#!/usr/bin/env python3
 import os
@@ -377,6 +401,8 @@ class DriverTests(unittest.TestCase):
         self.assertIn("cpuMax", health["runtime"])
         self.assertIn("cpuQuota", health["runtime"])
         self.assertIn("memoryMaxBytes", health["runtime"])
+        self.assertIn("memTotalBytes", health["runtime"])
+        self.assertIn("rootDiskTotalBytes", health["runtime"])
         self.assertTrue(health["verifyStopEngineOnceEnabled"])
         self.assertFalse(health["verifyStopEngineOnceConsumed"])
         self.assertEqual(health["driverVersion"], "test-driver")
@@ -419,12 +445,16 @@ class DriverTests(unittest.TestCase):
         service = self.service(benchmark=True, expected_instance_type="standard-2")
         status, result = self.benchmark_request(service, "reference-standard-3-t2-10000ms-mpv3")
         self.assertEqual(status, 409)
-        self.assertEqual(result["failure"]["code"], "invalid")
+        self.assertEqual(result["failure"]["code"], "instance_mismatch")
+        self.assertEqual(result["runtimeMismatch"], "condition_instance_type_mismatch")
+        self.assertIn("memTotalBytes", result["runtime"])
+        self.assertIn("rootDiskTotalBytes", result["runtime"])
         self.assertFalse(self.counter_path.exists())
 
     def test_benchmark_reports_same_line_search_and_process_observations(self) -> None:
-        service = self.service(benchmark=True, expected_instance_type="standard-2")
-        status, result = self.benchmark_request(service, "standard-2-t1-100ms-mpv2")
+        with patch.object(driver_module, "runtime_facts", side_effect=benchmark_runtime):
+            service = self.service(benchmark=True, expected_instance_type="standard-2")
+            status, result = self.benchmark_request(service, "standard-2-t1-100ms-mpv2")
 
         self.assertEqual(status, 200)
         self.assertEqual(result["schemaVersion"], 2)
@@ -438,6 +468,8 @@ class DriverTests(unittest.TestCase):
         self.assertGreater(result["meta"]["processElapsedMs"], 0)
         self.assertIsNotNone(result["meta"]["processCpuSeconds"])
         self.assertEqual(result["driverBootId"], service.health()["driverBootId"])
+        self.assertEqual(result["runtime"]["memTotalBytes"], 6 * GIB - GIB // 2)
+        self.assertEqual(result["runtime"]["rootDiskTotalBytes"], 32 * GIB)
         self.assertEqual(result["expectedInstanceType"], "standard-2")
         self.assertNotIn("identity", result)
         commands = self.commands_path.read_text(encoding="utf-8").splitlines()
@@ -446,8 +478,9 @@ class DriverTests(unittest.TestCase):
         self.assertIn("go movetime 100", commands)
 
     def test_ten_second_reference_condition_is_accepted(self) -> None:
-        service = self.service(benchmark=True, expected_instance_type="standard-3")
-        status, result = self.benchmark_request(service, "reference-standard-3-t2-10000ms-mpv3")
+        with patch.object(driver_module, "runtime_facts", side_effect=benchmark_runtime):
+            service = self.service(benchmark=True, expected_instance_type="standard-3")
+            status, result = self.benchmark_request(service, "reference-standard-3-t2-10000ms-mpv3")
 
         self.assertEqual(status, 200)
         self.assertEqual(result["conditions"]["actual"]["threads"], 2)
@@ -455,6 +488,36 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(result["conditions"]["actual"]["effectiveMultiPV"], 3)
         self.assertIn("go movetime 10000", self.commands_path.read_text(encoding="utf-8").splitlines())
         self.assertIn("setoption name Threads value 2", self.commands_path.read_text(encoding="utf-8").splitlines())
+
+    def test_runtime_instance_proof_uses_cpu_and_memtotal_without_requiring_cgroup(self) -> None:
+        runtime = benchmark_runtime("standard-2")
+        self.assertIsNone(benchmark_runtime_mismatch(runtime, "standard-2"))
+        runtime["affinityCpuCount"] = 2
+        self.assertEqual(benchmark_runtime_mismatch(runtime, "standard-2"), "cpu_count_mismatch")
+        runtime["affinityCpuCount"] = 1
+        runtime["memTotalBytes"] = 4 * GIB
+        self.assertEqual(benchmark_runtime_mismatch(runtime, "standard-2"), "mem_total_mismatch")
+
+    def test_benchmark_rejects_wrong_runtime_before_spawning_engine_and_keeps_raw_facts(self) -> None:
+        runtime = benchmark_runtime("standard-2")
+        runtime["osCpuCount"] = 2
+        runtime["affinityCpuCount"] = 2
+        with patch.object(driver_module, "runtime_facts", return_value=runtime):
+            service = self.service(benchmark=True, expected_instance_type="standard-2")
+            status, result = self.benchmark_request(service, "standard-2-t1-100ms-mpv2")
+        self.assertEqual(status, 409)
+        self.assertEqual(result["failure"]["code"], "instance_mismatch")
+        self.assertEqual(result["runtimeMismatch"], "cpu_count_mismatch")
+        self.assertEqual(result["runtime"]["osCpuCount"], 2)
+        self.assertFalse(self.counter_path.exists())
+
+    def test_memtotal_and_root_disk_runtime_readers_return_bytes(self) -> None:
+        self.assertEqual(parse_mem_total_bytes("MemTotal:       1234 kB\n"), 1234 * 1024)
+        self.assertIsNone(parse_mem_total_bytes("MemFree: 100 kB\n"))
+        with patch.object(driver_module, "_read_text", return_value="MemTotal: 1234 kB"):
+            self.assertEqual(mem_total_bytes(), 1234 * 1024)
+        with patch.object(driver_module.os, "statvfs", return_value=SimpleNamespace(f_blocks=9, f_frsize=4096)):
+            self.assertEqual(root_disk_total_bytes(), 9 * 4096)
 
 
 if __name__ == "__main__":

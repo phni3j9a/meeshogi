@@ -8,6 +8,7 @@ import {
   isValidSfen,
   legalMoves,
   hasBenchmarkRuntime,
+  benchmarkRuntimeMismatch,
   MAX_BODY_BYTES,
   validateDriverResult,
   validateBenchmarkDriverResult,
@@ -131,6 +132,31 @@ function isDriverHealth(value: unknown): value is Record<string, unknown> {
     && IDENTITY_DIGEST_KEYS.every((key) => typeof digestRecord[key] === 'string' && /^[0-9a-f]{64}$/u.test(digestRecord[key] as string));
 }
 
+function benchmarkInstanceFailure(
+  sfen: string,
+  conditionId: string,
+  expectedInstanceType: string | null,
+  driverBootId: string,
+  engineEpoch: number,
+  runtime: Record<string, unknown>,
+  runtimeMismatch: string,
+): Record<string, unknown> {
+  return {
+    schemaVersion: 2,
+    contractVersion: BENCHMARK_CONTRACT_VERSION,
+    sfen,
+    perspective: 'sente',
+    status: 'failure',
+    failure: { code: 'instance_mismatch', message: 'Container runtime evidence does not match the benchmark condition.' },
+    conditionId,
+    expectedInstanceType,
+    driverBootId,
+    engineEpoch,
+    runtime,
+    runtimeMismatch,
+  };
+}
+
 async function readJsonBody(request: Request): Promise<{ record: Record<string, unknown> } | Response> {
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
     return json(failure('invalid', 'Expected application/json.'), 415);
@@ -195,7 +221,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const condition = BENCHMARK_CONDITION_BY_ID.get(record.conditionId);
     if (!condition) return json(failure('invalid', 'Unknown benchmark condition.'), 400);
     if (env.ANALYSIS_EXPECTED_INSTANCE_TYPE !== condition.instanceType) {
-      return json(failure('invalid', 'Benchmark condition does not match the deployed instance type.'), 409);
+      return json(failure('instance_mismatch', 'Benchmark condition does not match the deployed instance type.', record.sfen), 409);
     }
     const sfen = record.sfen;
     const rootMoves = legalMoves(sfen);
@@ -203,19 +229,54 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (!position) return json(failure('invalid', 'SFEN is invalid.'), 400);
     if (rootMoves.length === 0) {
       const terminal: 'checkmate' | 'no-legal-moves' = position.checked ? 'checkmate' : 'no-legal-moves';
-      return json({
-        schemaVersion: 2,
-        contractVersion: BENCHMARK_CONTRACT_VERSION,
-        sfen,
-        perspective: 'sente',
-        status: 'terminal',
-        terminal,
-        candidates: [],
-        conditionId: condition.conditionId,
-        expectedInstanceType: condition.instanceType,
-        conditions: { requested: condition, actual: null },
-        meta: { nodes: null, completedDepth: null, searchElapsedMs: null, engineNps: null, derivedNps: null, processElapsedMs: null, processCpuSeconds: null },
-      });
+      try {
+        const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, 'analysis-mvp-singleton');
+        const healthResponse = await container.fetch(new Request('http://analysis-container/health', { method: 'GET' }));
+        if (!healthResponse.ok) return json(failure('engine_error', 'Analysis container health is unavailable.', sfen), 502);
+        const healthText = await healthResponse.text();
+        if (healthText.length > 8192) return json(failure('engine_error', 'Analysis container health exceeded the response limit.', sfen), 502);
+        let driverHealth: unknown;
+        try {
+          driverHealth = JSON.parse(healthText);
+        } catch {
+          return json(failure('engine_error', 'Analysis container returned an invalid health response.', sfen), 502);
+        }
+        if (!isDriverHealth(driverHealth)) return json(failure('engine_error', 'Analysis container health failed contract validation.', sfen), 502);
+        const runtime = driverHealth.runtime as Record<string, unknown>;
+        const runtimeMismatch = driverHealth.expectedInstanceType !== condition.instanceType
+          ? 'driver_expected_instance_type_mismatch'
+          : benchmarkRuntimeMismatch(runtime, condition.instanceType);
+        if (runtimeMismatch) {
+          return json(benchmarkInstanceFailure(
+            sfen,
+            condition.conditionId,
+            String(driverHealth.expectedInstanceType),
+            String(driverHealth.driverBootId),
+            0,
+            runtime,
+            runtimeMismatch,
+          ), 409);
+        }
+        return json({
+          schemaVersion: 2,
+          contractVersion: BENCHMARK_CONTRACT_VERSION,
+          sfen,
+          perspective: 'sente',
+          status: 'terminal',
+          terminal,
+          candidates: [],
+          conditionId: condition.conditionId,
+          expectedInstanceType: condition.instanceType,
+          driverBootId: driverHealth.driverBootId,
+          engineEpoch: 0,
+          driverVersion: driverHealth.driverVersion,
+          runtime,
+          conditions: { requested: condition, actual: null },
+          meta: { nodes: null, completedDepth: null, searchElapsedMs: null, engineNps: null, derivedNps: null, processElapsedMs: null, processCpuSeconds: null },
+        });
+      } catch {
+        return json(failure('engine_error', 'Analysis container health is unavailable.', sfen), 502);
+      }
     }
     try {
       const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, 'analysis-mvp-singleton');
@@ -237,7 +298,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       if (!validated) return json(failure('engine_error', 'Benchmark result failed contract validation.', sfen), 502);
       if (validated.status === 'failure') {
         const failureRecord = validated.failure as { code: string };
-        const status = failureRecord.code === 'busy' ? 409 : failureRecord.code === 'timeout' ? 504 : 502;
+        const status = failureRecord.code === 'busy' || failureRecord.code === 'instance_mismatch' ? 409 : failureRecord.code === 'timeout' ? 504 : 502;
         return json(validated, status);
       }
       return json(validated);

@@ -26,6 +26,24 @@ const TERMINAL_NO_MOVES = 'k8/9/9/9/9/2nn1nn2/9/3p1p3/4K4 b - 1';
 const TWO_MOVES = 'k8/9/9/9/9/9/9/8r/4K4 b - 1';
 const SYNTHETIC_MIDDLEGAME = '1nrg3n1/l2s2k2/p1p1gp1pl/1p1pp2s1/6P1p/b1P5P/PP1PPP1P1/L1KSRSG2/1NG4NL b BP 1';
 const SYNTHETIC_MATE_IN_ONE = '2p2+B2k/1+B3g2p/1P2L1Gpn/p1P2p3/3p2p2/lpG1NP3/P1KP+p3+l/LS1S2SP+n/1NR1S1+pg1 b RPp 1';
+const GIB = 1024 ** 3;
+
+function benchmarkRuntime(instanceType: 'standard-2' | 'standard-3') {
+  const vcpu = instanceType === 'standard-2' ? 1 : 2;
+  const expectedMemory = (instanceType === 'standard-2' ? 6 : 8) * GIB;
+  return {
+    driverBootId: 'b'.repeat(32),
+    expectedInstanceType: instanceType,
+    osCpuCount: vcpu,
+    affinityCpuCount: vcpu,
+    cpuMax: null,
+    cpuQuota: null,
+    memoryMaxBytes: null,
+    memTotalBytes: expectedMemory - GIB / 2,
+    rootDiskTotalBytes: 32 * GIB,
+  };
+}
+
 const DRIVER_HEALTH = {
   schemaVersion: 1,
   status: 'ready',
@@ -35,15 +53,7 @@ const DRIVER_HEALTH = {
   driverVersion: EXPECTED_IDENTITY.driverVersion,
   contractVersion: EXPECTED_IDENTITY.contractVersion,
   expectedInstanceType: 'standard-2',
-  runtime: {
-    driverBootId: 'b'.repeat(32),
-    expectedInstanceType: 'standard-2',
-    osCpuCount: 2,
-    affinityCpuCount: 1,
-    cpuMax: '100000 100000',
-    cpuQuota: 1,
-    memoryMaxBytes: 6442450944,
-  },
+  runtime: benchmarkRuntime('standard-2'),
   identityDigests: {
     engineSha256: EXPECTED_IDENTITY.engineSha256,
     weightSha256: EXPECTED_IDENTITY.weightSha256,
@@ -98,15 +108,7 @@ function benchmarkSuccess(sfen: string, conditionId: string): Record<string, any
     driverBootId: 'b'.repeat(32),
     driverVersion: 'test-driver',
     engineEpoch: 1,
-    runtime: {
-      driverBootId: 'b'.repeat(32),
-      expectedInstanceType: condition.instanceType,
-      osCpuCount: 2,
-      affinityCpuCount: 1,
-      cpuMax: '100000 100000',
-      cpuQuota: 1,
-      memoryMaxBytes: 6442450944,
-    },
+    runtime: benchmarkRuntime(condition.instanceType),
     conditions: {
       requested: condition,
       actual: {
@@ -314,6 +316,48 @@ describe('staging analysis Worker boundary', () => {
     );
     expect(rejected.status).toBe(502);
     expect((await result(rejected)).failure).toMatchObject({ code: 'engine_error' });
+  });
+
+  it('rejects benchmark measurements when observed CPU or memory evidence disagrees', async () => {
+    const observation = benchmarkSuccess(STARTPOS, 'standard-2-t1-100ms-mpv2');
+    (observation.runtime as any).osCpuCount = 2;
+    (observation.runtime as any).affinityCpuCount = 2;
+    const env = makeEnv(() => observation, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const rejected = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: STARTPOS, conditionId: 'standard-2-t1-100ms-mpv2' }),
+      }),
+      env,
+    );
+    expect(rejected.status).toBe(409);
+    expect(await result(rejected)).toMatchObject({
+      status: 'failure',
+      failure: { code: 'instance_mismatch' },
+      runtimeMismatch: 'cpu_count_mismatch',
+      runtime: { osCpuCount: 2, affinityCpuCount: 2, memTotalBytes: 5.5 * GIB },
+    });
+  });
+
+  it('includes measured runtime proof for terminal benchmark positions', async () => {
+    const env = makeEnv(undefined, 'secret-token', undefined, DRIVER_HEALTH, true);
+    const terminal = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ sfen: TERMINAL_MATE, conditionId: 'standard-2-t1-100ms-mpv2' }),
+      }),
+      env,
+    );
+    expect(terminal.status).toBe(200);
+    expect(await result(terminal)).toMatchObject({
+      status: 'terminal',
+      terminal: 'checkmate',
+      driverBootId: 'b'.repeat(32),
+      runtime: { osCpuCount: 1, affinityCpuCount: 1, memTotalBytes: 5.5 * GIB, rootDiskTotalBytes: 32 * GIB },
+    });
+    expect(env.forwardedPaths).toEqual(['/health']);
   });
 
   it('does not allow an analysis request field or header to toggle the verification stop', async () => {

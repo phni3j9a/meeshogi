@@ -80,13 +80,19 @@ class RunnerTests(unittest.TestCase):
             "driverBootId": "b" * 32,
             "expectedInstanceType": "standard-2",
             "identityDigests": {"private": "do-not-copy"},
-            "runtime": {"osCpuCount": 2, "affinityCpuCount": 1, "cpuMax": "max 100000", "cpuQuota": None, "memoryMaxBytes": 1234},
+            "runtime": {
+                "osCpuCount": 2, "affinityCpuCount": 1, "cpuMax": "max 100000", "cpuQuota": None,
+                "memoryMaxBytes": 1234, "memTotalBytes": 5_900_000_000,
+                "rootDiskTotalBytes": 25_000_000_000,
+            },
         }, 200, 5)
         encoded = json.dumps(safe)
         self.assertNotIn("identityDigests", encoded)
         self.assertNotIn("do-not-copy", encoded)
         self.assertEqual(safe["driverBootId"], "b" * 32)
         self.assertEqual(safe["runtime"]["memoryMaxBytes"], 1234)
+        self.assertEqual(safe["runtime"]["memTotalBytes"], 5_900_000_000)
+        self.assertEqual(safe["runtime"]["rootDiskTotalBytes"], 25_000_000_000)
 
     def test_http_user_agent_is_explicit_and_transport_error_does_not_echo_details(self) -> None:
         captured = {}
