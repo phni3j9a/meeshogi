@@ -31,6 +31,15 @@ IDENTITY_DIGEST_KEYS = (
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 BUILD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+WORKER_FAILURE_CODES = frozenset({
+    "auth_unconfigured", "unauthorized", "invalid", "busy", "timeout",
+    "identity_mismatch", "instance_mismatch", "engine_error",
+})
+WORKER_FAILURE_DETAIL_RE = re.compile(
+    r"^check=[A-Za-z0-9_.-]{1,64}; driverStatus=[A-Za-z0-9_.-]{1,64}; "
+    r"(?:failureCode=[A-Za-z0-9_.-]{1,64}; )?containerHttpStatus=[0-9]{3}$"
+)
+SAFE_FAILURE_MESSAGE_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
 
 
 def wall_now() -> str:
@@ -68,6 +77,56 @@ def safe_identity_digests(value: Any) -> dict[str, str] | None:
     ):
         return None
     return {key: value[key] for key in IDENTITY_DIGEST_KEYS}
+
+
+def safe_worker_failure(value: Any) -> dict[str, Any] | None:
+    """Retain only the Worker v1 failure envelope, never driver identity or request data."""
+    if not isinstance(value, dict) or value.get("schemaVersion") != 1 or value.get("status") != "failure":
+        return None
+    if any(key in value for key in ("identity", "identityDigests", "buildId", "gitCommit", "driverBootId")):
+        return None
+    failure = value.get("failure")
+    if not isinstance(failure, dict):
+        return None
+    code = failure.get("code")
+    message = failure.get("message")
+    if not isinstance(code, str) or code not in WORKER_FAILURE_CODES or not isinstance(message, str) or not SAFE_FAILURE_MESSAGE_RE.fullmatch(message):
+        return None
+    safe_failure: dict[str, str] = {"code": code, "message": message}
+    detail = failure.get("detail")
+    if isinstance(detail, str) and len(detail) <= 256 and WORKER_FAILURE_DETAIL_RE.fullmatch(detail):
+        safe_failure["detail"] = detail
+    return {"schemaVersion": 1, "status": "failure", "failure": safe_failure}
+
+
+def normalize_response_identity(
+    response: dict[str, Any] | None,
+    expected_build_id: str,
+    expected_git_commit: str,
+    expected_identity_digests: dict[str, str],
+    transport_error: str | None,
+) -> tuple[dict[str, Any] | None, str | None, str | None, dict[str, Any] | None, bool]:
+    worker_failure = safe_worker_failure(response)
+    if worker_failure is not None:
+        # Worker-created v1 failures carry no validated driver build identity.
+        return None, None, transport_error, worker_failure, False
+
+    response_build_id_raw = response.get("buildId") if isinstance(response, dict) else None
+    response_build_id = (
+        response_build_id_raw
+        if isinstance(response_build_id_raw, str) and BUILD_ID_RE.fullmatch(response_build_id_raw)
+        else None
+    )
+    if transport_error is None and response_build_id != expected_build_id:
+        identity_error = "build-id-mismatch" if response_build_id is not None else "build-id-missing"
+        return None, response_build_id, identity_error, None, False
+    identity_confirmed = (
+        isinstance(response, dict)
+        and response_build_id == expected_build_id
+        and response.get("gitCommit") == expected_git_commit
+        and response.get("identityDigests") == expected_identity_digests
+    )
+    return response, response_build_id, transport_error, None, identity_confirmed
 
 
 def fingerprint_endpoint(value: str) -> str:
@@ -648,17 +707,14 @@ def main() -> int:
                 timeout=timeout,
             )
             request_end = wall_now()
-            if error is None and elapsed_ms is not None:
-                error = None
             cold_after = health_snapshot(args.base_url, token) if mode == "cold" else None
-            response_build_id_raw = response.get("buildId") if isinstance(response, dict) else None
-            response_build_id = response_build_id_raw if isinstance(response_build_id_raw, str) and BUILD_ID_RE.fullmatch(response_build_id_raw) else None
-            if error is None and response_build_id != args.expected_build_id:
-                error = "build-id-mismatch" if response_build_id is not None else "build-id-missing"
-                response = None
+            response, response_build_id, error, worker_failure, driver_identity_confirmed = normalize_response_identity(
+                response, args.expected_build_id, fingerprint["gitCommit"], fingerprint["identityDigests"], error,
+            )
             if cold_after is not None and cold_after.get("buildId") != args.expected_build_id:
                 error = "build-id-mismatch"
                 response = None
+                driver_identity_confirmed = False
             before_value = cold_before.get("driverBootId") if cold_before else None
             after_value = cold_after.get("driverBootId") if cold_after else None
             response_value = response.get("driverBootId") if isinstance(response, dict) else None
@@ -702,6 +758,8 @@ def main() -> int:
                 "httpStatus": status,
                 "transportError": error,
                 "response": response,
+                "workerFailure": worker_failure,
+                "driverIdentityConfirmed": driver_identity_confirmed,
                 "responseBuildId": response_build_id,
                 "responseBootId": response_boot_id if isinstance(response_boot_id, str) else None,
                 "responseIdentityDigests": response_identity_digests,

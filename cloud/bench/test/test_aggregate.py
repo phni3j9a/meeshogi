@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
 
 BENCH_DIR = Path(__file__).resolve().parents[1]
@@ -42,6 +46,7 @@ IDENTITY_DIGESTS = {
 }
 BUILD_ID = "9" * 32
 GIT_COMMIT = "a" * 40
+CONDITIONS_SHA256 = "1" * 64
 
 
 def add_provenance(rows: list[dict]) -> list[dict]:
@@ -87,6 +92,10 @@ def add_provenance(rows: list[dict]) -> list[dict]:
                     row["response"]["gitCommit"] = GIT_COMMIT
                     row["responseIdentityDigests"] = IDENTITY_DIGESTS
     return starts + rows
+
+
+def aggregate_with_fixture_hash(records: list[dict], conditions: dict[str, dict]) -> dict:
+    return aggregate.aggregate_records(records, conditions, conditions_sha256=CONDITIONS_SHA256)
 
 
 def success(condition: dict, position_id: str, phase: str, move: str, score: dict, other: list[str] | None = None, rep: int = 1) -> dict:
@@ -158,7 +167,7 @@ class AggregateTests(unittest.TestCase):
                 "response": {"status": "terminal", "terminal": "checkmate", "candidates": []},
             },
         ]
-        result = aggregate.aggregate_records(add_provenance(rows), {REFERENCE["conditionId"]: REFERENCE, CANDIDATE["conditionId"]: CANDIDATE})
+        result = aggregate_with_fixture_hash(add_provenance(rows), {REFERENCE["conditionId"]: REFERENCE, CANDIDATE["conditionId"]: CANDIDATE})
         self.assertEqual(result["schemaVersion"], 2)
         candidate_row = next(row for row in result["conditions"] if row["condition"]["conditionId"] == CANDIDATE["conditionId"])
         overall = candidate_row["overall"]
@@ -217,7 +226,7 @@ class AggregateTests(unittest.TestCase):
                 row["imageDigest"] = second_fp["imageDigest"]
                 row["runFingerprintSha256"] = second_fp["fingerprintSha256"]
         with self.assertRaisesRegex(ValueError, "mixes image build or artifact identity"):
-            aggregate.aggregate_records(records, {CANDIDATE["conditionId"]: CANDIDATE})
+            aggregate_with_fixture_hash(records, {CANDIDATE["conditionId"]: CANDIDATE})
 
     def test_positions_runs_must_share_dataset_and_conditions_hashes(self) -> None:
         for changed_field, message in (
@@ -241,7 +250,7 @@ class AggregateTests(unittest.TestCase):
                     if row.get("runId") == "second-run" and row.get("recordType") == "attempt":
                         row["runFingerprintSha256"] = second_fingerprint["fingerprintSha256"]
                 with self.assertRaisesRegex(ValueError, message):
-                    aggregate.aggregate_records(records, {CANDIDATE["conditionId"]: CANDIDATE})
+                    aggregate_with_fixture_hash(records, {CANDIDATE["conditionId"]: CANDIDATE})
 
     def test_game_dataset_hashes_are_separate_from_positions_runs(self) -> None:
         rows = [
@@ -266,7 +275,75 @@ class AggregateTests(unittest.TestCase):
         second = {**success(REFERENCE, "p1", "opening", "2g2f", {"kind": "cp", "value": 10}), "runId": "second-run"}
         records = add_provenance([first, second])
         with self.assertRaisesRegex(ValueError, "duplicate primary reference attempt across runs"):
-            aggregate.aggregate_records(records, {REFERENCE["conditionId"]: REFERENCE})
+            aggregate_with_fixture_hash(records, {REFERENCE["conditionId"]: REFERENCE})
+
+    def test_worker_failure_is_counted_as_typed_failure_without_driver_identity(self) -> None:
+        row = {
+            "recordType": "attempt", "runId": "worker-failure-run", "mode": "positions", "attemptNo": 1,
+            "conditionId": CANDIDATE["conditionId"], "condition": CANDIDATE,
+            "positionId": "p1", "positionSha256": "0" * 64, "phase": "opening",
+            "httpStatus": 502, "transportError": None, "response": None,
+            "workerFailure": {
+                "schemaVersion": 1, "status": "failure",
+                "failure": {
+                    "code": "engine_error", "message": "Benchmark result failed contract validation.",
+                    "detail": "check=identityDigests; driverStatus=success; containerHttpStatus=200",
+                },
+            },
+            "driverIdentityConfirmed": False,
+            "responseBuildId": None,
+        }
+        result = aggregate_with_fixture_hash(add_provenance([row]), {CANDIDATE["conditionId"]: CANDIDATE})
+        overall = result["conditions"][0]["overall"]
+        self.assertEqual(overall["statusCounts"], {"failure": 1})
+        self.assertEqual(overall["failureRate"], {"numerator": 1, "denominator": 1, "rate": 1})
+        self.assertEqual(overall["typedCauses"]["failure:engine_error"], 1)
+
+    def test_worker_failure_cannot_bypass_driver_identity_checks(self) -> None:
+        row = {
+            "recordType": "attempt", "runId": "worker-failure-run", "mode": "positions", "attemptNo": 1,
+            "conditionId": CANDIDATE["conditionId"], "condition": CANDIDATE,
+            "positionId": "p1", "positionSha256": "0" * 64,
+            "workerFailure": {
+                "schemaVersion": 1, "status": "failure",
+                "failure": {"code": "engine_error", "message": "Benchmark failed."},
+            },
+            "driverIdentityConfirmed": False,
+            "response": {"status": "success", "buildId": BUILD_ID, "gitCommit": GIT_COMMIT},
+        }
+        with self.assertRaisesRegex(ValueError, "Worker failure incorrectly claims driver identity"):
+            aggregate_with_fixture_hash(add_provenance([row]), {CANDIDATE["conditionId"]: CANDIDATE})
+
+    def test_analysis_response_build_identity_remains_strict(self) -> None:
+        row = success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20})
+        records = add_provenance([row])
+        records[-1]["response"]["buildId"] = "8" * 32
+        with self.assertRaisesRegex(ValueError, "response image build identity differs"):
+            aggregate_with_fixture_hash(records, {CANDIDATE["conditionId"]: CANDIDATE})
+
+    def test_aggregation_requires_the_run_conditions_hash(self) -> None:
+        records = add_provenance([success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20})])
+        with self.assertRaisesRegex(ValueError, "conditions manifest hash does not match"):
+            aggregate.aggregate_records(
+                records, {CANDIDATE["conditionId"]: CANDIDATE}, conditions_sha256="8" * 64,
+            )
+
+    def test_cli_hashes_the_selected_conditions_file_before_aggregation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="meeshogi-aggregate-conditions-test-") as directory:
+            root = Path(directory)
+            conditions_path = root / "conditions.json"
+            conditions_path.write_text(json.dumps({"schemaVersion": 1, "conditions": [CANDIDATE]}), encoding="utf-8")
+            raw_path = root / "raw.jsonl"
+            records = add_provenance([success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20})])
+            raw_path.write_text("".join(json.dumps(row) + "\n" for row in records), encoding="utf-8")
+            stderr = io.StringIO()
+            with patch.object(aggregate.sys, "argv", [
+                "aggregate.py", "--input", str(raw_path), "--conditions", str(conditions_path),
+                "--json-out", str(root / "out.json"), "--markdown-out", str(root / "out.md"),
+            ]), redirect_stderr(stderr):
+                result = aggregate.main()
+            self.assertEqual(result, 2)
+            self.assertIn("conditions manifest hash does not match the run fingerprint", stderr.getvalue())
 
     def test_container_cpu_reports_engine_child_lower_and_allocated_upper(self) -> None:
         attempt = success(CANDIDATE, "p1", "opening", "7g7f", {"kind": "cp", "value": 20})
@@ -306,7 +383,7 @@ class AggregateTests(unittest.TestCase):
                 "coldConfirmed": False,
             },
         }
-        result = aggregate.aggregate_records(add_provenance([row]), {})
+        result = aggregate_with_fixture_hash(add_provenance([row]), {})
         self.assertEqual(result["coldStart"]["successRate"], {"numerator": 0, "denominator": 1, "rate": 0})
         self.assertEqual(result["coldStart"]["failureRate"], {"numerator": 1, "denominator": 1, "rate": 1})
         self.assertEqual(result["coldStart"]["confirmedCold"], {"numerator": 0, "denominator": 1, "rate": 0})

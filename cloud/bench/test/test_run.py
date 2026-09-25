@@ -18,6 +18,7 @@ spec.loader.exec_module(runner)
 
 BUILD_ID = "9" * 32
 GIT_COMMIT = "a" * 40
+IDENTITY_DIGESTS = {key: char * 64 for key, char in zip(runner.IDENTITY_DIGEST_KEYS, "abcde")}
 
 
 class Response:
@@ -133,6 +134,54 @@ class RunnerTests(unittest.TestCase):
         self.assertIsNone(status)
         self.assertIsNone(payload)
         self.assertEqual(error, "RuntimeError")
+
+    def test_worker_generated_failure_is_retained_without_unconfirmed_driver_identity(self) -> None:
+        response = {
+            "schemaVersion": 1,
+            "sfen": "request-position-must-not-be-copied",
+            "status": "failure",
+            "failure": {
+                "code": "engine_error",
+                "message": "Benchmark result failed contract validation.",
+                "detail": "check=identityDigests; driverStatus=success; failureCode=invalid; containerHttpStatus=200",
+            },
+        }
+        normalized, build_id, error, worker_failure, identity_confirmed = runner.normalize_response_identity(
+            response, BUILD_ID, GIT_COMMIT, IDENTITY_DIGESTS, None,
+        )
+        self.assertIsNone(normalized)
+        self.assertIsNone(build_id)
+        self.assertIsNone(error)
+        self.assertFalse(identity_confirmed)
+        self.assertEqual(worker_failure["failure"]["code"], "engine_error")
+        self.assertEqual(worker_failure["failure"]["detail"], response["failure"]["detail"])
+        self.assertNotIn("sfen", worker_failure)
+
+    def test_worker_failure_keeps_type_but_discards_unsafe_detail_and_driver_responses_stay_strict(self) -> None:
+        worker_response = {
+            "schemaVersion": 1, "status": "failure",
+            "failure": {"code": "engine_error", "message": "Worker failure.", "detail": "secret exception text"},
+        }
+        _response, build_id, error, worker_failure, identity_confirmed = runner.normalize_response_identity(
+            worker_response, BUILD_ID, GIT_COMMIT, IDENTITY_DIGESTS, None,
+        )
+        self.assertIsNone(build_id)
+        self.assertIsNone(error)
+        self.assertNotIn("detail", worker_failure["failure"])
+        self.assertFalse(identity_confirmed)
+
+        driver_response = {
+            "schemaVersion": 2, "status": "failure", "identityDigests": {"engineSha256": "a" * 64},
+            "failure": {"code": "engine_error", "message": "Driver failure."},
+        }
+        normalized, build_id, error, worker_failure, identity_confirmed = runner.normalize_response_identity(
+            driver_response, BUILD_ID, GIT_COMMIT, IDENTITY_DIGESTS, None,
+        )
+        self.assertIsNone(normalized)
+        self.assertIsNone(build_id)
+        self.assertEqual(error, "build-id-missing")
+        self.assertIsNone(worker_failure)
+        self.assertFalse(identity_confirmed)
 
     def test_existing_rows_make_attempts_resumable(self) -> None:
         with tempfile.TemporaryDirectory(prefix="meeshogi-runner-test-") as directory:

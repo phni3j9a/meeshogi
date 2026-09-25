@@ -38,6 +38,15 @@ RATE_URLS = {
     "durableObjects": "https://developers.cloudflare.com/durable-objects/platform/pricing/",
 }
 RATE_DATE = "2026-09-25"
+WORKER_FAILURE_CODES = frozenset({
+    "auth_unconfigured", "unauthorized", "invalid", "busy", "timeout",
+    "identity_mismatch", "instance_mismatch", "engine_error",
+})
+WORKER_FAILURE_DETAIL_RE = re.compile(
+    r"^check=[A-Za-z0-9_.-]{1,64}; driverStatus=[A-Za-z0-9_.-]{1,64}; "
+    r"(?:failureCode=[A-Za-z0-9_.-]{1,64}; )?containerHttpStatus=[0-9]{3}$"
+)
+SAFE_FAILURE_MESSAGE_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
 
 
 def quantile(values: Iterable[float], probability: float) -> float | None:
@@ -101,9 +110,38 @@ def _top(attempt: dict[str, Any]) -> dict[str, Any] | None:
     return candidates[0]
 
 
+def _valid_worker_failure(value: Any) -> bool:
+    if not isinstance(value, dict) or set(value) != {"schemaVersion", "status", "failure"}:
+        return False
+    if value.get("schemaVersion") != 1 or value.get("status") != "failure":
+        return False
+    failure = value.get("failure")
+    if not isinstance(failure, dict) or not set(failure).issubset({"code", "message", "detail"}):
+        return False
+    code, message = failure.get("code"), failure.get("message")
+    if not isinstance(code, str) or code not in WORKER_FAILURE_CODES or not isinstance(message, str) or not SAFE_FAILURE_MESSAGE_RE.fullmatch(message):
+        return False
+    if "detail" not in failure:
+        return True
+    detail = failure["detail"]
+    return isinstance(detail, str) and len(detail) <= 256 and WORKER_FAILURE_DETAIL_RE.fullmatch(detail) is not None
+
+
+def _attempt_status(attempt: dict[str, Any]) -> str:
+    response = attempt.get("response")
+    if isinstance(response, dict) and isinstance(response.get("status"), str):
+        return response["status"]
+    if _valid_worker_failure(attempt.get("workerFailure")):
+        return "failure"
+    return "transport"
+
+
 def _failure_cause(attempt: dict[str, Any]) -> str:
     response = attempt.get("response")
     if not isinstance(response, dict):
+        worker_failure = attempt.get("workerFailure")
+        if _valid_worker_failure(worker_failure):
+            return f"failure:{worker_failure['failure']['code']}"
         transport_error = attempt.get("transportError")
         if isinstance(transport_error, str):
             return f"transport:{transport_error}"
@@ -373,6 +411,16 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError(f"attempt in run {run_id} has inconsistent image or artifact identities")
         if row.get("expectedBuildId") != fingerprint["buildId"] or row.get("buildId") != fingerprint["buildId"]:
             raise ValueError(f"attempt in run {run_id} has inconsistent image build identity")
+        worker_failure = row.get("workerFailure")
+        if worker_failure is not None:
+            if not _valid_worker_failure(worker_failure):
+                raise ValueError(f"attempt in run {run_id} has an invalid Worker failure record")
+            if (
+                row.get("driverIdentityConfirmed") is not False
+                or row.get("response") is not None
+                or row.get("responseBuildId") is not None
+            ):
+                raise ValueError(f"attempt in run {run_id} Worker failure incorrectly claims driver identity")
         response_digests = row.get("responseIdentityDigests")
         if response_digests is not None and response_digests != fingerprint["identityDigests"]:
             raise ValueError(f"attempt in run {run_id} response identity digests differ from its fingerprint")
@@ -418,6 +466,7 @@ def verify_run_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
             for row in run_starts.values()
             if isinstance(row["fingerprint"].get("workerVersionId"), str)
         }),
+        "conditionsSha256": common_conditions_sha256,
         "runFingerprints": [
             {"runId": run_id, "fingerprintSha256": row["fingerprint"]["fingerprintSha256"]}
             for run_id, row in sorted(run_starts.items())
@@ -443,8 +492,7 @@ def summarize_cell(
     cause_counts = Counter(_failure_cause(row) for row in rows)
     status_counts = Counter()
     for row in rows:
-        response = row.get("response")
-        status = response.get("status") if isinstance(response, dict) else "transport"
+        status = _attempt_status(row)
         status_counts[status if isinstance(status, str) else "unknown"] += 1
     pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     paired_without_reference = 0
@@ -854,8 +902,18 @@ def cost_estimate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def aggregate_records(records: list[dict[str, Any]], conditions: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def aggregate_records(
+    records: list[dict[str, Any]],
+    conditions: dict[str, dict[str, Any]],
+    *,
+    conditions_sha256: str,
+) -> dict[str, Any]:
+    if not isinstance(conditions_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", conditions_sha256):
+        raise ValueError("conditions_sha256 must be a 64-character lowercase SHA-256")
     provenance = verify_run_provenance(records)
+    fingerprint_conditions_sha256 = provenance.get("conditionsSha256")
+    if fingerprint_conditions_sha256 is not None and conditions_sha256 != fingerprint_conditions_sha256:
+        raise ValueError("conditions manifest hash does not match the run fingerprint")
     attempts = _materialize_attempts(records)
     reference_ids = [condition_id for condition_id, condition in conditions.items() if condition.get("role") == "reference"]
     if len(reference_ids) > 1:
@@ -907,8 +965,7 @@ def aggregate_records(records: list[dict[str, Any]], conditions: dict[str, dict[
     cold_status: Counter[str] = Counter()
     cold_causes: Counter[str] = Counter()
     for row in cold_rows:
-        response = row.get("response")
-        status = response.get("status") if isinstance(response, dict) else "transport"
+        status = _attempt_status(row)
         evidence = row.get("coldEvidence")
         response_boot_id = evidence.get("bootIdFromAnalysisResponse") if isinstance(evidence, dict) else None
         has_response_boot_id = _valid_boot_id(response_boot_id)
@@ -1111,10 +1168,12 @@ def main() -> int:
     parser.add_argument("--markdown-out", required=True, type=Path)
     args = parser.parse_args()
     try:
-        conditions_manifest = json.loads(args.conditions.read_text(encoding="utf-8"))
+        conditions_bytes = args.conditions.read_bytes()
+        conditions_sha256 = hashlib.sha256(conditions_bytes).hexdigest()
+        conditions_manifest = json.loads(conditions_bytes.decode("utf-8"))
         conditions = {row["conditionId"]: row for row in conditions_manifest["conditions"]}
         records = read_jsonl(args.input)
-        output = aggregate_records(records, conditions)
+        output = aggregate_records(records, conditions, conditions_sha256=conditions_sha256)
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.markdown_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(output, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
