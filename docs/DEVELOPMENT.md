@@ -6,7 +6,7 @@
 
 Issue #19では別のstaging技術ゲートとして、認証付きCloudflare Workerからprivate YaneuraOu + Suisho11 Plus Containerを呼ぶ1局面APIを構築し、2026-09-25に実環境のsmokeとtimeout/recoveryを検証済み。モバイル製品コードから独立しており、端末内解析・ログイン不要の方針を変更しない。production serviceではない。offline testとdeploy/smoke/timeoutの手順および実測結果は[`cloud/README.md`](../cloud/README.md)を参照する。
 
-Issue #20はこのgatewayから同じprivate imageを使うserial benchmarkの独立したstaging技術ゲートである。比較対象のstandard-2 / standard-3は別々の固定benchmark appへルーティングし、normal singletonはstandard-2 / max_instances=1で維持する。通常deployでは測定routeを無効にする。B-005で一つのappの型変更後にruntime不一致が観測されたことが分離の理由だが、内部の原因は未確定であり、各classのCPU/affinity/MemTotal/build readiness確認をpilotの条件とする。両OSアプリの解析経路、production service、端末性能の目標ではない。測定手順と残る制約は[`cloud/README.md`](../cloud/README.md)に記録する。
+Issue #20はこのgatewayから同じprivate imageを使うserial benchmarkの独立したstaging技術ゲートである。比較対象のstandard-2 / standard-3は別々の固定benchmark appへルーティングし、normal singletonはstandard-2 / max_instances=1で維持する。通常deployでは測定routeを無効にする。B-005で一つのappの型変更後にruntime不一致が観測されたことが分離の理由だが、内部の原因は未確定であり、各classのCPU/affinity/MemTotal/build readiness確認をpilotの条件とする。両OSアプリの解析経路、production service、端末性能の目標ではない。測定手順と残る制約は[`cloud/README.md`](../cloud/README.md)に記録する。2026-09-25〜26に実測を終え（4650要求、失敗1件）、結果と初期候補・代替候補を[profile比較レポート](CLOUD-PROFILE-BENCHMARK.md)にまとめた。profile値はユーザー判断待ちで、承認前に後続Issueへ渡さない。staging は通常 deploy（benchmark route無効）へ戻した。
 
 ### PR #12: 解析画面と駒セット
 
