@@ -1,0 +1,1041 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "archiveFile": "wcsc36_kifu.zip",
+    "archiveSha256": "48ece58b091dbb4df41e6fb55b73600767f77f4c9ee9ff8360474d5b75bb2631",
+    "archiveUrl": "https://www.computer-shogi.org/kifu/wcsc36_kifu.zip",
+    "indexUrl": "https://www.computer-shogi.org/kifu/kifu.html",
+    "event": "第36回世界コンピュータ将棋選手権",
+    "attribution": "WCSC36 CSA archive; per-game program names, start times, event names, and CSA filenames are included with the derived positions.",
+    "files": [
+      {
+        "file": "WCSC36-F1-tanuki-dlshogi.csa",
+        "sha256": "b4a36ff7784d8c81ba846653c735da86b0796875b3a548eebe0d2d159f1cd845"
+      },
+      {
+        "file": "WCSC36-F2-Ryfamate-ponkotsu.csa",
+        "sha256": "923f227f2471e9f7290e4d9b5c948a0dc64845020088a5909f5fd347fac73bfd"
+      },
+      {
+        "file": "WCSC36-F3-suisho-hisui.csa",
+        "sha256": "25e2bf2061bc4d792e89e4e9e1f70e0159ba0a037183028fcce6351bd2b26640"
+      },
+      {
+        "file": "WCSC36-F4-dlshogi-ponkotsu.csa",
+        "sha256": "a3f42bc8fc41aa56061fcf8256c250cb240d00e5bf3737e9fb21acbe8fe99cab"
+      },
+      {
+        "file": "WCSC36-F6-Ryfamate-dlshogi.csa",
+        "sha256": "136e98dfe13800a3d7e2cfeeb61855b06560660a5a40c6c9d701f43dd2f6d036"
+      },
+      {
+        "file": "WCSC36-F7-dlshogi-sojo.csa",
+        "sha256": "fb5d7e9cdca25c41271b958733bc0ed907b4a12d5752e938d04ebb218b195295"
+      },
+      {
+        "file": "WCSC36-L1-wanderer-GABEL.csa",
+        "sha256": "f8ab505e6363f9e1cc028747517273e5aac2e422ceaf20ab607878b3e974df64"
+      },
+      {
+        "file": "WCSC36-L2-narikin-Nanoha2026.csa",
+        "sha256": "6fedc5c38350d88afbfd2b95d7114d75b6273d497d3634aae5ddbccc5900bc0f"
+      },
+      {
+        "file": "WCSC36-L2-nene-nebula.csa",
+        "sha256": "eb0384400e218abf0d1421ebcfac60bbbc06ee06e00d0d867eaa3dfe3776012b"
+      },
+      {
+        "file": "WCSC36-L3-qhapaq-Gokaku.csa",
+        "sha256": "0c19207a6a6e45f8bea194a4afc1f51991d6bc4bcc146386c16eb06b2fbd18ee"
+      },
+      {
+        "file": "WCSC36-L4-Mebae-etude15.csa",
+        "sha256": "cab5700c956d000951ccec2d564aa49da74e9ca477a1e92dbcdadc013aef1b57"
+      },
+      {
+        "file": "WCSC36-L6-katsudon-Usizima.csa",
+        "sha256": "25f169f2d4aa6cec9462155504c84e3ec42139402693c5dfcaf0090fb70d42c7"
+      },
+      {
+        "file": "WCSC36-L7-tenuki-nebula.csa",
+        "sha256": "e32161e1432bd2f80753c764569d89215e22dd53463a9deda394babf720d5a63"
+      },
+      {
+        "file": "WCSC36-L8-Mebae-qhapaq.csa",
+        "sha256": "380a36eff1eb35b2823e8e30c84a6cf09eeec96e38e28f368d395c6b42361b5e"
+      },
+      {
+        "file": "WCSC36-U1-hisui-Asutora.csa",
+        "sha256": "286afa9192805bac3ba53fbe49d62484e5c51ce463ee01a3c4959a5ab849e33b"
+      },
+      {
+        "file": "WCSC36-U3-Toyoko-tanuki.csa",
+        "sha256": "528c9c904a8ac2acee74140deedf423137c326e242c525f0650c07d60ca416a8"
+      },
+      {
+        "file": "WCSC36-U4-Shueso-arishogi.csa",
+        "sha256": "6c5ff84343d1d618d73e5214c1820b062ebad95eec6f0f7670c2922c8b656604"
+      },
+      {
+        "file": "WCSC36-U5-yaneuraou-Gokaku.csa",
+        "sha256": "8a303a8bbacdda9e9cbd033bbaee4c831b5e6f83aaa20ca950f1c994dfb7f6d1"
+      },
+      {
+        "file": "WCSC36-U6-AobaZero-nshogi.csa",
+        "sha256": "42a288c2c2a6043ff1f84deb0d434f5be66edb0b43fa4231aa0e786b614f9bfc"
+      },
+      {
+        "file": "WCSC36-U7-Gokaku-jhbr.csa",
+        "sha256": "3309caa454b63f537021775e4026fc0e6fc42b2e028e9540258ad9071f2bec9e"
+      },
+      {
+        "file": "WCSC36-U8-hisui-sojo.csa",
+        "sha256": "8e3350270f5cc3b739c0bc213753038fcfc3affbd9a90f6b77da00575295f701"
+      }
+    ]
+  },
+  "rules": {
+    "fixedBeforeAnalysis": true,
+    "replay": "Decode CSA as Shift_JIS; import with tsshogi 2.3.4; replay every ordinary move from the declared initial position and reject a game on parse failure, an illegal move, a failed doMove, missing attribution metadata, or a move after a result marker.",
+    "phases": {
+      "opening": {
+        "minPlayedPlies": 16,
+        "maxPlayedPlies": 40
+      },
+      "middlegame": {
+        "minPlayedPlies": 41,
+        "maxPlayedPlies": 90
+      },
+      "endgame": {
+        "minPlayedPlies": 91,
+        "maxPlayedPlies": "gamePlies - 8"
+      }
+    },
+    "terminalFilter": "Each selected row is a pre-move position with at least one legal move. Endgame rows leave at least 8 recorded plies before the result marker.",
+    "endgameEligibility": {
+      "resultMarkers": [
+        "resign",
+        "mate"
+      ],
+      "minimumGamePlies": 99
+    },
+    "sampling": {
+      "positionsPerPhase": 20,
+      "distinctGames": 20,
+      "oneGamePerRound": true,
+      "roundsByStage": {
+        "primary": 7,
+        "secondary": 7,
+        "final": 6
+      },
+      "seed": "meeshogi-issue-20-wcsc36-v1",
+      "selectionOrder": "SHA-256-ranked event rounds, game files, and eligible plies; ties use UTF-16 lexical order. One legal, unique position is taken from each selected game in each phase."
+    },
+    "deduplication": "sfenKey is the first three space-separated SFEN fields (board, side to move, hands); the move-number field is ignored. Keys are unique across all 60 positions.",
+    "fullGame": "Select the first SHA-256-ranked, non-benchmark game with a normal result and 80-160 ordinary plies; include the SFEN before every ordinary move. Its positions are not added to the 60-row dataset.",
+    "hashes": "SHA-256 of UTF-8 SFEN bytes; manifestSha256 is SHA-256 of UTF-8 canonical JSON for the positions array (recursively lexicographically sorted object keys, compact JSON, array order retained)."
+  },
+  "positions": [
+    {
+      "id": "opening-01",
+      "phase": "opening",
+      "sfen": "ln2k2nl/1r2g1gb1/p1spps1pp/2p2pp2/1p5P1/2PPK1P2/PPB1PP2P/2S3SR1/LN1G1G1NL b - 23",
+      "sfenKey": "ln2k2nl/1r2g1gb1/p1spps1pp/2p2pp2/1p5P1/2PPK1P2/PPB1PP2P/2S3SR1/LN1G1G1NL b -",
+      "sha256": "4b206f948052df6ff2652d23621b9aa26f652e435de17fc61816a37d69880a3a",
+      "source": {
+        "file": "WCSC36-L1-wanderer-GABEL.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選1回戦",
+        "black": "W@nderER",
+        "white": "GABEL",
+        "startTime": "2026/05/03 10:41:09",
+        "ply": 22
+      }
+    },
+    {
+      "id": "opening-02",
+      "phase": "opening",
+      "sfen": "l2g3nl/1r3kg2/2nsppsp1/p1pp2p1p/1p5P1/P1P2PP1P/1PSPPSN2/2GK1G1R1/LN6L w Bb 32",
+      "sfenKey": "l2g3nl/1r3kg2/2nsppsp1/p1pp2p1p/1p5P1/P1P2PP1P/1PSPPSN2/2GK1G1R1/LN6L w Bb",
+      "sha256": "5876572af04d9961240765f5f3410405867d16c58bd54c3d566f950bc3e6462d",
+      "source": {
+        "file": "WCSC36-L2-nene-nebula.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選2回戦",
+        "black": "ねね将棋",
+        "white": "ねびゅら",
+        "startTime": "2026/05/03 11:22:30",
+        "ply": 31
+      }
+    },
+    {
+      "id": "opening-03",
+      "phase": "opening",
+      "sfen": "lr1g3nl/3s1kg2/p1np1psp1/2p1p1p1p/7P1/PPPP1PP2/4P1N1P/1SK1GS1R1/LN1G4L b Bbp 35",
+      "sfenKey": "lr1g3nl/3s1kg2/p1np1psp1/2p1p1p1p/7P1/PPPP1PP2/4P1N1P/1SK1GS1R1/LN1G4L b Bbp",
+      "sha256": "bcea252eab58121b4eeb07337bcdb0a80c2a8cda25e062182e86f01292c03691",
+      "source": {
+        "file": "WCSC36-L3-qhapaq-Gokaku.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選3回戦",
+        "black": "名探偵 Qhapaq！",
+        "white": "Gokaku",
+        "startTime": "2026/05/03 12:05:46",
+        "ply": 34
+      }
+    },
+    {
+      "id": "opening-04",
+      "phase": "opening",
+      "sfen": "ln1g3nl/1r3kg2/p1spppspp/+b5p2/2P5P/1P1P1PPP1/P1S1P1S2/1R7/LNG1KG1NL w B2P 32",
+      "sfenKey": "ln1g3nl/1r3kg2/p1spppspp/+b5p2/2P5P/1P1P1PPP1/P1S1P1S2/1R7/LNG1KG1NL w B2P",
+      "sha256": "71e833483d16627fffcf4569f29e6a75d657e283269bf749fe6d72c2fe594561",
+      "source": {
+        "file": "WCSC36-L4-Mebae-etude15.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選4回戦",
+        "black": "芽生将棋",
+        "white": "etude12",
+        "startTime": "2026/05/03 13:50:37",
+        "ply": 31
+      }
+    },
+    {
+      "id": "opening-05",
+      "phase": "opening",
+      "sfen": "lns1k2nl/1r2g1g2/2ppppspp/6p2/pp5P1/2P2PP2/PPSPP3P/2G2S1R1/LN2KG1NL b Bb 21",
+      "sfenKey": "lns1k2nl/1r2g1g2/2ppppspp/6p2/pp5P1/2P2PP2/PPSPP3P/2G2S1R1/LN2KG1NL b Bb",
+      "sha256": "ef6a337d104ac893483fd1423fbe288f521227807ad705cbab6d6b0ebefdff19",
+      "source": {
+        "file": "WCSC36-L6-katsudon-Usizima.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選6回戦",
+        "black": "カツ丼将棋",
+        "white": "ザ・グレートウシジマ",
+        "startTime": "2026/05/03 15:49:23",
+        "ply": 20
+      }
+    },
+    {
+      "id": "opening-06",
+      "phase": "opening",
+      "sfen": "l2gk2nl/1r4gb1/2nsppspp/p1pp2p2/7S1/P1P6/1P1PPPP1P/1BGSG2R1/LN1K3NL b Pp 35",
+      "sfenKey": "l2gk2nl/1r4gb1/2nsppspp/p1pp2p2/7S1/P1P6/1P1PPPP1P/1BGSG2R1/LN1K3NL b Pp",
+      "sha256": "b6c450eb7830179376df35b460f36b5866e8d71ad596d82ee8d87d455f667c33",
+      "source": {
+        "file": "WCSC36-L7-tenuki-nebula.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選7回戦",
+        "black": "手抜き",
+        "white": "ねびゅら",
+        "startTime": "2026/05/03 16:54:22",
+        "ply": 34
+      }
+    },
+    {
+      "id": "opening-07",
+      "phase": "opening",
+      "sfen": "l3kg1nl/1r1s2s2/p3pg1pp/3p1bP2/1ppn3P1/2PS1p1S1/PP1PP3P/2KGG2R1/LN5NL b BPp 37",
+      "sfenKey": "l3kg1nl/1r1s2s2/p3pg1pp/3p1bP2/1ppn3P1/2PS1p1S1/PP1PP3P/2KGG2R1/LN5NL b BPp",
+      "sha256": "acc136afe8eb479883def53f9099828d1578b118c194b9db401f91914b00e335",
+      "source": {
+        "file": "WCSC36-L8-Mebae-qhapaq.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選8回戦",
+        "black": "芽生将棋",
+        "white": "名探偵 Qhapaq！",
+        "startTime": "2026/05/03 18:00:31",
+        "ply": 36
+      }
+    },
+    {
+      "id": "opening-08",
+      "phase": "opening",
+      "sfen": "ln5nl/1r2gkg2/3sp1sp1/p1pp2p1p/1p3N1P1/P1P1S1P1P/1PSPP4/2GK3R1/LN3G2L w BPbp 36",
+      "sfenKey": "ln5nl/1r2gkg2/3sp1sp1/p1pp2p1p/1p3N1P1/P1P1S1P1P/1PSPP4/2GK3R1/LN3G2L w BPbp",
+      "sha256": "86b05c8f1bd52e85ede117c303c3babc82a3f25c80110ab230d5564eae9cbeec",
+      "source": {
+        "file": "WCSC36-U1-hisui-Asutora.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選1回戦",
+        "black": "氷彗",
+        "white": "あすとら将棋",
+        "startTime": "2026/05/04 10:00:45",
+        "ply": 35
+      }
+    },
+    {
+      "id": "opening-09",
+      "phase": "opening",
+      "sfen": "ln2k1snl/1rs1g1g2/p1p1pp1p1/3p2p1p/1p5P1/2P3P2/PP+bPPPN1P/2GS2SR1/LN2KG2L b b 19",
+      "sfenKey": "ln2k1snl/1rs1g1g2/p1p1pp1p1/3p2p1p/1p5P1/2P3P2/PP+bPPPN1P/2GS2SR1/LN2KG2L b b",
+      "sha256": "b9b20d5bb133d721f4c44f56d0a5e8499404a092071a975c8020d96ecd32b480",
+      "source": {
+        "file": "WCSC36-U3-Toyoko-tanuki.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選3回戦",
+        "black": "東横将棋",
+        "white": "六角堂狸",
+        "startTime": "2026/05/04 11:55:40",
+        "ply": 18
+      }
+    },
+    {
+      "id": "opening-10",
+      "phase": "opening",
+      "sfen": "ln5nl/1r2gkg2/p1spppsp1/6p1p/3P3P1/1pS1SPP1P/PP2P1N2/2G2G1R1/LN2K3L b BPbp 37",
+      "sfenKey": "ln5nl/1r2gkg2/p1spppsp1/6p1p/3P3P1/1pS1SPP1P/PP2P1N2/2G2G1R1/LN2K3L b BPbp",
+      "sha256": "81ce46ee52219d22dbf4257f91aa01e84bb76f16526a99e282002541ba705b32",
+      "source": {
+        "file": "WCSC36-U4-Shueso-arishogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選4回戦",
+        "black": "習甦",
+        "white": "Ari Shogi and フレンズ",
+        "startTime": "2026/05/04 13:16:37",
+        "ply": 36
+      }
+    },
+    {
+      "id": "opening-11",
+      "phase": "opening",
+      "sfen": "lr3k1nl/3g2g2/p1n1p1sp1/2ppspp1p/Pp5P1/2P1SPP1P/1PSPP1N2/2G2G1R1/LNK5L w Bb 38",
+      "sfenKey": "lr3k1nl/3g2g2/p1n1p1sp1/2ppspp1p/Pp5P1/2P1SPP1P/1PSPP1N2/2G2G1R1/LNK5L w Bb",
+      "sha256": "56e5e50f809907c0b1c2fa295f742a98324c1935bf77c3630aa90b7a40d12a0b",
+      "source": {
+        "file": "WCSC36-U5-yaneuraou-Gokaku.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選5回戦",
+        "black": "やねうら王 with GTNET",
+        "white": "Gokaku",
+        "startTime": "2026/05/04 14:22:17",
+        "ply": 37
+      }
+    },
+    {
+      "id": "opening-12",
+      "phase": "opening",
+      "sfen": "lnsgk2nl/1r4g2/p1pppsbpp/5pp2/1p5P1/2P3P2/PPBPPP2P/1SG2S1R1/LN2KG1NL b - 17",
+      "sfenKey": "lnsgk2nl/1r4g2/p1pppsbpp/5pp2/1p5P1/2P3P2/PPBPPP2P/1SG2S1R1/LN2KG1NL b -",
+      "sha256": "c8ffafc266e9c3cd0a5c154468cce579c30534ae06b7c64013b9fe60a4dd00c3",
+      "source": {
+        "file": "WCSC36-U6-AobaZero-nshogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選6回戦",
+        "black": "AobaZero",
+        "white": "nshogi",
+        "startTime": "2026/05/04 15:25:47",
+        "ply": 16
+      }
+    },
+    {
+      "id": "opening-13",
+      "phase": "opening",
+      "sfen": "ln2k2nl/1r2g1gb1/p1psps1p1/1p3pp1p/2P6/P1R5P/1PNPPPP2/1BGK2S2/L1S2G1NL b 2P 37",
+      "sfenKey": "ln2k2nl/1r2g1gb1/p1psps1p1/1p3pp1p/2P6/P1R5P/1PNPPPP2/1BGK2S2/L1S2G1NL b 2P",
+      "sha256": "4af0e11d1fe70ca8c0ad14e4442e225586a22ffe817ae1e8b38ddf9ea0894761",
+      "source": {
+        "file": "WCSC36-U7-Gokaku-jhbr.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選7回戦",
+        "black": "Gokaku",
+        "white": "JHBR",
+        "startTime": "2026/05/04 16:30:39",
+        "ply": 36
+      }
+    },
+    {
+      "id": "opening-14",
+      "phase": "opening",
+      "sfen": "ln1gk2nl/1rs3gs1/3ppp1pp/p1p3p2/1p5P1/P1P5P/1PSPPPP2/2G2S1R1/LN2KG1NL w Bb 20",
+      "sfenKey": "ln1gk2nl/1rs3gs1/3ppp1pp/p1p3p2/1p5P1/P1P5P/1PSPPPP2/2G2S1R1/LN2KG1NL w Bb",
+      "sha256": "fd40e71bfc0274ea1ab4878d09e59bb5555cc32e0fc0e88c3a45a2bdbca36c8e",
+      "source": {
+        "file": "WCSC36-U8-hisui-sojo.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選8回戦",
+        "black": "氷彗",
+        "white": "奏乗",
+        "startTime": "2026/05/04 17:37:23",
+        "ply": 19
+      }
+    },
+    {
+      "id": "opening-15",
+      "phase": "opening",
+      "sfen": "ln1g2snl/2s2kgp1/2p2p3/p2pp2Pp/9/PrP1B4/2NPPPP1P/1SG4R1/L3KGSNL b 2Pbp 31",
+      "sfenKey": "ln1g2snl/2s2kgp1/2p2p3/p2pp2Pp/9/PrP1B4/2NPPPP1P/1SG4R1/L3KGSNL b 2Pbp",
+      "sha256": "0614dc69a14df2d7eabeec7b35bede74169a14a74be8ecb955089ff695360213",
+      "source": {
+        "file": "WCSC36-F1-tanuki-dlshogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝1回戦",
+        "black": "六角堂狸",
+        "white": "dlshogi",
+        "startTime": "2026/05/05 09:30:55",
+        "ply": 30
+      }
+    },
+    {
+      "id": "opening-16",
+      "phase": "opening",
+      "sfen": "l2gk2nl/1r1s2g2/2n1ppsp1/p1pp2p1p/1p5P1/P1P2PP1P/1PSPPS3/2GK3R1/LN3G1NL w Bb 28",
+      "sfenKey": "l2gk2nl/1r1s2g2/2n1ppsp1/p1pp2p1p/1p5P1/P1P2PP1P/1PSPPS3/2GK3R1/LN3G1NL w Bb",
+      "sha256": "88d26d517b17a5bd48bebb24a95824a746055f8bb1b1693636039dc351351dc9",
+      "source": {
+        "file": "WCSC36-F2-Ryfamate-ponkotsu.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝2回戦",
+        "black": "Ryfamate",
+        "white": "ponkotsu",
+        "startTime": "2026/05/05 10:35:19",
+        "ply": 27
+      }
+    },
+    {
+      "id": "opening-17",
+      "phase": "opening",
+      "sfen": "lr5nl/3g1k1g1/2nsppsp1/p1pp2p1p/1p3S3/P1PP4P/1PS1PPP2/2GKG2R1/LN5NL w BPb 40",
+      "sfenKey": "lr5nl/3g1k1g1/2nsppsp1/p1pp2p1p/1p3S3/P1PP4P/1PS1PPP2/2GKG2R1/LN5NL w BPb",
+      "sha256": "e1f2917c79457e91f68be115f594a4cdec3750a69e2f50c61dd80495648ea727",
+      "source": {
+        "file": "WCSC36-F3-suisho-hisui.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝3回戦",
+        "black": "水匠",
+        "white": "氷彗",
+        "startTime": "2026/05/05 11:50:13",
+        "ply": 39
+      }
+    },
+    {
+      "id": "opening-18",
+      "phase": "opening",
+      "sfen": "l6nl/1r1g1kg2/2nsppsp1/p1pp2p1p/1p5P1/P1P2PP1P/1PSPPSN2/2GK1G1R1/LN6L b Bb 33",
+      "sfenKey": "l6nl/1r1g1kg2/2nsppsp1/p1pp2p1p/1p5P1/P1P2PP1P/1PSPPSN2/2GK1G1R1/LN6L b Bb",
+      "sha256": "18198e8e348da748b3808959d9eadae19d8ef556c04b465773bbdc350b4b0ff2",
+      "source": {
+        "file": "WCSC36-F4-dlshogi-ponkotsu.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝4回戦",
+        "black": "dlshogi",
+        "white": "ponkotsu",
+        "startTime": "2026/05/05 12:55:17",
+        "ply": 32
+      }
+    },
+    {
+      "id": "opening-19",
+      "phase": "opening",
+      "sfen": "lnsgk1snl/1r4gb1/2p1pp3/p2p2p1p/1p7/P1P6/1P1PPPP1P/1BG4R1/LNS1KGSNL b Pp 17",
+      "sfenKey": "lnsgk1snl/1r4gb1/2p1pp3/p2p2p1p/1p7/P1P6/1P1PPPP1P/1BG4R1/LNS1KGSNL b Pp",
+      "sha256": "09ecf6c0e228a06bc1773e8cceefbcbc99eb9c4ae3943eec20e11a2380275aa9",
+      "source": {
+        "file": "WCSC36-F6-Ryfamate-dlshogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝6回戦",
+        "black": "Ryfamate",
+        "white": "dlshogi",
+        "startTime": "2026/05/05 15:05:44",
+        "ply": 16
+      }
+    },
+    {
+      "id": "opening-20",
+      "phase": "opening",
+      "sfen": "ln5nl/r3gkg2/3sppsp1/p1pp2p1p/1p5P1/P1P1SPP1P/1PSPP1N2/2GK1G1R1/LN6L b Bb 35",
+      "sfenKey": "ln5nl/r3gkg2/3sppsp1/p1pp2p1p/1p5P1/P1P1SPP1P/1PSPP1N2/2GK1G1R1/LN6L b Bb",
+      "sha256": "1a62ac56a43bde1453b2278f0f574267bb1e1a2713a24d64ad69e3a893bf42d3",
+      "source": {
+        "file": "WCSC36-F7-dlshogi-sojo.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝7回戦",
+        "black": "dlshogi",
+        "white": "奏乗",
+        "startTime": "2026/05/05 16:10:22",
+        "ply": 34
+      }
+    },
+    {
+      "id": "middlegame-01",
+      "phase": "middlegame",
+      "sfen": "ln4knl/2r1sgg2/2bp3p1/p3pPp1p/2p2S3/PPPPPpP1P/B2K1sN2/2G1G1S2/LN3R2L b 2p 79",
+      "sfenKey": "ln4knl/2r1sgg2/2bp3p1/p3pPp1p/2p2S3/PPPPPpP1P/B2K1sN2/2G1G1S2/LN3R2L b 2p",
+      "sha256": "da4659c74bbd693249239dc0e2a1c0fde2e33cc8449f01f966ce902ca940ec97",
+      "source": {
+        "file": "WCSC36-L1-wanderer-GABEL.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選1回戦",
+        "black": "W@nderER",
+        "white": "GABEL",
+        "startTime": "2026/05/03 10:41:09",
+        "ply": 78
+      }
+    },
+    {
+      "id": "middlegame-02",
+      "phase": "middlegame",
+      "sfen": "lr5nl/3g1kg2/2nsp1sp1/p1pp1pp1p/1p3P1P1/P1PPP1P1P/1PSS2N2/1KG2G3/LN5RL w Bb 50",
+      "sfenKey": "lr5nl/3g1kg2/2nsp1sp1/p1pp1pp1p/1p3P1P1/P1PPP1P1P/1PSS2N2/1KG2G3/LN5RL w Bb",
+      "sha256": "db9fc66b7a23f4efcea33dc5735f3f1e50d80ba45f69e92e4b93f25548577b63",
+      "source": {
+        "file": "WCSC36-L2-nene-nebula.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選2回戦",
+        "black": "ねね将棋",
+        "white": "ねびゅら",
+        "startTime": "2026/05/03 11:22:30",
+        "ply": 49
+      }
+    },
+    {
+      "id": "middlegame-03",
+      "phase": "middlegame",
+      "sfen": "lr4knl/3sg1g2/2np2sp1/p1pbppp1p/7P1/PPPPPPP2/1S1G1SN1P/2K6/LN1G3RL b Bp 45",
+      "sfenKey": "lr4knl/3sg1g2/2np2sp1/p1pbppp1p/7P1/PPPPPPP2/1S1G1SN1P/2K6/LN1G3RL b Bp",
+      "sha256": "1367907d70d1191fb329cc113c521f80d1407f5bfab6e07231e6dff75bb3e8f8",
+      "source": {
+        "file": "WCSC36-L3-qhapaq-Gokaku.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選3回戦",
+        "black": "名探偵 Qhapaq！",
+        "white": "Gokaku",
+        "startTime": "2026/05/03 12:05:46",
+        "ply": 44
+      }
+    },
+    {
+      "id": "middlegame-04",
+      "phase": "middlegame",
+      "sfen": "l+R5nl/2+P1rggk1/p3pps1p/2Pp2pp1/7NP/3PB2P1/P1S2+sP2/9/LN2KG2L b GSN3Pbp 77",
+      "sfenKey": "l+R5nl/2+P1rggk1/p3pps1p/2Pp2pp1/7NP/3PB2P1/P1S2+sP2/9/LN2KG2L b GSN3Pbp",
+      "sha256": "990fc005bea1e26746903a45fb9d1990b3dba6b4b04731fc2d6ba70300f37032",
+      "source": {
+        "file": "WCSC36-L4-Mebae-etude15.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選4回戦",
+        "black": "芽生将棋",
+        "white": "etude12",
+        "startTime": "2026/05/03 13:50:37",
+        "ply": 76
+      }
+    },
+    {
+      "id": "middlegame-05",
+      "phase": "middlegame",
+      "sfen": "ln4knl/1r3sgp1/3sg4/2p2pPR1/ppPp4p/5P3/PPSPPS2P/2GK1G3/LN6L b B3Pbn 51",
+      "sfenKey": "ln4knl/1r3sgp1/3sg4/2p2pPR1/ppPp4p/5P3/PPSPPS2P/2GK1G3/LN6L b B3Pbn",
+      "sha256": "bcb390bd87e8b57e0aeef67c2aea5c67310d83a9ee4e1c4367e955ef9bd1d22f",
+      "source": {
+        "file": "WCSC36-L6-katsudon-Usizima.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選6回戦",
+        "black": "カツ丼将棋",
+        "white": "ザ・グレートウシジマ",
+        "startTime": "2026/05/03 15:49:23",
+        "ply": 50
+      }
+    },
+    {
+      "id": "middlegame-06",
+      "phase": "middlegame",
+      "sfen": "lr6l/2k4g1/4+Pp1pp/p1Pp2p2/7n1/P4s3/1P1PSPP1P/2G1b4/LNK1Pr1NL w G2SN3Pbg 82",
+      "sfenKey": "lr6l/2k4g1/4+Pp1pp/p1Pp2p2/7n1/P4s3/1P1PSPP1P/2G1b4/LNK1Pr1NL w G2SN3Pbg",
+      "sha256": "d8ab825bd2ce71c83492df4f069e51712d5efbe4983a9b161a33d7131cfaf6cf",
+      "source": {
+        "file": "WCSC36-L7-tenuki-nebula.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選7回戦",
+        "black": "手抜き",
+        "white": "ねびゅら",
+        "startTime": "2026/05/03 16:54:22",
+        "ply": 81
+      }
+    },
+    {
+      "id": "middlegame-07",
+      "phase": "middlegame",
+      "sfen": "l3kg1nl/3s2sb1/p3p2pp/1r1p1PP2/2pS5/2B2R3/PPGPP3P/3G5/L2K3NL w GSN4Pnp 82",
+      "sfenKey": "l3kg1nl/3s2sb1/p3p2pp/1r1p1PP2/2pS5/2B2R3/PPGPP3P/3G5/L2K3NL w GSN4Pnp",
+      "sha256": "227215f5dc7bcb47825a60dac6b48e8fbacec9c245eb0b45a3a800781a8b2b8c",
+      "source": {
+        "file": "WCSC36-L8-Mebae-qhapaq.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選8回戦",
+        "black": "芽生将棋",
+        "white": "名探偵 Qhapaq！",
+        "startTime": "2026/05/03 18:00:31",
+        "ply": 81
+      }
+    },
+    {
+      "id": "middlegame-08",
+      "phase": "middlegame",
+      "sfen": "ln5n1/5ks1+R/3s1ggp1/p2p1bp2/1p1N1p1P1/P5P2/1PKPB4/9/L4G3 b R2S2L2Pgn5p 91",
+      "sfenKey": "ln5n1/5ks1+R/3s1ggp1/p2p1bp2/1p1N1p1P1/P5P2/1PKPB4/9/L4G3 b R2S2L2Pgn5p",
+      "sha256": "9b4f5ee264fbaeaf38dddd217bc566777e117c342d6e4f6c15775e851af27953",
+      "source": {
+        "file": "WCSC36-U1-hisui-Asutora.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選1回戦",
+        "black": "氷彗",
+        "white": "あすとら将棋",
+        "startTime": "2026/05/04 10:00:45",
+        "ply": 90
+      }
+    },
+    {
+      "id": "middlegame-09",
+      "phase": "middlegame",
+      "sfen": "ln6l/1r1k1g1s1/p1psp1g2/4bp1PP/7p1/2Pp2p2/P1N1PPS2/1PGSG2RL/L2K5 b BN2Pn2p 63",
+      "sfenKey": "ln6l/1r1k1g1s1/p1psp1g2/4bp1PP/7p1/2Pp2p2/P1N1PPS2/1PGSG2RL/L2K5 b BN2Pn2p",
+      "sha256": "f01509285e45cb8572da9aa81f899db8ad1fbf2fd44cae78a386b89275b7c4d2",
+      "source": {
+        "file": "WCSC36-U3-Toyoko-tanuki.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選3回戦",
+        "black": "東横将棋",
+        "white": "六角堂狸",
+        "startTime": "2026/05/04 11:55:40",
+        "ply": 62
+      }
+    },
+    {
+      "id": "middlegame-10",
+      "phase": "middlegame",
+      "sfen": "ln2k3l/2r1g2P1/p2pp3n/2s2p3/3P4P/1PP1SP3/PSK1P4/2G3P+rL/LN7 w 2BGS2Pgn3p 86",
+      "sfenKey": "ln2k3l/2r1g2P1/p2pp3n/2s2p3/3P4P/1PP1SP3/PSK1P4/2G3P+rL/LN7 w 2BGS2Pgn3p",
+      "sha256": "cd554dfa2bf9a1e16801dfabb8bbc987f62110dbb0f20c13932bab8936e5a50c",
+      "source": {
+        "file": "WCSC36-U4-Shueso-arishogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選4回戦",
+        "black": "習甦",
+        "white": "Ari Shogi and フレンズ",
+        "startTime": "2026/05/04 13:16:37",
+        "ply": 85
+      }
+    },
+    {
+      "id": "middlegame-11",
+      "phase": "middlegame",
+      "sfen": "lr4knl/3g2g2/p3p1sp1/3pspp1p/P1P4P1/3PSPP1P/1PN1nGN2/2GS3R1/L1K5L b B2Pbp 53",
+      "sfenKey": "lr4knl/3g2g2/p3p1sp1/3pspp1p/P1P4P1/3PSPP1P/1PN1nGN2/2GS3R1/L1K5L b B2Pbp",
+      "sha256": "d84bcb61a76bd9e37fea2c6d603bbc0a1be94a6d5b65b2bd5ca488b8d326f013",
+      "source": {
+        "file": "WCSC36-U5-yaneuraou-Gokaku.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選5回戦",
+        "black": "やねうら王 with GTNET",
+        "white": "Gokaku",
+        "startTime": "2026/05/04 14:22:17",
+        "ply": 52
+      }
+    },
+    {
+      "id": "middlegame-12",
+      "phase": "middlegame",
+      "sfen": "1n3k1nl/1r2g1g2/3p1sbp1/3s1p2p/l1P4P1/PPS1SP2P/pG1P5/3BG2R1/LN1K3NL w 5Pp 54",
+      "sfenKey": "1n3k1nl/1r2g1g2/3p1sbp1/3s1p2p/l1P4P1/PPS1SP2P/pG1P5/3BG2R1/LN1K3NL w 5Pp",
+      "sha256": "e3fb1dd77dde1931749db2184dea0a5e203fcbb762fabe253c009420433caabb",
+      "source": {
+        "file": "WCSC36-U6-AobaZero-nshogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選6回戦",
+        "black": "AobaZero",
+        "white": "nshogi",
+        "startTime": "2026/05/04 15:25:47",
+        "ply": 53
+      }
+    },
+    {
+      "id": "middlegame-13",
+      "phase": "middlegame",
+      "sfen": "ln5nl/1r4gk1/2pg5/pp2Pbspp/2PNspp2/P1RP4P/1P2BPPS1/4G1GK1/L6NL w S2Pp 90",
+      "sfenKey": "ln5nl/1r4gk1/2pg5/pp2Pbspp/2PNspp2/P1RP4P/1P2BPPS1/4G1GK1/L6NL w S2Pp",
+      "sha256": "69a50ef46fb63f389353d69a22996ee644d1ac06a8fb4360d6b5f932abf6c8e0",
+      "source": {
+        "file": "WCSC36-U7-Gokaku-jhbr.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選7回戦",
+        "black": "Gokaku",
+        "white": "JHBR",
+        "startTime": "2026/05/04 16:30:39",
+        "ply": 89
+      }
+    },
+    {
+      "id": "middlegame-14",
+      "phase": "middlegame",
+      "sfen": "lr1g3nl/5kgs1/3spp2p/p1pp2p2/6P2/PPb2S2P/N1SNPP1+p1/2GR3p1/L2K1G1NL w BP2p 54",
+      "sfenKey": "lr1g3nl/5kgs1/3spp2p/p1pp2p2/6P2/PPb2S2P/N1SNPP1+p1/2GR3p1/L2K1G1NL w BP2p",
+      "sha256": "2ef0ccca5187f07b53d6ed4e036efbbd5195a07de82f79fb94daae7cbe46e2e3",
+      "source": {
+        "file": "WCSC36-U8-hisui-sojo.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選8回戦",
+        "black": "氷彗",
+        "white": "奏乗",
+        "startTime": "2026/05/04 17:37:23",
+        "ply": 53
+      }
+    },
+    {
+      "id": "middlegame-15",
+      "phase": "middlegame",
+      "sfen": "ln4snl/2s1gk1p1/5p3/p2p4p/2P1p4/Pr1P5/1SN1PPP1P/2G1G2+R1/L3K1SNL w G4P2bp 52",
+      "sfenKey": "ln4snl/2s1gk1p1/5p3/p2p4p/2P1p4/Pr1P5/1SN1PPP1P/2G1G2+R1/L3K1SNL w G4P2bp",
+      "sha256": "51da5e3bc6be6ac3ae3be410c6840d907489086b2f8b942cd475cd171caca275",
+      "source": {
+        "file": "WCSC36-F1-tanuki-dlshogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝1回戦",
+        "black": "六角堂狸",
+        "white": "dlshogi",
+        "startTime": "2026/05/05 09:30:55",
+        "ply": 51
+      }
+    },
+    {
+      "id": "middlegame-16",
+      "phase": "middlegame",
+      "sfen": "l+Pr4nl/3g1kg2/2nspp1p1/pgB2sp1p/2P2N3/Pp2SPP1P/2S1P4/1KG2R3/LN6L w B3Pp 84",
+      "sfenKey": "l+Pr4nl/3g1kg2/2nspp1p1/pgB2sp1p/2P2N3/Pp2SPP1P/2S1P4/1KG2R3/LN6L w B3Pp",
+      "sha256": "15b0806c031f060bc355ed29466475168db8a25d8744eea086dd15d94cf4a986",
+      "source": {
+        "file": "WCSC36-F2-Ryfamate-ponkotsu.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝2回戦",
+        "black": "Ryfamate",
+        "white": "ponkotsu",
+        "startTime": "2026/05/05 10:35:19",
+        "ply": 83
+      }
+    },
+    {
+      "id": "middlegame-17",
+      "phase": "middlegame",
+      "sfen": "l1r4n1/5k1g1/2ngpp1p1/p2p2p1L/2p3sPL/PP1PSP3/2S1P1P1N/2GG2R2/LNK3b2 w B2Ps2p 86",
+      "sfenKey": "l1r4n1/5k1g1/2ngpp1p1/p2p2p1L/2p3sPL/PP1PSP3/2S1P1P1N/2GG2R2/LNK3b2 w B2Ps2p",
+      "sha256": "b3266fe36bba933191b4cbdc67352a78106b2508c50b2d8f59a832c5e4da4834",
+      "source": {
+        "file": "WCSC36-F3-suisho-hisui.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝3回戦",
+        "black": "水匠",
+        "white": "氷彗",
+        "startTime": "2026/05/05 11:50:13",
+        "ply": 85
+      }
+    },
+    {
+      "id": "middlegame-18",
+      "phase": "middlegame",
+      "sfen": "lr5nl/3g1kg2/2n1pp3/p1ppsspRp/1p3N3/P1PPSPP1P/1PS1P4/1KG2G3/LN6L w BPbp 66",
+      "sfenKey": "lr5nl/3g1kg2/2n1pp3/p1ppsspRp/1p3N3/P1PPSPP1P/1PS1P4/1KG2G3/LN6L w BPbp",
+      "sha256": "d6aa92923a67780ad7e63d6a6718541db49c62b976d5a3dd8f0e069890d10068",
+      "source": {
+        "file": "WCSC36-F4-dlshogi-ponkotsu.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝4回戦",
+        "black": "dlshogi",
+        "white": "ponkotsu",
+        "startTime": "2026/05/05 12:55:17",
+        "ply": 65
+      }
+    },
+    {
+      "id": "middlegame-19",
+      "phase": "middlegame",
+      "sfen": "1+R4g1l/3+P2ks1/1s2ppbp1/p7p/9/P1G3S2/1P2+pP2P/1N4R2/L+b2KG1NL w GS2N4Pl3p 90",
+      "sfenKey": "1+R4g1l/3+P2ks1/1s2ppbp1/p7p/9/P1G3S2/1P2+pP2P/1N4R2/L+b2KG1NL w GS2N4Pl3p",
+      "sha256": "b41a9a666bd7dadbca915eb8b150109bc812398059c9957ab22b226176e00455",
+      "source": {
+        "file": "WCSC36-F6-Ryfamate-dlshogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝6回戦",
+        "black": "Ryfamate",
+        "white": "dlshogi",
+        "startTime": "2026/05/05 15:05:44",
+        "ply": 89
+      }
+    },
+    {
+      "id": "middlegame-20",
+      "phase": "middlegame",
+      "sfen": "lr2k2nl/3g2gs1/2ns3p1/p1pppPP1p/1p5P1/P1PPS3P/1PS1P4/1KG2G3/LN5RL w B2Pbn 54",
+      "sfenKey": "lr2k2nl/3g2gs1/2ns3p1/p1pppPP1p/1p5P1/P1PPS3P/1PS1P4/1KG2G3/LN5RL w B2Pbn",
+      "sha256": "415603f56a066efd22cb22c86e0ac6f8f164f6810ad7892b16018a33437aaa3d",
+      "source": {
+        "file": "WCSC36-F7-dlshogi-sojo.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝7回戦",
+        "black": "dlshogi",
+        "white": "奏乗",
+        "startTime": "2026/05/05 16:10:22",
+        "ply": 53
+      }
+    },
+    {
+      "id": "endgame-01",
+      "phase": "endgame",
+      "sfen": "+S5knl/4sg3/3p3p1/p4rp1p/1PB2N3/P1PP2P1P/2K2+p3/2G4+b1/LNR2+p2L b 2GNP2sl4p 117",
+      "sfenKey": "+S5knl/4sg3/3p3p1/p4rp1p/1PB2N3/P1PP2P1P/2K2+p3/2G4+b1/LNR2+p2L b 2GNP2sl4p",
+      "sha256": "5896c205e095791a6719eee6dcc9a807af0e496447ab43ff23faafaa613a4464",
+      "source": {
+        "file": "WCSC36-L1-wanderer-GABEL.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選1回戦",
+        "black": "W@nderER",
+        "white": "GABEL",
+        "startTime": "2026/05/03 10:41:09",
+        "ply": 116
+      }
+    },
+    {
+      "id": "endgame-02",
+      "phase": "endgame",
+      "sfen": "lr7/3g1k3/1lnsppB+Bl/p1pp1s1p1/5N2p/PSPPPPP2/1P1S5/1KG2G3/LN6+r w GPn3p 92",
+      "sfenKey": "lr7/3g1k3/1lnsppB+Bl/p1pp1s1p1/5N2p/PSPPPPP2/1P1S5/1KG2G3/LN6+r w GPn3p",
+      "sha256": "277711c31f82888075a357f081d56cb01843425607b2254bd9b5a644af566cab",
+      "source": {
+        "file": "WCSC36-L2-nene-nebula.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選2回戦",
+        "black": "ねね将棋",
+        "white": "ねびゅら",
+        "startTime": "2026/05/03 11:22:30",
+        "ply": 91
+      }
+    },
+    {
+      "id": "endgame-03",
+      "phase": "endgame",
+      "sfen": "l4S1nl/5+Bgk1/3p1S1p1/p3pppsp/1npP5/P3PPP2/3GKSn1P/1+r1G5/L6RL w BGN4p 94",
+      "sfenKey": "l4S1nl/5+Bgk1/3p1S1p1/p3pppsp/1npP5/P3PPP2/3GKSn1P/1+r1G5/L6RL w BGN4p",
+      "sha256": "37bba893a8da77e5249fff44b505084df30ce85b68955192561f381ea8c1a9fe",
+      "source": {
+        "file": "WCSC36-L3-qhapaq-Gokaku.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選3回戦",
+        "black": "名探偵 Qhapaq！",
+        "white": "Gokaku",
+        "startTime": "2026/05/03 12:05:46",
+        "ply": 93
+      }
+    },
+    {
+      "id": "endgame-04",
+      "phase": "endgame",
+      "sfen": "l+R1R2snl/2+P3gk1/p3ppspp/2Pp2p2/7PP/3P5/P1S+n2P2/9/LN2KG2L b B2GN4Pbs 95",
+      "sfenKey": "l+R1R2snl/2+P3gk1/p3ppspp/2Pp2p2/7PP/3P5/P1S+n2P2/9/LN2KG2L b B2GN4Pbs",
+      "sha256": "4e0c784eb3dae0d3c81448adda2ae067688552be2bda89f1b9b65ecc8258dfd9",
+      "source": {
+        "file": "WCSC36-L4-Mebae-etude15.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選4回戦",
+        "black": "芽生将棋",
+        "white": "etude12",
+        "startTime": "2026/05/03 13:50:37",
+        "ply": 94
+      }
+    },
+    {
+      "id": "endgame-05",
+      "phase": "endgame",
+      "sfen": "ln5nl/5+R3/2s1pp1p1/1pNP5/psGpnk3/1g7/P2G4+p/4P+r3/L1PKb+b3 b L3Pg2s4p 249",
+      "sfenKey": "ln5nl/5+R3/2s1pp1p1/1pNP5/psGpnk3/1g7/P2G4+p/4P+r3/L1PKb+b3 b L3Pg2s4p",
+      "sha256": "ad0b1bbf7893f0975de5b6ce334b54de5f2c04299c48e3a32b6fb55886b30f86",
+      "source": {
+        "file": "WCSC36-L6-katsudon-Usizima.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選6回戦",
+        "black": "カツ丼将棋",
+        "white": "ザ・グレートウシジマ",
+        "startTime": "2026/05/03 15:49:23",
+        "ply": 248
+      }
+    },
+    {
+      "id": "endgame-06",
+      "phase": "endgame",
+      "sfen": "l7l/2k4g1/4+Pp1pp/p1Pp2p2/7n1/P4s3/3PSPP1P/Kp2b4/L6NL w 2RB2G2SN3Pgnp 96",
+      "sfenKey": "l7l/2k4g1/4+Pp1pp/p1Pp2p2/7n1/P4s3/3PSPP1P/Kp2b4/L6NL w 2RB2G2SN3Pgnp",
+      "sha256": "69839f5585d073b38a0198f610f49751cad915346cc4f508d0ccbfa17820e42a",
+      "source": {
+        "file": "WCSC36-L7-tenuki-nebula.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選7回戦",
+        "black": "手抜き",
+        "white": "ねびゅら",
+        "startTime": "2026/05/03 16:54:22",
+        "ply": 95
+      }
+    },
+    {
+      "id": "endgame-07",
+      "phase": "endgame",
+      "sfen": "l6nl/4kgs2/pS2p1bpp/r2p5/2Sn1p3/2SG5/PPpPP3P/3G1R3/L2K3NL b G4Pbn2p 101",
+      "sfenKey": "l6nl/4kgs2/pS2p1bpp/r2p5/2Sn1p3/2SG5/PPpPP3P/3G1R3/L2K3NL b G4Pbn2p",
+      "sha256": "c5b38a204ec06e7b83c37de3ebeb243ee2d9866f74a495f495510364928e6344",
+      "source": {
+        "file": "WCSC36-L8-Mebae-qhapaq.csa",
+        "event": "第36回世界コンピュータ将棋選手権一次予選8回戦",
+        "black": "芽生将棋",
+        "white": "名探偵 Qhapaq！",
+        "startTime": "2026/05/03 18:00:31",
+        "ply": 100
+      }
+    },
+    {
+      "id": "endgame-08",
+      "phase": "endgame",
+      "sfen": "ln2+RnBn1/3Sp1s1+R/3s1kgp1/p4gp2/1p1pbp1P1/P1n1L1P2/1PpP5/9/LKSg1G3 b L3P2p 115",
+      "sfenKey": "ln2+RnBn1/3Sp1s1+R/3s1kgp1/p4gp2/1p1pbp1P1/P1n1L1P2/1PpP5/9/LKSg1G3 b L3P2p",
+      "sha256": "88db06a7b8cdfe6ece4be2d6386e8d3b2f1aedbad3462e86f21dbbfc434138f1",
+      "source": {
+        "file": "WCSC36-U1-hisui-Asutora.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選1回戦",
+        "black": "氷彗",
+        "white": "あすとら将棋",
+        "startTime": "2026/05/04 10:00:45",
+        "ply": 114
+      }
+    },
+    {
+      "id": "endgame-09",
+      "phase": "endgame",
+      "sfen": "9/2+B6/p3pG2l/lk3pP2/2pN5/2PpS4/P1N1PPb2/1P1SK2+r1/L1G6 b RGSN3Pgsnl4p 149",
+      "sfenKey": "9/2+B6/p3pG2l/lk3pP2/2pN5/2PpS4/P1N1PPb2/1P1SK2+r1/L1G6 b RGSN3Pgsnl4p",
+      "sha256": "db864d6df0e59f2d04e1dca25ab92eada9e0f357b39930e0096d457f4bdf577e",
+      "source": {
+        "file": "WCSC36-U3-Toyoko-tanuki.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選3回戦",
+        "black": "東横将棋",
+        "white": "六角堂狸",
+        "startTime": "2026/05/04 11:55:40",
+        "ply": 148
+      }
+    },
+    {
+      "id": "endgame-10",
+      "phase": "endgame",
+      "sfen": "l2p+B3l/7P1/pS4p1n/4+N2k1/4S3P/1PG1SP2G/P2SP4/1KP+r5/L5P2 w BGN4Prgnl3p 164",
+      "sfenKey": "l2p+B3l/7P1/pS4p1n/4+N2k1/4S3P/1PG1SP2G/P2SP4/1KP+r5/L5P2 w BGN4Prgnl3p",
+      "sha256": "8078cee44e79e14b58ca9063a117ba757e9e39206b6fd29fd838517d497829ad",
+      "source": {
+        "file": "WCSC36-U4-Shueso-arishogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選4回戦",
+        "black": "習甦",
+        "white": "Ari Shogi and フレンズ",
+        "startTime": "2026/05/04 13:16:37",
+        "ply": 163
+      }
+    },
+    {
+      "id": "endgame-11",
+      "phase": "endgame",
+      "sfen": "7+Rl/+L2g2g1s/5s1Pk/2P1pp1pp/3PP1p2/n1S+b1PP1P/1P4N2/2GKG4/7rL b BS2N4Plp 103",
+      "sfenKey": "7+Rl/+L2g2g1s/5s1Pk/2P1pp1pp/3PP1p2/n1S+b1PP1P/1P4N2/2GKG4/7rL b BS2N4Plp",
+      "sha256": "0e142b3660e122db3dd8c24bb90dad972ec111cd0a2909456768832a05edc628",
+      "source": {
+        "file": "WCSC36-U5-yaneuraou-Gokaku.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選5回戦",
+        "black": "やねうら王 with GTNET",
+        "white": "Gokaku",
+        "startTime": "2026/05/04 14:22:17",
+        "ply": 102
+      }
+    },
+    {
+      "id": "endgame-12",
+      "phase": "endgame",
+      "sfen": "1n3k3/2S1g1g2/3p3p1/2n3L2/1Pb1pn1P1/5B3/L1sPGS2L/1+p7/4K2R1 w RSL10Pgnp 110",
+      "sfenKey": "1n3k3/2S1g1g2/3p3p1/2n3L2/1Pb1pn1P1/5B3/L1sPGS2L/1+p7/4K2R1 w RSL10Pgnp",
+      "sha256": "325782a4565d249399dd91e52c9bc5a4fc566fcc88a15317e753e76ab48c2bd5",
+      "source": {
+        "file": "WCSC36-U6-AobaZero-nshogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選6回戦",
+        "black": "AobaZero",
+        "white": "nshogi",
+        "startTime": "2026/05/04 15:25:47",
+        "ply": 109
+      }
+    },
+    {
+      "id": "endgame-13",
+      "phase": "endgame",
+      "sfen": "ln3Bpnl/1r2pkn2/2pS1g3/p6pp/1pPN1GPs1/P2P4P/1P1B1P1K1/2R3g2/L4s2L b GS4P 157",
+      "sfenKey": "ln3Bpnl/1r2pkn2/2pS1g3/p6pp/1pPN1GPs1/P2P4P/1P1B1P1K1/2R3g2/L4s2L b GS4P",
+      "sha256": "d2623fb6ba821b89fe6266d3a80dcf91bdf3a305712cdd4cb3b188f9febc28ee",
+      "source": {
+        "file": "WCSC36-U7-Gokaku-jhbr.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選7回戦",
+        "black": "Gokaku",
+        "white": "JHBR",
+        "startTime": "2026/05/04 16:30:39",
+        "ply": 156
+      }
+    },
+    {
+      "id": "endgame-14",
+      "phase": "endgame",
+      "sfen": "l2+R5/2+L6/7l1/3p5/pP4+B2/P1K2+PSnp/1S5+pk/4+R2+n1/L5b1+p b 4G2S2N10P 197",
+      "sfenKey": "l2+R5/2+L6/7l1/3p5/pP4+B2/P1K2+PSnp/1S5+pk/4+R2+n1/L5b1+p b 4G2S2N10P",
+      "sha256": "790eb6f35295f0ce110d8e01699bb6c5625e7df627bc4d982d797e00ed56fc36",
+      "source": {
+        "file": "WCSC36-U8-hisui-sojo.csa",
+        "event": "第36回世界コンピュータ将棋選手権二次予選8回戦",
+        "black": "氷彗",
+        "white": "奏乗",
+        "startTime": "2026/05/04 17:37:23",
+        "ply": 196
+      }
+    },
+    {
+      "id": "endgame-15",
+      "phase": "endgame",
+      "sfen": "l5s1l/5k3/4g1pp1/2Pp2b1p/P4pB2/1P1P2P2/LG2PP2P/4KS3/6+R1L w R2N5P2g2s2n 130",
+      "sfenKey": "l5s1l/5k3/4g1pp1/2Pp2b1p/P4pB2/1P1P2P2/LG2PP2P/4KS3/6+R1L w R2N5P2g2s2n",
+      "sha256": "59b25dc1239952c6de986a780e84daff45bd9f4fe0aa22f4966315218c5fb760",
+      "source": {
+        "file": "WCSC36-F1-tanuki-dlshogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝1回戦",
+        "black": "六角堂狸",
+        "white": "dlshogi",
+        "startTime": "2026/05/05 09:30:55",
+        "ply": 129
+      }
+    },
+    {
+      "id": "endgame-16",
+      "phase": "endgame",
+      "sfen": "l4r1nl/2+P2kg2/3gpp1p1/pg4p1p/1+bP2S3/P1Sp1PP1P/2S1P4/3K4R/LNN5L w BN3Pgsp 118",
+      "sfenKey": "l4r1nl/2+P2kg2/3gpp1p1/pg4p1p/1+bP2S3/P1Sp1PP1P/2S1P4/3K4R/LNN5L w BN3Pgsp",
+      "sha256": "ee43dc4994b7a511af78c80da66c56deadb06ca97710208c5e882d018493ef53",
+      "source": {
+        "file": "WCSC36-F2-Ryfamate-ponkotsu.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝2回戦",
+        "black": "Ryfamate",
+        "white": "ponkotsu",
+        "startTime": "2026/05/05 10:35:19",
+        "ply": 117
+      }
+    },
+    {
+      "id": "endgame-17",
+      "phase": "endgame",
+      "sfen": "r1+B6/+P5k1p/NK2p1+bp1/2np1pp2/2+r6/PP3P+s2/4P3l/9/L3s4 w 3GN3Pg2sn2l4p 198",
+      "sfenKey": "r1+B6/+P5k1p/NK2p1+bp1/2np1pp2/2+r6/PP3P+s2/4P3l/9/L3s4 w 3GN3Pg2sn2l4p",
+      "sha256": "1a7aa30e6d8bb72dfdc13360fcbfeb43f2044db63109ca0f135ec7b6d9f4195b",
+      "source": {
+        "file": "WCSC36-F3-suisho-hisui.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝3回戦",
+        "black": "水匠",
+        "white": "氷彗",
+        "startTime": "2026/05/05 11:50:13",
+        "ply": 197
+      }
+    },
+    {
+      "id": "endgame-18",
+      "phase": "endgame",
+      "sfen": "l3+Rb2l/1P1g3G1/4ppk2/p3s3p/5P3/P1g1S1PNP/2K1P4/9/LN6L b B2SN6Prgn2p 147",
+      "sfenKey": "l3+Rb2l/1P1g3G1/4ppk2/p3s3p/5P3/P1g1S1PNP/2K1P4/9/LN6L b B2SN6Prgn2p",
+      "sha256": "aa4d516971a311b8a592ff47c9e3638d064d9ca19c33b8e851564e26416054ec",
+      "source": {
+        "file": "WCSC36-F4-dlshogi-ponkotsu.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝4回戦",
+        "black": "dlshogi",
+        "white": "ponkotsu",
+        "startTime": "2026/05/05 12:55:17",
+        "ply": 146
+      }
+    },
+    {
+      "id": "endgame-19",
+      "phase": "endgame",
+      "sfen": "1+R3lg1l/3+P2k2/1s2p1sp1/p3np2p/3B5/P1G3S2/1P1+n+pP2P/1R7/L+b2K1GNL b GSN2P5p 103",
+      "sfenKey": "1+R3lg1l/3+P2k2/1s2p1sp1/p3np2p/3B5/P1G3S2/1P1+n+pP2P/1R7/L+b2K1GNL b GSN2P5p",
+      "sha256": "f4cae03f715a5229eb20775687bbcd3889c7aa1afd693a47c694e0a6bdebc340",
+      "source": {
+        "file": "WCSC36-F6-Ryfamate-dlshogi.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝6回戦",
+        "black": "Ryfamate",
+        "white": "dlshogi",
+        "startTime": "2026/05/05 15:05:44",
+        "ply": 102
+      }
+    },
+    {
+      "id": "endgame-20",
+      "phase": "endgame",
+      "sfen": "1r7/2pkgs3/3sp2gn/2P2PPp1/1gN1PSp1p/3lK4/GP+B6/5+p2R/9 b BN2L6Psnlp 157",
+      "sfenKey": "1r7/2pkgs3/3sp2gn/2P2PPp1/1gN1PSp1p/3lK4/GP+B6/5+p2R/9 b BN2L6Psnlp",
+      "sha256": "220006af81b350f2d2021f6c07acfcbd442668e535d4056e963fe42aae8b1df5",
+      "source": {
+        "file": "WCSC36-F7-dlshogi-sojo.csa",
+        "event": "第36回世界コンピュータ将棋選手権決勝7回戦",
+        "black": "dlshogi",
+        "white": "奏乗",
+        "startTime": "2026/05/05 16:10:22",
+        "ply": 156
+      }
+    }
+  ],
+  "manifestSha256": "ff5d15f9c93d92dcd7f26d4dcfd3ffbd7a4a74067184edf9001d1c7f1affaad2"
+}
