@@ -12,11 +12,14 @@
   },
   "durable_objects": {
     "bindings": [
-      { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" }
+      { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" },
+      { "name": "ANALYSIS_BENCHMARK_STANDARD_2", "class_name": "BenchmarkStandard2Container" },
+      { "name": "ANALYSIS_BENCHMARK_STANDARD_3", "class_name": "BenchmarkStandard3Container" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] }
+    { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] },
+    { "tag": "v2", "new_sqlite_classes": ["BenchmarkStandard2Container", "BenchmarkStandard3Container"] }
   ],
   "containers": [
     {
@@ -25,6 +28,20 @@
       "image": "registry.cloudflare.com/__ACCOUNT_ID__/meeshogi-analysis-mvp-staging@sha256:__IMAGE_DIGEST__",
       "max_instances": 1,
       "instance_type": "standard-2"
+    },
+    {
+      "name": "meeshogi-analysis-mvp-staging-benchmark-standard-2",
+      "class_name": "BenchmarkStandard2Container",
+      "image": "registry.cloudflare.com/__ACCOUNT_ID__/meeshogi-analysis-mvp-staging@sha256:__IMAGE_DIGEST__",
+      "max_instances": 1,
+      "instance_type": "standard-2"
+    },
+    {
+      "name": "meeshogi-analysis-mvp-staging-benchmark-standard-3",
+      "class_name": "BenchmarkStandard3Container",
+      "image": "registry.cloudflare.com/__ACCOUNT_ID__/meeshogi-analysis-mvp-staging@sha256:__IMAGE_DIGEST__",
+      "max_instances": 1,
+      "instance_type": "standard-3"
     }
   ]
 }

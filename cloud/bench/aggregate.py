@@ -591,6 +591,128 @@ def _valid_boot_id(value: Any) -> bool:
     return isinstance(value, str) and len(value) == 32 and all(char in "0123456789abcdef" for char in value)
 
 
+def _valid_cold_runtime(value: Any, expected_instance_type: str, boot_id: str) -> bool:
+    if not isinstance(value, dict) or expected_instance_type not in CONTAINER_SIZES:
+        return False
+    required_fields = {
+        "expectedInstanceType", "driverBootId", "osCpuCount", "affinityCpuCount", "cpuMax",
+        "cpuQuota", "memoryMaxBytes", "memTotalBytes", "rootDiskTotalBytes",
+    }
+    if not required_fields.issubset(value):
+        return False
+    if value.get("expectedInstanceType") != expected_instance_type or value.get("driverBootId") != boot_id:
+        return False
+    for key in ("osCpuCount", "affinityCpuCount", "memoryMaxBytes", "memTotalBytes", "rootDiskTotalBytes"):
+        item = value.get(key)
+        if item is not None and (type(item) is not int or item < 1 or item > 2**53 - 1):
+            return False
+    if value.get("cpuMax") is not None and not isinstance(value.get("cpuMax"), str):
+        return False
+    cpu_quota = value.get("cpuQuota")
+    if cpu_quota is not None and (
+        isinstance(cpu_quota, bool) or not isinstance(cpu_quota, (int, float))
+        or not math.isfinite(float(cpu_quota)) or cpu_quota < 0
+    ):
+        return False
+
+    expected = CONTAINER_SIZES[expected_instance_type]
+    cpu_count = expected["vCpu"]
+    memory_total = value.get("memTotalBytes")
+    expected_memory = expected["memoryGiB"] * (1 << 30)
+    if value.get("osCpuCount") != cpu_count or value.get("affinityCpuCount") != cpu_count:
+        return False
+    if not isinstance(memory_total, int) or not expected_memory - int(1.5 * (1 << 30)) <= memory_total <= expected_memory + (1 << 28):
+        return False
+    if cpu_quota is not None and abs(float(cpu_quota) - cpu_count) > 0.05:
+        return False
+    memory_limit = value.get("memoryMaxBytes")
+    return memory_limit is None or expected_memory - int(1.5 * (1 << 30)) <= memory_limit <= expected_memory + (1 << 28)
+
+
+def _cold_response_verification(row: dict[str, Any], provenance: dict[str, Any]) -> tuple[bool, str | None]:
+    evidence = row.get("coldEvidence")
+    response = row.get("response")
+    if not isinstance(evidence, dict):
+        return False, "analysis_response_missing"
+    evidence_boot_id = evidence.get("responseBootId")
+    if not _valid_boot_id(evidence_boot_id) or row.get("responseBootId") != evidence_boot_id:
+        return False, "analysis_boot_id_missing"
+    if not isinstance(response, dict):
+        return False, "analysis_response_missing"
+
+    expected_instance_type = row.get("expectedInstanceType")
+    condition = row.get("condition")
+    if not isinstance(expected_instance_type, str) and isinstance(condition, dict):
+        expected_instance_type = condition.get("instanceType")
+    if expected_instance_type not in CONTAINER_SIZES:
+        return False, "expected_instance_type_missing"
+    if not isinstance(condition, dict) or condition.get("instanceType") != expected_instance_type:
+        return False, "condition_instance_type_mismatch"
+    boot_id = response.get("driverBootId")
+    if not _valid_boot_id(boot_id) or boot_id != evidence_boot_id:
+        return False, "analysis_boot_id_missing"
+
+    runtime = response.get("runtime")
+    if (
+        not _valid_cold_runtime(runtime, expected_instance_type, boot_id)
+        or evidence.get("responseRuntime") != runtime
+        or row.get("runtime") != runtime
+    ):
+        return False, "analysis_runtime_invalid"
+    if response.get("expectedInstanceType") != expected_instance_type:
+        return False, "analysis_instance_type_mismatch"
+
+    target_id = row.get("targetId")
+    segment_id = row.get("segmentId")
+    expected_build_id = provenance.get("buildId")
+    attempt_no = row.get("attemptNo")
+    if (
+        not isinstance(target_id, str) or response.get("targetId") != target_id
+        or not isinstance(segment_id, str) or response.get("segmentId") != segment_id
+        or type(attempt_no) is not int or attempt_no < 1
+        or target_id != f"bench-{expected_instance_type}-{expected_build_id}-{segment_id}-cold-trial-{attempt_no}"
+        or response.get("targetInstanceType") != expected_instance_type
+        or response.get("expectedBuildId") != expected_build_id
+        or response.get("containerApp") != row.get("containerApp")
+        or response.get("containerClass") != row.get("containerClass")
+        or response.get("containerBinding") != row.get("containerBinding")
+    ):
+        return False, "analysis_target_identity_mismatch"
+    expected_container = {
+        "standard-2": (
+            "meeshogi-analysis-mvp-staging-benchmark-standard-2",
+            "BenchmarkStandard2Container",
+            "ANALYSIS_BENCHMARK_STANDARD_2",
+        ),
+        "standard-3": (
+            "meeshogi-analysis-mvp-staging-benchmark-standard-3",
+            "BenchmarkStandard3Container",
+            "ANALYSIS_BENCHMARK_STANDARD_3",
+        ),
+    }[expected_instance_type]
+    if (row.get("containerApp"), row.get("containerClass"), row.get("containerBinding")) != expected_container:
+        return False, "analysis_target_identity_mismatch"
+
+    expected_git_commit = provenance.get("gitCommit")
+    expected_digests = provenance.get("identityDigests")
+    response_digests = response.get("identityDigests")
+    if (
+        row.get("driverIdentityConfirmed") is not True
+        or not isinstance(expected_build_id, str)
+        or row.get("expectedBuildId") != expected_build_id
+        or row.get("responseBuildId") != expected_build_id
+        or response.get("buildId") != expected_build_id
+        or not isinstance(expected_git_commit, str)
+        or response.get("gitCommit") != expected_git_commit
+        or not _valid_identity_digests(expected_digests)
+        or row.get("identityDigests") != expected_digests
+        or row.get("responseIdentityDigests") != expected_digests
+        or response_digests != expected_digests
+    ):
+        return False, "analysis_identity_unconfirmed"
+    return True, None
+
+
 def _row_instance(row: dict[str, Any]) -> tuple[str | None, str | None]:
     direct_instance, direct_boot = row.get("expectedInstanceType"), row.get("driverBootId")
     if isinstance(direct_instance, str) and isinstance(direct_boot, str):
@@ -1062,31 +1184,37 @@ def aggregate_records(
         for row in records if row.get("recordType") == "game-summary"
     ]
     cold_rows = [row for row in attempts if row.get("mode") == "cold"]
-    verified_new_instance = sum(
-        bool(
-            isinstance(row.get("targetId"), str)
-            and isinstance(row.get("segmentId"), str)
-            and isinstance(row.get("unusedNameEvidence"), dict)
-            and row["unusedNameEvidence"].get("allowlistedAtDeploy") is True
-            and row["unusedNameEvidence"].get("priorRunnerUseCount") == 0
-            and row["unusedNameEvidence"].get("healthOrWarmupBeforeFirstAnalysis") is False
-            and isinstance(row.get("requestStartWall"), str)
-        )
+    cold_verifications = [_cold_response_verification(row, provenance) for row in cold_rows]
+    unused_names_verified = [
+        isinstance(row.get("targetId"), str)
+        and isinstance(row.get("segmentId"), str)
+        and isinstance(row.get("unusedNameEvidence"), dict)
+        and row["unusedNameEvidence"].get("allowlistedAtDeploy") is True
+        and row["unusedNameEvidence"].get("priorRunnerUseCount") == 0
+        and row["unusedNameEvidence"].get("healthOrWarmupBeforeFirstAnalysis") is False
+        and isinstance(row.get("requestStartWall"), str)
         for row in cold_rows
+    ]
+    verified_new_instance = sum(
+        unused and verified
+        for unused, (verified, _) in zip(unused_names_verified, cold_verifications)
     )
     cold_status: Counter[str] = Counter()
     cold_causes: Counter[str] = Counter()
-    for row in cold_rows:
+    cold_evidence_failures: list[str | None] = []
+    for index, row in enumerate(cold_rows):
+        response_verified, response_failure = cold_verifications[index]
+        evidence_failure = response_failure or (None if unused_names_verified[index] else "unused_target_name_unverified")
+        cold_evidence_failures.append(evidence_failure)
         status = _attempt_status(row)
-        evidence = row.get("coldEvidence")
-        response_boot_id = evidence.get("responseBootId") if isinstance(evidence, dict) else None
-        has_response_boot_id = _valid_boot_id(response_boot_id)
-        if not has_response_boot_id and status not in {"failure", "transport"}:
+        if evidence_failure is not None and status not in {"failure", "transport"}:
             cold_status["failure"] += 1
-            cold_causes["failure:analysis_boot_id_missing"] += 1
+            cold_causes[f"failure:cold_evidence_{evidence_failure}"] += 1
         else:
             cold_status[status if isinstance(status, str) else "unknown"] += 1
             cold_causes[_failure_cause(row)] += 1
+        if evidence_failure is not None and status in {"failure", "transport"}:
+            cold_causes[f"coldEvidence:{evidence_failure}"] += 1
     cold = {
         "label": "new-instance cold start",
         "idleSleepResumeVerified": False,
@@ -1095,6 +1223,8 @@ def aggregate_records(
         "incompleteRate": ratio(cold_status["incomplete"], len(cold_rows)),
         "failureRate": ratio(cold_status["failure"] + cold_status["transport"], len(cold_rows)),
         "verifiedNewInstanceTarget": ratio(verified_new_instance, len(cold_rows)),
+        "verifiedNewInstanceTargetBasis": "allowlisted unused target name plus a valid analysis response boot ID, expected runtime, target app/class/binding, build ID, git commit, and artifact identity digests",
+        "unusedNameEvidenceScope": "An unused allowlisted name proves only that the runner had not used that target name; it does not prove the Container started.",
         "firstHttpWallMs": value_stats([
             row.get("coldEvidence", {}).get("firstHttpWallMs")
             for row in cold_rows if isinstance(row.get("coldEvidence"), dict)
@@ -1116,16 +1246,17 @@ def aggregate_records(
                 "analysisResponseBootId": row.get("coldEvidence", {}).get("responseBootId") if isinstance(row.get("coldEvidence"), dict) else None,
                 "analysisResponseRuntime": row.get("coldEvidence", {}).get("responseRuntime") if isinstance(row.get("coldEvidence"), dict) else None,
                 "httpAttempts": row.get("coldEvidence", {}).get("httpAttempts") if isinstance(row.get("coldEvidence"), dict) else None,
-                "coldEvidenceFailure": (
-                    "analysis_boot_id_missing"
-                    if not _valid_boot_id(row.get("coldEvidence", {}).get("responseBootId"))
-                    else None
-                ) if isinstance(row.get("coldEvidence"), dict) else "analysis_boot_id_missing",
+                "coldEvidenceFailure": cold_evidence_failures[index],
+                "verifiedNewInstanceTarget": bool(unused_names_verified[index] and cold_verifications[index][0]),
+                "containerApp": row.get("containerApp"),
+                "containerClass": row.get("containerClass"),
+                "containerBinding": row.get("containerBinding"),
                 "unusedNameEvidence": row.get("unusedNameEvidence"),
                 "httpStatus": row.get("httpStatus"),
-                "status": row.get("response", {}).get("status") if isinstance(row.get("response"), dict) else "transport",
+                "failureCause": _failure_cause(row),
+                "status": _attempt_status(row),
             }
-            for row in cold_rows
+            for index, row in enumerate(cold_rows)
         ],
         "statusCounts": dict(cold_causes),
     }

@@ -21,7 +21,7 @@ from urllib.parse import urlsplit, urlunsplit
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
-from targeting import SINGLETON_TARGET_ID, targets_for_run
+from targeting import NORMAL_CONTAINER_TARGET, SINGLETON_TARGET_ID, targets_for_run
 
 
 DEFAULT_CONDITIONS = HERE / "conditions.json"
@@ -170,6 +170,13 @@ def build_run_fingerprint(
         raise ValueError("health response lacks the five validated identityDigests required for benchmark provenance")
     if health.get("status") != "ready" or not isinstance(health.get("driverVersion"), str) or not isinstance(health.get("contractVersion"), str):
         raise ValueError("health response is not ready or lacks driverVersion/contractVersion")
+    container_identity = {
+        "containerApp": health.get("containerApp"),
+        "containerClass": health.get("containerClass"),
+        "containerBinding": health.get("containerBinding"),
+    }
+    if any(not isinstance(value, str) or not value for value in container_identity.values()):
+        raise ValueError("health response lacks benchmark Container app/class/binding identity")
     value = {
         "imageRef": image_ref,
         "imageDigest": image_digest,
@@ -182,6 +189,7 @@ def build_run_fingerprint(
         "identityDigests": identities,
         "driverVersion": health["driverVersion"],
         "contractVersion": health["contractVersion"],
+        **container_identity,
         "conditionsSha256": sha256_file(conditions_path),
         "datasetSha256": sha256_file(dataset_path),
         "datasetManifestSha256": dataset_manifest_sha256,
@@ -345,6 +353,9 @@ def safe_health(payload: dict[str, Any] | None, http_status: int | None, elapsed
         "targetPurpose": payload.get("targetPurpose") if isinstance(payload.get("targetPurpose"), str) else None,
         "targetInstanceType": payload.get("targetInstanceType") if isinstance(payload.get("targetInstanceType"), str) else None,
         "expectedBuildId": payload.get("expectedBuildId") if isinstance(payload.get("expectedBuildId"), str) else None,
+        "containerApp": payload.get("containerApp") if isinstance(payload.get("containerApp"), str) else None,
+        "containerClass": payload.get("containerClass") if isinstance(payload.get("containerClass"), str) else None,
+        "containerBinding": payload.get("containerBinding") if isinstance(payload.get("containerBinding"), str) else None,
         "containerState": payload.get("containerState") if isinstance(payload.get("containerState"), str) else None,
         "containerStateLastChangeWall": payload.get("containerStateLastChangeWall") if isinstance(payload.get("containerStateLastChangeWall"), str) else None,
         "runtime": {
@@ -529,6 +540,9 @@ def stop_target(
         "targetId": target["targetId"],
         "segmentId": target.get("segmentId"),
         "targetPurpose": target.get("purpose"),
+        "containerApp": target.get("containerApp"),
+        "containerClass": target.get("containerClass"),
+        "containerBinding": target.get("containerBinding"),
         "expectedInstanceType": expected_instance_type or target.get("instanceType"),
         "expectedBuildId": expected_build_id or target.get("buildId"),
         "firstDispatchWall": first_dispatch_wall,
@@ -654,6 +668,7 @@ def main() -> int:
         "purpose": "capacity-control",
         "instanceType": None,
         "buildId": None,
+        **NORMAL_CONTAINER_TARGET,
     }
     with args.output.open("a", encoding="utf-8") as stream:
         if not stop_target(args.base_url, token, singleton_target, stream):
@@ -681,8 +696,13 @@ def main() -> int:
             run_start_health.get("targetId") != run_start_target["targetId"]
             or run_start_health.get("segmentId") != run_start_target["segmentId"]
             or run_start_health.get("expectedBuildId") != args.expected_build_id
+            or run_start_health.get("targetInstanceType") != expected_instance_type
+            or run_start_health.get("workerExpectedInstanceType") != expected_instance_type
+            or run_start_health.get("containerApp") != run_start_target["containerApp"]
+            or run_start_health.get("containerClass") != run_start_target["containerClass"]
+            or run_start_health.get("containerBinding") != run_start_target["containerBinding"]
         ):
-            raise ValueError("benchmark health returned a different target, segment, or bound build ID")
+            raise ValueError("benchmark health returned a different target, segment, Container class, or bound build ID")
         fingerprint = build_run_fingerprint(
             image_ref=args.image_ref,
             expected_build_id=args.expected_build_id,
@@ -728,6 +748,9 @@ def main() -> int:
                 "runId": run["runId"],
                 "mode": mode,
                 "expectedBuildId": args.expected_build_id,
+                "containerApp": run_start_target["containerApp"],
+                "containerClass": run_start_target["containerClass"],
+                "containerBinding": run_start_target["containerBinding"],
                 "runStartedWall": run_started_wall,
                 "fingerprint": fingerprint,
                 "healthAtRunStart": run_start_health,
@@ -739,6 +762,9 @@ def main() -> int:
                 "runId": run["runId"],
                 "mode": mode,
                 "expectedBuildId": args.expected_build_id,
+                "containerApp": run_start_target["containerApp"],
+                "containerClass": run_start_target["containerClass"],
+                "containerBinding": run_start_target["containerBinding"],
                 "runFingerprintSha256": fingerprint["fingerprintSha256"],
                 "healthAtRunStart": run_start_health,
             })
@@ -838,7 +864,13 @@ def main() -> int:
                     if since_health >= int(run.get("healthEveryRequests", 10)):
                         latest_health = health_snapshot(args.base_url, token, target=target)
                         since_health = 0
-                        if latest_health.get("buildId") != args.expected_build_id or latest_health.get("targetId") != target["targetId"]:
+                        if (
+                            latest_health.get("buildId") != args.expected_build_id
+                            or latest_health.get("targetId") != target["targetId"]
+                            or latest_health.get("containerApp") != target["containerApp"]
+                            or latest_health.get("containerClass") != target["containerClass"]
+                            or latest_health.get("containerBinding") != target["containerBinding"]
+                        ):
                             print("benchmark target health identity changed; stopping this segment", file=sys.stderr)
                             stop_failure = True
                             break
@@ -856,6 +888,7 @@ def main() -> int:
                 cold_trial_id = f"{run['runId']}-cold-trial-{attempt_no}" if mode == "cold" else None
                 unused_name_evidence = None if mode != "cold" else {
                     "allowlistedAtDeploy": True,
+                    "evidenceScope": "unused target name only; this does not prove the Container started",
                     "source": "runner raw ledger and unique build+segment+trial target name",
                     "priorRunnerUseCount": 0,
                     "healthOrWarmupBeforeFirstAnalysis": False,
@@ -883,6 +916,9 @@ def main() -> int:
                     "targetPurpose": target["purpose"],
                     "expectedInstanceType": expected_instance_type,
                     "coldTrialId": cold_trial_id,
+                    "containerApp": target["containerApp"],
+                    "containerClass": target["containerClass"],
+                    "containerBinding": target["containerBinding"],
                     "unusedNameEvidence": unused_name_evidence,
                     "requestStartWall": request_start,
                     "gameAttemptId": group_id,
@@ -928,6 +964,9 @@ def main() -> int:
                     "segmentId": target["segmentId"],
                     "unusedNameEvidence": unused_name_evidence,
                     "firstDispatchWall": request_start,
+                    "containerApp": target["containerApp"],
+                    "containerClass": target["containerClass"],
+                    "containerBinding": target["containerBinding"],
                     "firstHttpWallMs": elapsed_ms,
                     "timeToFirstSuccessMs": elapsed_ms if cold_success else None,
                     "httpAttempts": cold_http_attempts,
@@ -950,6 +989,9 @@ def main() -> int:
                     "datasetManifestSha256": dataset["manifestSha256"],
                     "expectedBuildId": args.expected_build_id,
                     "expectedInstanceType": expected_instance_type,
+                    "containerApp": target["containerApp"],
+                    "containerClass": target["containerClass"],
+                    "containerBinding": target["containerBinding"],
                     "runFingerprintSha256": fingerprint["fingerprintSha256"],
                     "imageDigest": fingerprint["imageDigest"],
                     "identityDigests": fingerprint["identityDigests"],

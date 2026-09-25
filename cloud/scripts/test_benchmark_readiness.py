@@ -34,6 +34,9 @@ def healthy_payload() -> dict:
         "expectedInstanceType": "standard-2",
         "workerBenchmarkEnabled": True,
         "workerExpectedInstanceType": "standard-2",
+        "containerApp": "meeshogi-analysis-mvp-staging-benchmark-standard-2",
+        "containerClass": "BenchmarkStandard2Container",
+        "containerBinding": "ANALYSIS_BENCHMARK_STANDARD_2",
         "driverVersion": "synthetic-test-driver",
         "contractVersion": "synthetic-test-contract",
         "runtime": {
@@ -126,6 +129,9 @@ class BenchmarkReadinessTests(unittest.TestCase):
                 "segmentId": "readiness-test",
                 "targetInstanceType": "standard-2",
                 "expectedBuildId": BUILD_ID,
+                "containerApp": "meeshogi-analysis-mvp-staging-benchmark-standard-2",
+                "containerClass": "BenchmarkStandard2Container",
+                "containerBinding": "ANALYSIS_BENCHMARK_STANDARD_2",
                 "containerState": "healthy",
                 "containerStateLastChangeWall": "2026-09-25T00:00:00.000Z",
             })

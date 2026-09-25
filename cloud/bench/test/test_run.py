@@ -85,9 +85,12 @@ class RunnerTests(unittest.TestCase):
         "status": "ready",
         "buildId": BUILD_ID,
         "gitCommit": GIT_COMMIT,
-            "driverBootId": "b" * 32,
-            "expectedInstanceType": "standard-2",
-            "driverVersion": "usi-driver-v1",
+        "driverBootId": "b" * 32,
+        "expectedInstanceType": "standard-2",
+        "containerApp": "meeshogi-analysis-mvp-staging-benchmark-standard-2",
+        "containerClass": "BenchmarkStandard2Container",
+        "containerBinding": "ANALYSIS_BENCHMARK_STANDARD_2",
+        "driverVersion": "usi-driver-v1",
             "contractVersion": "analysis-json-v1",
             "workerVersionId": "worker-version-id",
             "workerVersionTag": "benchmark-test",
@@ -106,6 +109,9 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(safe["buildId"], BUILD_ID)
         self.assertEqual(safe["gitCommit"], GIT_COMMIT)
         self.assertEqual(safe["driverBootId"], "b" * 32)
+        self.assertEqual(safe["containerApp"], "meeshogi-analysis-mvp-staging-benchmark-standard-2")
+        self.assertEqual(safe["containerClass"], "BenchmarkStandard2Container")
+        self.assertEqual(safe["containerBinding"], "ANALYSIS_BENCHMARK_STANDARD_2")
         self.assertEqual(safe["runtime"]["memoryMaxBytes"], 1234)
         self.assertEqual(safe["runtime"]["memTotalBytes"], 5_900_000_000)
         self.assertEqual(safe["runtime"]["rootDiskTotalBytes"], 25_000_000_000)
@@ -238,6 +244,9 @@ class RunnerTests(unittest.TestCase):
                     "targetId": preflight["targetId"], "segmentId": preflight["segmentId"],
                     "targetPurpose": "cold-preflight", "targetInstanceType": "standard-2",
                     "expectedBuildId": BUILD_ID, "containerState": "healthy",
+                    "containerApp": preflight["containerApp"],
+                    "containerClass": preflight["containerClass"],
+                    "containerBinding": preflight["containerBinding"],
                     "containerStateLastChangeWall": "2026-09-25T00:00:00.000Z",
                     "runtime": {
                         "driverBootId": "b" * 32, "expectedInstanceType": "standard-2",
@@ -315,6 +324,9 @@ class RunnerTests(unittest.TestCase):
                 "workerVersionId": "version-id",
                 "workerVersionTag": "tag",
                 "workerVersionTimestamp": "time",
+                "containerApp": "meeshogi-analysis-mvp-staging-benchmark-standard-2",
+                "containerClass": "BenchmarkStandard2Container",
+                "containerBinding": "ANALYSIS_BENCHMARK_STANDARD_2",
                 "identityDigests": {key: char * 64 for key, char in zip(runner.IDENTITY_DIGEST_KEYS, "abcde")},
             }
             image_ref = "registry.example/meeshogi@sha256:" + "f" * 64

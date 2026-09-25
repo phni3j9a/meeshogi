@@ -3,36 +3,19 @@ set -euo pipefail
 
 VERIFICATION_MODE=false
 BENCHMARK_MODE=false
-INSTANCE_TYPE="standard-2"
-INSTANCE_TYPE_SET=false
 RUN_MANIFESTS=()
 while (($#)); do
   case "$1" in
     --verification) VERIFICATION_MODE=true; shift ;;
     --benchmark) BENCHMARK_MODE=true; shift ;;
-    --instance-type)
-      (($# >= 2)) || { echo "--instance-type requires standard-2 or standard-3." >&2; exit 2; }
-      INSTANCE_TYPE="$2"
-      INSTANCE_TYPE_SET=true
-      shift 2
-      ;;
     --run-manifest)
       (($# >= 2)) || { echo "--run-manifest requires a JSON path." >&2; exit 2; }
       RUN_MANIFESTS+=("$2")
       shift 2
       ;;
-    *) echo "usage: deploy-staging.sh [--verification] [--benchmark --instance-type standard-2|standard-3 --run-manifest FILE ...]" >&2; exit 2 ;;
+    *) echo "usage: deploy-staging.sh [--verification] [--benchmark --run-manifest FILE ...]" >&2; exit 2 ;;
   esac
 done
-[[ "$INSTANCE_TYPE" == "standard-2" || "$INSTANCE_TYPE" == "standard-3" ]] || { echo "Unsupported Container instance type." >&2; exit 2; }
-if [[ "$BENCHMARK_MODE" == true && "$INSTANCE_TYPE_SET" != true ]]; then
-  echo "Benchmark deployment requires an explicit --instance-type." >&2
-  exit 2
-fi
-if [[ "$BENCHMARK_MODE" != true && "$INSTANCE_TYPE_SET" == true ]]; then
-  echo "--instance-type is available only with --benchmark." >&2
-  exit 2
-fi
 if [[ "$BENCHMARK_MODE" == true && ${#RUN_MANIFESTS[@]} -eq 0 ]]; then
   echo "Benchmark deployment requires at least one --run-manifest." >&2
   exit 2
@@ -76,7 +59,7 @@ fi
 if [[ "$VERIFICATION_MODE" == true ]]; then
   python3 "$SCRIPT_DIR/render-config.py" "$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST" --verification-stop-engine-once
 elif [[ "$BENCHMARK_MODE" == true ]]; then
-  RENDER_ARGS=("$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST" --benchmark --instance-type "$INSTANCE_TYPE" --build-id "$ANALYSIS_BUILD_ID")
+  RENDER_ARGS=("$CLOUD_DIR/wrangler.staging.jsonc" "$TEMP_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$IMAGE_DIGEST" --benchmark --build-id "$ANALYSIS_BUILD_ID")
   for manifest in "${RUN_MANIFESTS[@]}"; do
     RENDER_ARGS+=(--run-manifest "$manifest")
   done

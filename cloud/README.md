@@ -14,7 +14,7 @@ Cloudflare Containers require one Durable Object class and binding. This impleme
 
 The Python 3.12 driver uses only the standard library. It checks engine, model, options, source archive, source tree, and build identity before opening its HTTP listener. The `ubuntu:24.04` image provides a new enough glibc and libstdc++ for the engine; a Docker build-time USI/`isready` smoke applies the same `EvalDir=/opt/engine` and fixed options as the driver, so an incompatible base or unreadable model fails the image build. It starts a fresh engine process for each request and waits for it to exit. A busy request is rejected immediately. The search deadline is `movetime + 5 s`; on timeout the driver sends `stop`, waits up to 750 ms for a response, sends `SIGTERM`, then `SIGKILL` if needed, and always calls `wait()` to reap the child. The next request uses a new process. `bestmove resign` yields an incomplete result with `engineOutcome: "resign"` and no fabricated move.
 
-The image is `linux/amd64`. The worker config is only for `meeshogi-analysis-mvp-staging`, with one `standard-2` Container instance named `meeshogi-analysis-mvp-staging-analysis` and a digest-pinned Cloudflare managed registry image. `wrangler.staging.jsonc` is a template; scripts render a temporary config with the real account ID and image digest, then remove it. There is no public fault-injection route or public Container port.
+The image is `linux/amd64`. The Worker config is only for `meeshogi-analysis-mvp-staging`. The normal API uses one `standard-2` Container app (`meeshogi-analysis-mvp-staging-analysis`); benchmark mode has separate fixed `standard-2` and `standard-3` apps. All three use the same digest-pinned Cloudflare managed registry image and have `max_instances: 1`. `wrangler.staging.jsonc` is a template; scripts render a temporary config with the real account ID and image digest, then remove it. There is no public fault-injection route or public Container port.
 
 ## Offline checks
 
@@ -120,7 +120,13 @@ The verifier passes `--verification` only to its first deploy invocation; the no
 
 ## Issue #20 benchmark mode
 
-The operator benchmark uses authenticated `POST /internal/benchmark`, `GET /internal/benchmark/health`, and `POST /internal/benchmark/stop` routes. All are disabled on normal deploys. Benchmark deployment requires an explicit type, build ID, and one or more run manifests. The renderer binds a finite JSON allowlist of target names derived from each manifest's `segmentId`, expected type, and build ID. Arbitrary target names are rejected. Benchmark requests include both `targetId` and `segmentId`; normal `/internal/analyze` and `/internal/health` continue to use `analysis-mvp-singleton`. A singleton may still be alive from an earlier deployment; readiness and the runner stop it through the authenticated benchmark stop route before starting the named measurement target. Normal deploys render `max_instances: 1`; benchmark deploys render `max_instances: 2` for the temporary singleton/measurement transition. Analysis requests remain serial.
+The operator benchmark uses authenticated `POST /internal/benchmark`, `GET /internal/benchmark/health`, and `POST /internal/benchmark/stop` routes. All are disabled on normal deploys. Benchmark deployment requires a build ID and one or more run manifests. The renderer binds a finite JSON allowlist of target names derived from each manifest's `segmentId`, expected type, and build ID. Arbitrary target names are rejected. Benchmark requests include both `targetId` and `segmentId`; normal `/internal/analyze` and `/internal/health` continue to use `analysis-mvp-singleton` on `ANALYSIS_CONTAINER`. Normal deploys still define the two benchmark classes/apps and their migration, but benchmark mode is off and no normal route addresses their bindings. Benchmark health, analysis, terminal handling, and stop use the same target-type-to-binding map. Each benchmark app remains fixed at `max_instances: 1`, so the standard-2 app is never resized to standard-3 or vice versa. A singleton may still be alive from an earlier deployment; readiness and the runner stop it through the authenticated benchmark stop route before starting a named measurement target. Analysis requests remain serial.
+
+The three Container classes are `AnalysisContainer` (`ANALYSIS_CONTAINER`, normal app, fixed standard-2), `BenchmarkStandard2Container` (`ANALYSIS_BENCHMARK_STANDARD_2`, benchmark standard-2 app), and `BenchmarkStandard3Container` (`ANALYSIS_BENCHMARK_STANDARD_3`, benchmark standard-3 app). Migration `v2` adds both benchmark classes with one SQLite migration tag. Each class passes its own fixed expected type into the container environment; benchmark conditions and target IDs must match that type. These are lifecycle-only Durable Objects: no app storage, queue, or scheduler is added.
+
+#### Why benchmark targets use two fixed apps
+
+In the B-005 staging run (image `3393382f`, build `a127e749`), a fresh standard-3 target reported 2 CPUs and `MemTotal=8587268096` bytes, and the reference pilot completed 3/3 positions. A later standard-2 config on the same app reported a 2-CPU / 8-GiB runtime after 22 readiness polls; readiness refused it, although the app health view showed two healthy VMs. The single-app resize result was not accepted as a standard-2 pilot. This observation motivated separate standard-2 and standard-3 apps, each fixed to its declared type. Reuse of previously provisioned VMs is one possible explanation, not a confirmed cause; Cloudflare's [Container lifecycle documentation](https://developers.cloudflare.com/containers/concepts/architecture/) describes prewarming and cold starts but does not establish the cause of this resize mismatch. No running-instance count or billing conclusion is inferred from that health display.
 
 `bench/conditions.json` is the shared condition allowlist: 48 candidate cells (instance type, Threads, movetime, and MultiPV) plus the 10-second standard-3 reference. All conditions request Hash 64 MiB. The Worker and driver resolve `conditionId` from the checked-in manifest. The deploy-rendered target allowlist only includes names for supplied run manifests. Benchmark health, analysis results, and terminal-position handling use the same listed target. Each response includes target ID/segment, expected type/build, actual runtime, boot ID, and Container lifecycle evidence. A request is rejected if the condition, target, deployed build, or observed runtime disagrees. `/internal/health` remains the singleton health route. It reports the driver boot ID, expected instance type, visible CPU/affinity/cgroup CPU quota and memory limit, `/proc/meminfo` MemTotal, root filesystem total bytes, and the five non-secret `identityDigests` for engine, weight, options, and source. Staging health also reports the Worker version ID when Cloudflare supplies the configured `version_metadata` binding. It does not invent missing platform values.
 
@@ -137,28 +143,31 @@ Build the private image in the authorized Main environment using the existing pr
 ```sh
 export ANALYSIS_IMAGE_REF='registry.cloudflare.com/<account>/meeshogi-analysis-mvp-staging@sha256:<digest>'
 export ANALYSIS_BUILD_ID='<32-hex value printed by build-push-image.sh>'
-bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-3 --run-manifest cloud/bench/manifests/pilot-reference-standard-3.json
+bash cloud/scripts/deploy-staging.sh --benchmark \
+  --run-manifest cloud/bench/manifests/pilot-reference-standard-3.json \
+  --run-manifest cloud/bench/manifests/pilot-standard-2.json
 python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3 --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/pilot-reference-standard-3.json --evidence-file /tmp/issue20-bench/pilot.jsonl
 python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/pilot-reference-standard-3.json --output /tmp/issue20-bench/pilot.jsonl
 
 # Only after the fresh standard-3 pilot proves 2 vCPU / 8 GiB:
-bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-2 --run-manifest cloud/bench/manifests/pilot-standard-2.json
 python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2 --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/pilot-standard-2.json --evidence-file /tmp/issue20-bench/pilot.jsonl
 python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/pilot-standard-2.json --output /tmp/issue20-bench/pilot.jsonl
 ```
+
+The pilot deployment allowlists both small manifests, but each request is routed only to the app fixed for its condition type. If either class fails CPU/affinity, `MemTotal`, build, or identity readiness, stop before running that pilot or the full matrix. If the newly isolated standard-2 app still fails its runtime check, keep the existing refusal guard and ask for a new decision before measuring; do not repeat a single-app resize experiment.
 
 Before readiness or runner commands, set `ANALYSIS_STAGING_URL` and export `ANALYSIS_INTERNAL_TOKEN` using the existing silent prompt. The Python operator tools send a non-default User-Agent to avoid Cloudflare's Python-urllib 1010 response and never store or print the token. Pilot rows use separate run IDs and should not be mixed into full-run files used for profile comparison.
 
 ### Full positions matrix and aggregation
 
-Each condition has to run only while its declared instance type is deployed. The first-pass manifests include one attempt for all 48 candidate cells and three reference attempts; each instance type has a 90-minute run budget, leaving time in the six-hour total plan for candidate repeats, game timing and cold checks. The runner stops at its manifest's request/time limits and every failed HTTP attempt is retained.
+Each condition runs only through its fixed type app. The first-pass manifests include one attempt for all 48 candidate cells and three reference attempts; each instance type has a 90-minute run budget, leaving time in the six-hour total plan for candidate repeats, game timing and cold checks. The runner stops at its manifest's request/time limits and every failed HTTP attempt is retained. The manifests stay separate because the deploy allowlist is bounded; deploying another manifest changes the finite target list, never an app's `instance_type`.
 
 ```sh
-bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-2 --run-manifest cloud/bench/manifests/first-pass-standard-2.json
+bash cloud/scripts/deploy-staging.sh --benchmark --run-manifest cloud/bench/manifests/first-pass-standard-2.json
 python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-2 --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/first-pass-standard-2.json --evidence-file /tmp/issue20-bench/full.jsonl
 python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/first-pass-standard-2.json --output /tmp/issue20-bench/full.jsonl
 
-bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-3 --run-manifest cloud/bench/manifests/first-pass-standard-3.json
+bash cloud/scripts/deploy-staging.sh --benchmark --run-manifest cloud/bench/manifests/first-pass-standard-3.json
 python3 cloud/scripts/benchmark-readiness.py --expected-instance-type standard-3 --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/first-pass-standard-3.json --evidence-file /tmp/issue20-bench/full.jsonl
 python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/first-pass-standard-3.json --output /tmp/issue20-bench/full.jsonl
 
@@ -171,13 +180,13 @@ After reviewing the first-pass summary, Main selects at most four candidate cell
 
 `mode: "game"` reads `bench/dataset/game.json` and analyzes its positions in ply order for each condition/repetition. It writes one game summary with total serial HTTP wall time. Use one run manifest per chosen candidate condition and cap each at 1,800 seconds; if chosen cells use both instance types, deploy and run them separately.
 
-Cold measurements are labelled **new-instance cold start**. Each repetition has a distinct allowlisted target name containing type, build, segment, and trial number. A separate preflight target supplies build and driver fingerprints, then is stopped before the first cold trial. The runner sends no health or warm-up request to a trial target before its first analysis, records unused-name evidence, first dispatch wall time, every HTTP attempt, response runtime/boot ID, first HTTP wall time, and time to the first successful analysis. The current runner performs one HTTP attempt per trial and retains failures; a failure is not assigned a new target or counted as a new trial. Each target is destroyed and stopped state is confirmed before the next trial. This measures the first start of a new named Container. Idle-sleep resume remains unverified; the earlier same-boot response after more than 6.5 minutes idle remains an observation for that environment and trial.
+Cold measurements are labelled **new-instance cold start**. Each repetition has a distinct allowlisted target name containing type, build, segment, and trial number. A separate preflight target supplies build and driver fingerprints, then is stopped before the first cold trial. The runner sends no health or warm-up request to a trial target before its first analysis, records unused-name evidence, first dispatch wall time, every HTTP attempt, response runtime/boot ID/identity, first HTTP wall time, and time to the first successful analysis. An unused allowlisted name proves only that the runner had not used that name; it does not prove a Container started. `verifiedNewInstanceTarget` counts a trial only when that unused-name evidence is paired with a valid analysis response boot ID, expected CPU/affinity/MemTotal runtime, target app/class/binding, build ID, git commit, and artifact digests. Failed or interrupted trials remain in the attempts denominator and retain their HTTP/Worker failure cause plus any cold-evidence failure reason. A failure is not assigned a new target or counted as a new trial. After destroy, the Worker polls `getState()` for at most five seconds at 100 ms intervals without another fetch; only `stopped` or `stopped_with_code` is confirmed. Each target's terminal state is confirmed before the next trial. This measures the first start of a new named Container. Idle-sleep resume remains unverified; the earlier same-boot response after more than 6.5 minutes idle remains an observation for that environment and trial.
 
 ```sh
-bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-2 --run-manifest cloud/bench/manifests/cold-standard-2.json
+bash cloud/scripts/deploy-staging.sh --benchmark --run-manifest cloud/bench/manifests/cold-standard-2.json
 python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/cold-standard-2.json --output /tmp/issue20-bench/cold.jsonl
 
-bash cloud/scripts/deploy-staging.sh --benchmark --instance-type standard-3 --run-manifest cloud/bench/manifests/cold-standard-3.json
+bash cloud/scripts/deploy-staging.sh --benchmark --run-manifest cloud/bench/manifests/cold-standard-3.json
 python3 cloud/bench/run.py --expected-build-id "$ANALYSIS_BUILD_ID" --manifest cloud/bench/manifests/cold-standard-3.json --output /tmp/issue20-bench/cold.jsonl
 python3 cloud/bench/aggregate.py --input /tmp/issue20-bench/full.jsonl /tmp/issue20-bench/cold.jsonl --json-out /tmp/issue20-bench/aggregate.json --markdown-out /tmp/issue20-bench/aggregate.md
 ```
@@ -186,7 +195,7 @@ The cost report applies the public Container rates and Worker/DO request and dur
 
 ### Restore normal staging
 
-After measurements, redeploy without a benchmark flag, verify standard-2 and benchmark-off via health, then run the existing #19 smoke:
+After measurements, confirm that every known target stop returned a terminal state in the raw evidence. Restore the normal deploy. It continues to declare the two benchmark-only classes/apps and their `v2` migration, but drops benchmark vars/allowlist so benchmark routes return 404 and normal API traffic remains on the standard-2 singleton. Verify the normal Container's actual CPU/affinity/MemTotal and benchmark-off health, then run the existing #19 smoke:
 
 ```sh
 bash cloud/scripts/deploy-staging.sh
@@ -196,7 +205,7 @@ python3 cloud/scripts/smoke-staging.py
 
 The readiness check polls for at most two minutes by default (change with `--max-wait-seconds` and `--poll-interval-seconds`) and prints one non-secret JSON evidence line per poll. It succeeds only when Worker/driver deployment flags agree, `osCpuCount` and CPU affinity both equal the requested vCPU count (standard-2: 1, standard-3: 2), and MemTotal is in the expected memory range (6 or 8 GiB, allowing 1.5 GiB VM overhead and 0.25 GiB above). Cgroup CPU quota and memory limits are checked when exposed, but are not required; missing facts remain null. The output distinguishes a stale or contract-mismatched container, deployment-flag lag, wrong CPU count, and missing or out-of-range MemTotal. Root filesystem total bytes are reported as an observation and are not used to infer the Container size. The smoke is the separate normal-analysis check. Both require `ANALYSIS_STAGING_URL` and the existing token environment.
 
-After an image change or instance-type switch, the Worker can temporarily report new vars while an older Container still answers health, or the old Container can keep serving until a later deploy replaces it. Re-run readiness and compare the boot ID and all runtime facts. If the old health contract or boot ID persists, run a second deploy (for example, a normal deploy followed by the intended benchmark deploy), then check readiness again before sending measurements.
+The fixed benchmark apps have no type-switch path: each readiness check names the target for its declared type and checks the matching app/class/binding as well as runtime and build. If a fixed app fails that check, do not start measurements. A standard-2 failure in the normal singleton also means normal staging has not been restored, regardless of the template's declared type. The benchmark-only class and app definitions remain in the Wrangler config after restore; they are not deleted or used by the normal API.
 
 ## Remaining limits
 

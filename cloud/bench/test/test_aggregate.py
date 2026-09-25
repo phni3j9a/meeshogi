@@ -436,6 +436,98 @@ class AggregateTests(unittest.TestCase):
         self.assertFalse(result["coldStart"]["idleSleepResumeVerified"])
         self.assertEqual(result["coldStart"]["verifiedNewInstanceTarget"], {"numerator": 0, "denominator": 1, "rate": 0})
 
+    def test_cold_http_502_unused_name_is_not_a_verified_new_instance(self) -> None:
+        row = {
+            "recordType": "attempt", "runId": "cold-failed", "mode": "cold", "attemptNo": 1,
+            "conditionId": CANDIDATE["conditionId"], "condition": CANDIDATE,
+            "positionId": "p1", "positionSha256": "0" * 64,
+            "targetId": "bench-standard-3-" + BUILD_ID + "-failed-cold-trial-1",
+            "segmentId": "failed", "expectedInstanceType": "standard-3",
+            "containerApp": "meeshogi-analysis-mvp-staging-benchmark-standard-3",
+            "containerClass": "BenchmarkStandard3Container",
+            "containerBinding": "ANALYSIS_BENCHMARK_STANDARD_3",
+            "requestStartWall": "2026-09-25T00:00:00.000Z", "httpStatus": 502,
+            "response": None, "responseBootId": None, "responseBuildId": None,
+            "responseIdentityDigests": None, "driverIdentityConfirmed": False,
+            "workerFailure": {
+                "schemaVersion": 1, "status": "failure",
+                "failure": {"code": "engine_error", "message": "Analysis failed."},
+            },
+            "unusedNameEvidence": {
+                "allowlistedAtDeploy": True,
+                "evidenceScope": "unused target name only; this does not prove the Container started",
+                "priorRunnerUseCount": 0,
+                "healthOrWarmupBeforeFirstAnalysis": False,
+            },
+            "coldEvidence": {
+                "responseBootId": None,
+                "responseRuntime": None,
+                "httpAttempts": [{"httpStatus": 502}],
+            },
+        }
+        result = aggregate_with_fixture_hash(add_provenance([row]), {})
+        cold = result["coldStart"]
+        self.assertEqual(cold["attempts"], 1)
+        self.assertEqual(cold["failureRate"], {"numerator": 1, "denominator": 1, "rate": 1})
+        self.assertEqual(cold["verifiedNewInstanceTarget"], {"numerator": 0, "denominator": 1, "rate": 0})
+        self.assertEqual(cold["trials"][0]["coldEvidenceFailure"], "analysis_boot_id_missing")
+        self.assertFalse(cold["trials"][0]["verifiedNewInstanceTarget"])
+        self.assertEqual(cold["statusCounts"]["failure:engine_error"], 1)
+        self.assertEqual(cold["statusCounts"]["coldEvidence:analysis_boot_id_missing"], 1)
+
+    def test_cold_verified_new_instance_requires_response_runtime_and_identity(self) -> None:
+        boot_id = "b" * 32
+        runtime = {
+            "expectedInstanceType": "standard-3",
+            "driverBootId": boot_id,
+            "osCpuCount": 2,
+            "affinityCpuCount": 2,
+            "cpuMax": None,
+            "cpuQuota": 2,
+            "memoryMaxBytes": 8 * (1 << 30),
+            "memTotalBytes": 8 * (1 << 30),
+            "rootDiskTotalBytes": 16 * (1 << 30),
+        }
+        target_id = "bench-standard-3-" + BUILD_ID + "-verified-cold-trial-1"
+        row = {
+            "recordType": "attempt", "runId": "cold-verified", "mode": "cold", "attemptNo": 1,
+            "conditionId": CANDIDATE["conditionId"], "condition": CANDIDATE,
+            "positionId": "p1", "positionSha256": "0" * 64,
+            "targetId": target_id, "segmentId": "verified", "expectedInstanceType": "standard-3",
+            "containerApp": "meeshogi-analysis-mvp-staging-benchmark-standard-3",
+            "containerClass": "BenchmarkStandard3Container",
+            "containerBinding": "ANALYSIS_BENCHMARK_STANDARD_3",
+            "expectedBuildId": BUILD_ID, "responseBuildId": BUILD_ID,
+            "requestStartWall": "2026-09-25T00:00:00.000Z", "httpStatus": 200,
+            "driverIdentityConfirmed": True, "responseBootId": boot_id,
+            "runtime": runtime,
+            "unusedNameEvidence": {
+                "allowlistedAtDeploy": True,
+                "evidenceScope": "unused target name only; this does not prove the Container started",
+                "priorRunnerUseCount": 0,
+                "healthOrWarmupBeforeFirstAnalysis": False,
+            },
+            "response": {
+                "status": "success", "expectedInstanceType": "standard-3", "driverBootId": boot_id,
+                "runtime": runtime, "targetId": target_id, "segmentId": "verified",
+                "targetInstanceType": "standard-3",
+                "expectedBuildId": BUILD_ID,
+                "containerApp": "meeshogi-analysis-mvp-staging-benchmark-standard-3",
+                "containerClass": "BenchmarkStandard3Container",
+                "containerBinding": "ANALYSIS_BENCHMARK_STANDARD_3",
+            },
+            "coldEvidence": {
+                "responseBootId": boot_id, "responseRuntime": runtime,
+                "httpAttempts": [{"httpStatus": 200}],
+            },
+        }
+        result = aggregate_with_fixture_hash(add_provenance([row]), {})
+        cold = result["coldStart"]
+        self.assertEqual(cold["failureRate"], {"numerator": 0, "denominator": 1, "rate": 0})
+        self.assertEqual(cold["verifiedNewInstanceTarget"], {"numerator": 1, "denominator": 1, "rate": 1})
+        self.assertIsNone(cold["trials"][0]["coldEvidenceFailure"])
+        self.assertTrue(cold["trials"][0]["verifiedNewInstanceTarget"])
+
 
 if __name__ == "__main__":
     unittest.main()

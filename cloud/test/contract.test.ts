@@ -20,7 +20,13 @@ import {
   legalMoves,
   validateBenchmarkDriverResult,
 } from '../src/contract';
-import { AnalysisContainer, handleRequest, type Env } from '../src/index';
+import {
+  AnalysisContainer,
+  BenchmarkStandard2Container,
+  BenchmarkStandard3Container,
+  handleRequest,
+  type Env,
+} from '../src/index';
 import { Position } from 'tsshogi';
 
 const STARTPOS = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1';
@@ -137,6 +143,7 @@ function benchmarkSuccess(sfen: string, conditionId: string): Record<string, any
 }
 
 const TEST_TARGET_ID = `bench-standard-2-${'d'.repeat(32)}-test-segment`;
+const TEST_TARGET_ID_STANDARD3 = `bench-standard-3-${'d'.repeat(32)}-test-segment`;
 const TEST_COLD_TARGET_ID = `${TEST_TARGET_ID}-cold-trial-1`;
 const TEST_SEGMENT_ID = 'test-segment';
 
@@ -148,13 +155,14 @@ function makeEnv(
   response?: (payload: unknown) => unknown | Response,
   token?: string,
   verificationFlag?: string,
-  containerHealth: Record<string, unknown> | Response = DRIVER_HEALTH,
+  containerHealth: Record<string, unknown> | Response | ((bindingName: string) => Record<string, unknown> | Response) = DRIVER_HEALTH,
   benchmarkEnabled = false,
-  expectedInstanceType: 'standard-2' | 'standard-3' = 'standard-2',
+  destroyDelayReads = 0,
 ): Env & {
   calls: number[];
   forwardedPaths: string[];
   targetNames: string[];
+  targetBindings: string[];
   fetchTargets: string[];
   destroyTargets: string[];
   stateReads: string[];
@@ -162,13 +170,16 @@ function makeEnv(
   const calls: number[] = [];
   const forwardedPaths: string[] = [];
   const targetNames: string[] = [];
+  const targetBindings: string[] = [];
   const doStates = new Map<string, { status: 'running' | 'healthy' | 'stopping' | 'stopped' | 'stopped_with_code'; lastChange: number; exitCode?: number }>();
+  const stopReadsRemaining = new Map<string, number>();
   const fetchTargets: string[] = [];
   const destroyTargets: string[] = [];
   const stateReads: string[] = [];
-  const binding = {
+  const createBinding = (bindingName: string) => ({
     getByName: (name: string) => {
       targetNames.push(name);
+      targetBindings.push(bindingName);
       if (!doStates.has(name)) doStates.set(name, { status: 'stopped', lastChange: 0 });
       return {
       fetch: async (request: Request) => {
@@ -178,7 +189,8 @@ function makeEnv(
         const path = new URL(request.url).pathname;
         forwardedPaths.push(path);
         if (path === '/health') {
-          return containerHealth instanceof Response ? containerHealth : Response.json(containerHealth);
+          const health = typeof containerHealth === 'function' ? containerHealth(bindingName) : containerHealth;
+          return health instanceof Response ? health : Response.json(health);
         }
         const payload = await request.json();
         const result = response
@@ -190,43 +202,83 @@ function makeEnv(
       },
       getState: async () => {
         stateReads.push(name);
+        const remaining = stopReadsRemaining.get(name);
+        if (remaining !== undefined) {
+          if (remaining <= 0) {
+            doStates.set(name, { status: 'stopped', lastChange: 1790340001000 });
+            stopReadsRemaining.delete(name);
+          } else {
+            stopReadsRemaining.set(name, remaining - 1);
+          }
+        }
         return doStates.get(name)!;
       },
       destroy: async () => {
         destroyTargets.push(name);
-        doStates.set(name, { status: 'stopped', lastChange: 1790340001000 });
+        if (destroyDelayReads > 0) {
+          doStates.set(name, { status: 'stopping', lastChange: 1790340000001 });
+          stopReadsRemaining.set(name, destroyDelayReads);
+        } else {
+          doStates.set(name, { status: 'stopped', lastChange: 1790340001000 });
+        }
       },
       };
     },
-  };
+  });
+  const normalBinding = createBinding('ANALYSIS_CONTAINER');
+  const standard2Binding = createBinding('ANALYSIS_BENCHMARK_STANDARD_2');
+  const standard3Binding = createBinding('ANALYSIS_BENCHMARK_STANDARD_3');
   return {
     ANALYSIS_INTERNAL_TOKEN: token,
     ANALYSIS_VERIFY_STOP_ENGINE_ONCE: verificationFlag,
     ANALYSIS_BENCHMARK_ENABLED: benchmarkEnabled ? '1' : undefined,
-    ANALYSIS_EXPECTED_INSTANCE_TYPE: expectedInstanceType,
+    ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2',
     ANALYSIS_BENCHMARK_BUILD_ID: 'd'.repeat(32),
     ANALYSIS_BENCHMARK_TARGETS: JSON.stringify([
       {
         targetId: TEST_TARGET_ID,
         segmentId: TEST_SEGMENT_ID,
-        instanceType: expectedInstanceType,
+        instanceType: 'standard-2',
         buildId: 'd'.repeat(32),
         purpose: 'measurement',
+        containerApp: 'meeshogi-analysis-mvp-staging-benchmark-standard-2',
+        containerClass: 'BenchmarkStandard2Container',
+        containerBinding: 'ANALYSIS_BENCHMARK_STANDARD_2',
       },
       {
         targetId: TEST_COLD_TARGET_ID,
         segmentId: TEST_SEGMENT_ID,
-        instanceType: expectedInstanceType,
+        instanceType: 'standard-2',
         buildId: 'd'.repeat(32),
         purpose: 'cold-trial',
         coldTrialNo: 1,
+        containerApp: 'meeshogi-analysis-mvp-staging-benchmark-standard-2',
+        containerClass: 'BenchmarkStandard2Container',
+        containerBinding: 'ANALYSIS_BENCHMARK_STANDARD_2',
       },
-      { targetId: 'analysis-mvp-singleton', segmentId: 'preexisting-singleton', instanceType: null, buildId: null, purpose: 'capacity-control' },
+      {
+        targetId: TEST_TARGET_ID_STANDARD3,
+        segmentId: TEST_SEGMENT_ID,
+        instanceType: 'standard-3',
+        buildId: 'd'.repeat(32),
+        purpose: 'measurement',
+        containerApp: 'meeshogi-analysis-mvp-staging-benchmark-standard-3',
+        containerClass: 'BenchmarkStandard3Container',
+        containerBinding: 'ANALYSIS_BENCHMARK_STANDARD_3',
+      },
+      {
+        targetId: 'analysis-mvp-singleton', segmentId: 'preexisting-singleton', instanceType: null, buildId: null,
+        purpose: 'capacity-control', containerApp: 'meeshogi-analysis-mvp-staging-analysis',
+        containerClass: 'AnalysisContainer', containerBinding: 'ANALYSIS_CONTAINER',
+      },
     ]),
-    ANALYSIS_CONTAINER: binding as unknown as Env['ANALYSIS_CONTAINER'],
+    ANALYSIS_CONTAINER: normalBinding as unknown as Env['ANALYSIS_CONTAINER'],
+    ANALYSIS_BENCHMARK_STANDARD_2: standard2Binding as unknown as Env['ANALYSIS_BENCHMARK_STANDARD_2'],
+    ANALYSIS_BENCHMARK_STANDARD_3: standard3Binding as unknown as Env['ANALYSIS_BENCHMARK_STANDARD_3'],
     calls,
     forwardedPaths,
     targetNames,
+    targetBindings,
     fetchTargets,
     destroyTargets,
     stateReads,
@@ -267,11 +319,20 @@ describe('staging analysis Worker boundary', () => {
   it('passes the verification stop flag to the Container only when configured on the Worker', async () => {
     const verificationEnv = makeEnv(undefined, 'secret-token', '1');
     const normalEnv = makeEnv(undefined, 'secret-token');
+    const benchmarkEnv = makeEnv(undefined, 'secret-token', undefined, DRIVER_HEALTH, true);
     const verificationContainer = new AnalysisContainer({} as DurableObjectState<{}>, verificationEnv);
     const normalContainer = new AnalysisContainer({} as DurableObjectState<{}>, normalEnv);
+    const benchmarkStandard2 = new BenchmarkStandard2Container({} as DurableObjectState<{}>, {
+      ...benchmarkEnv, ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-3',
+    });
+    const benchmarkStandard3 = new BenchmarkStandard3Container({} as DurableObjectState<{}>, {
+      ...benchmarkEnv, ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2',
+    });
 
     expect(verificationContainer.envVars).toEqual({ ANALYSIS_VERIFY_STOP_ENGINE_ONCE: '1', ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
     expect(normalContainer.envVars).toEqual({ ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
+    expect(benchmarkStandard2.envVars).toEqual({ ANALYSIS_BENCHMARK_ENABLED: '1', ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
+    expect(benchmarkStandard3.envVars).toEqual({ ANALYSIS_BENCHMARK_ENABLED: '1', ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-3' });
 
     const health = new Request('https://staging.example/internal/health', {
       method: 'GET',
@@ -534,6 +595,74 @@ describe('staging analysis Worker boundary', () => {
     }
   });
 
+  it('routes standard-3 health, analysis, and terminal requests through its fixed binding', async () => {
+    const standard3Health = {
+      ...DRIVER_HEALTH,
+      expectedInstanceType: 'standard-3',
+      runtime: benchmarkRuntime('standard-3'),
+    };
+    const env = makeEnv(
+      undefined,
+      'secret-token',
+      undefined,
+      (bindingName) => bindingName === 'ANALYSIS_BENCHMARK_STANDARD_3' ? standard3Health : DRIVER_HEALTH,
+      true,
+    );
+    const conditionId = 'reference-standard-3-t2-10000ms-mpv3';
+    const headers = { authorization: 'Bearer secret-token', 'content-type': 'application/json' };
+
+    const health = await handleRequest(
+      new Request(`https://staging.example/internal/benchmark/health?targetId=${TEST_TARGET_ID_STANDARD3}`, {
+        method: 'GET', headers,
+      }),
+      env,
+    );
+    expect(health.status).toBe(200);
+    expect(await result(health)).toMatchObject({
+      targetId: TEST_TARGET_ID_STANDARD3,
+      targetInstanceType: 'standard-3',
+      containerApp: 'meeshogi-analysis-mvp-staging-benchmark-standard-3',
+      containerClass: 'BenchmarkStandard3Container',
+      containerBinding: 'ANALYSIS_BENCHMARK_STANDARD_3',
+    });
+
+    const analysis = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          sfen: STARTPOS, conditionId, targetId: TEST_TARGET_ID_STANDARD3, segmentId: TEST_SEGMENT_ID,
+        }),
+      }),
+      env,
+    );
+    expect(analysis.status).toBe(200);
+    expect(await result(analysis)).toMatchObject({
+      status: 'success', targetId: TEST_TARGET_ID_STANDARD3, targetInstanceType: 'standard-3',
+      containerApp: 'meeshogi-analysis-mvp-staging-benchmark-standard-3',
+      containerClass: 'BenchmarkStandard3Container',
+      containerBinding: 'ANALYSIS_BENCHMARK_STANDARD_3',
+    });
+
+    const terminal = await handleRequest(
+      new Request('https://staging.example/internal/benchmark', {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          sfen: TERMINAL_MATE, conditionId, targetId: TEST_TARGET_ID_STANDARD3, segmentId: TEST_SEGMENT_ID,
+        }),
+      }),
+      env,
+    );
+    expect(terminal.status).toBe(200);
+    expect(await result(terminal)).toMatchObject({
+      status: 'terminal', targetId: TEST_TARGET_ID_STANDARD3, targetInstanceType: 'standard-3',
+      containerClass: 'BenchmarkStandard3Container', containerBinding: 'ANALYSIS_BENCHMARK_STANDARD_3',
+    });
+    expect(env.targetNames).toEqual([TEST_TARGET_ID_STANDARD3, TEST_TARGET_ID_STANDARD3, TEST_TARGET_ID_STANDARD3]);
+    expect(env.targetBindings).toEqual([
+      'ANALYSIS_BENCHMARK_STANDARD_3', 'ANALYSIS_BENCHMARK_STANDARD_3', 'ANALYSIS_BENCHMARK_STANDARD_3',
+    ]);
+  });
+
   it('validates the captured real benchmark driver response using tsshogi root moves and the manifest condition', async () => {
     const realResponse = realBenchmarkResponseFixture as Record<string, unknown>;
     const condition = BENCHMARK_CONDITION_BY_ID.get('standard-2-t1-100ms-mpv2');
@@ -714,7 +843,10 @@ describe('staging analysis Worker boundary', () => {
     expect(await result(stopped)).toMatchObject({ stopped: true, containerState: 'stopped', stopCheckedWithoutFetch: true });
     expect(env.calls).toHaveLength(callsBeforeStop);
     expect(env.destroyTargets).toEqual([TEST_TARGET_ID]);
-    expect(env.stateReads.filter((name) => name === TEST_TARGET_ID)).toHaveLength(5);
+    expect(env.targetBindings).toEqual([
+      'ANALYSIS_BENCHMARK_STANDARD_2', 'ANALYSIS_BENCHMARK_STANDARD_2', 'ANALYSIS_BENCHMARK_STANDARD_2',
+    ]);
+    expect(env.stateReads.filter((name) => name === TEST_TARGET_ID)).toHaveLength(4);
 
     const arbitrary = await handleRequest(
       new Request('https://staging.example/internal/benchmark/stop', {
@@ -725,6 +857,51 @@ describe('staging analysis Worker boundary', () => {
       env,
     );
     expect(arbitrary.status).toBe(400);
+  });
+
+  it('routes standard-3 stop to its fixed app and confirms a delayed stopped state without fetching', async () => {
+    const standard3Health = {
+      ...DRIVER_HEALTH,
+      expectedInstanceType: 'standard-3',
+      runtime: benchmarkRuntime('standard-3'),
+    };
+    const env = makeEnv(
+      undefined,
+      'secret-token',
+      undefined,
+      (bindingName) => bindingName === 'ANALYSIS_BENCHMARK_STANDARD_3' ? standard3Health : DRIVER_HEALTH,
+      true,
+      2,
+    );
+    const headers = { authorization: 'Bearer secret-token', 'content-type': 'application/json' };
+    const warm = await handleRequest(
+      new Request(`https://staging.example/internal/benchmark/health?targetId=${TEST_TARGET_ID_STANDARD3}`, {
+        method: 'GET', headers,
+      }),
+      env,
+    );
+    expect(warm.status).toBe(200);
+
+    const callsBeforeStop = env.calls.length;
+    const stopped = await handleRequest(
+      new Request('https://staging.example/internal/benchmark/stop', {
+        method: 'POST', headers, body: JSON.stringify({ targetId: TEST_TARGET_ID_STANDARD3 }),
+      }),
+      env,
+    );
+    expect(stopped.status).toBe(200);
+    expect(await result(stopped)).toMatchObject({
+      stopped: true,
+      containerState: 'stopped',
+      containerApp: 'meeshogi-analysis-mvp-staging-benchmark-standard-3',
+      containerClass: 'BenchmarkStandard3Container',
+      containerBinding: 'ANALYSIS_BENCHMARK_STANDARD_3',
+      stopPollCount: 3,
+      stopCheckedWithoutFetch: true,
+    });
+    expect(env.targetBindings).toEqual(['ANALYSIS_BENCHMARK_STANDARD_3', 'ANALYSIS_BENCHMARK_STANDARD_3']);
+    expect(env.destroyTargets).toEqual([TEST_TARGET_ID_STANDARD3]);
+    expect(env.calls).toHaveLength(callsBeforeStop);
   });
 
   it('does not allow an analysis request field or header to toggle the verification stop', async () => {

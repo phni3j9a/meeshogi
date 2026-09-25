@@ -25,6 +25,8 @@ export interface Env {
   ANALYSIS_BENCHMARK_TARGETS?: string;
   CF_VERSION_METADATA?: WorkerVersionMetadata;
   ANALYSIS_CONTAINER: DurableObjectNamespace<AnalysisContainer>;
+  ANALYSIS_BENCHMARK_STANDARD_2: DurableObjectNamespace<BenchmarkStandard2Container>;
+  ANALYSIS_BENCHMARK_STANDARD_3: DurableObjectNamespace<BenchmarkStandard3Container>;
 }
 
 function workerVersionFields(env: Env): Record<string, string> {
@@ -44,6 +46,25 @@ const BENCHMARK_HEALTH_PATH = '/internal/benchmark/health';
 const BENCHMARK_STOP_PATH = '/internal/benchmark/stop';
 const SINGLETON_TARGET_ID = 'analysis-mvp-singleton';
 const TARGET_ID_RE = /^bench-(standard-2|standard-3)-[0-9a-f]{32}-[a-z0-9][a-z0-9-]{0,63}(?:-cold-trial-[1-9][0-9]*)?$/u;
+const NORMAL_CONTAINER_TARGET = {
+  containerApp: 'meeshogi-analysis-mvp-staging-analysis',
+  containerClass: 'AnalysisContainer',
+  containerBinding: 'ANALYSIS_CONTAINER',
+} as const;
+const BENCHMARK_CONTAINER_TARGETS = {
+  'standard-2': {
+    containerApp: 'meeshogi-analysis-mvp-staging-benchmark-standard-2',
+    containerClass: 'BenchmarkStandard2Container',
+    containerBinding: 'ANALYSIS_BENCHMARK_STANDARD_2',
+  },
+  'standard-3': {
+    containerApp: 'meeshogi-analysis-mvp-staging-benchmark-standard-3',
+    containerClass: 'BenchmarkStandard3Container',
+    containerBinding: 'ANALYSIS_BENCHMARK_STANDARD_3',
+  },
+} as const;
+const STOP_CONFIRM_TIMEOUT_MS = 5_000;
+const STOP_CONFIRM_INTERVAL_MS = 100;
 const IDENTITY_DIGEST_KEYS = [
   'engineSha256',
   'weightSha256',
@@ -60,8 +81,33 @@ export class AnalysisContainer extends Container<Env> {
     super(ctx, env);
     this.envVars = {
       ...(env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1' ? { ANALYSIS_VERIFY_STOP_ENGINE_ONCE: '1' } : {}),
+      ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2',
+    };
+  }
+}
+
+export class BenchmarkStandard2Container extends Container<Env> {
+  defaultPort = 8080;
+  sleepAfter = '5m';
+
+  constructor(ctx: DurableObjectState<{}>, env: Env) {
+    super(ctx, env);
+    this.envVars = {
       ...(env.ANALYSIS_BENCHMARK_ENABLED === '1' ? { ANALYSIS_BENCHMARK_ENABLED: '1' } : {}),
-      ...(env.ANALYSIS_EXPECTED_INSTANCE_TYPE ? { ANALYSIS_EXPECTED_INSTANCE_TYPE: env.ANALYSIS_EXPECTED_INSTANCE_TYPE } : {}),
+      ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2',
+    };
+  }
+}
+
+export class BenchmarkStandard3Container extends Container<Env> {
+  defaultPort = 8080;
+  sleepAfter = '5m';
+
+  constructor(ctx: DurableObjectState<{}>, env: Env) {
+    super(ctx, env);
+    this.envVars = {
+      ...(env.ANALYSIS_BENCHMARK_ENABLED === '1' ? { ANALYSIS_BENCHMARK_ENABLED: '1' } : {}),
+      ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-3',
     };
   }
 }
@@ -228,6 +274,9 @@ type BenchmarkTarget = {
   instanceType: 'standard-2' | 'standard-3' | null;
   buildId: string | null;
   purpose: 'measurement' | 'cold-preflight' | 'cold-trial' | 'capacity-control';
+  containerApp: string;
+  containerClass: string;
+  containerBinding: string;
   coldTrialNo?: number;
 };
 
@@ -254,7 +303,10 @@ function benchmarkTargetMap(env: Env): Map<string, BenchmarkTarget> | null {
     if (targets.has(row.targetId)) return null;
     if (row.targetId === SINGLETON_TARGET_ID) {
       if (row.segmentId !== 'preexisting-singleton' || row.purpose !== 'capacity-control'
-        || row.instanceType !== null || row.buildId !== null) return null;
+        || row.instanceType !== null || row.buildId !== null
+        || row.containerApp !== NORMAL_CONTAINER_TARGET.containerApp
+        || row.containerClass !== NORMAL_CONTAINER_TARGET.containerClass
+        || row.containerBinding !== NORMAL_CONTAINER_TARGET.containerBinding) return null;
       targets.set(row.targetId, row as BenchmarkTarget);
       continue;
     }
@@ -264,6 +316,10 @@ function benchmarkTargetMap(env: Env): Map<string, BenchmarkTarget> | null {
       || typeof row.buildId !== 'string'
       || !/^[0-9a-f]{32}$/u.test(row.buildId)
       || !['measurement', 'cold-preflight', 'cold-trial'].includes(row.purpose)) return null;
+    const containerTarget = BENCHMARK_CONTAINER_TARGETS[row.instanceType as 'standard-2' | 'standard-3'];
+    if (row.containerApp !== containerTarget.containerApp
+      || row.containerClass !== containerTarget.containerClass
+      || row.containerBinding !== containerTarget.containerBinding) return null;
     const trial = row.coldTrialNo;
     if (row.purpose === 'cold-trial' ? !Number.isSafeInteger(trial) || Number(trial) < 1 : trial !== undefined) return null;
     const targetPrefix = `bench-${String(row.instanceType)}-${row.buildId}-`;
@@ -284,9 +340,31 @@ function selectBenchmarkTarget(env: Env, targetId: unknown, segmentId?: unknown)
   const target = benchmarkTargetMap(env)?.get(targetId);
   if (!target || target.purpose === 'capacity-control') return null;
   if (typeof segmentId === 'string' && segmentId !== target.segmentId) return null;
-  if (target.instanceType !== env.ANALYSIS_EXPECTED_INSTANCE_TYPE
-    || target.buildId !== env.ANALYSIS_BENCHMARK_BUILD_ID) return null;
+  if (target.buildId !== env.ANALYSIS_BENCHMARK_BUILD_ID) return null;
   return target;
+}
+
+type ContainerStub<T extends Container> = ReturnType<typeof getContainer<T>>;
+type RoutedAnalysisContainer =
+  | ContainerStub<AnalysisContainer>
+  | ContainerStub<BenchmarkStandard2Container>
+  | ContainerStub<BenchmarkStandard3Container>;
+
+function containerForBenchmarkTarget(env: Env, target: BenchmarkTarget): RoutedAnalysisContainer {
+  if (target.instanceType === 'standard-2') {
+    return getContainer<BenchmarkStandard2Container>(env.ANALYSIS_BENCHMARK_STANDARD_2, target.targetId);
+  }
+  if (target.instanceType === 'standard-3') {
+    return getContainer<BenchmarkStandard3Container>(env.ANALYSIS_BENCHMARK_STANDARD_3, target.targetId);
+  }
+  throw new Error('Benchmark target has no fixed benchmark instance type.');
+}
+
+function containerForTarget(env: Env, target: BenchmarkTarget): RoutedAnalysisContainer {
+  if (target.purpose === 'capacity-control') {
+    return getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, target.targetId);
+  }
+  return containerForBenchmarkTarget(env, target);
 }
 
 function containerStateFields(state: ContainerStateView): Record<string, unknown> {
@@ -307,6 +385,9 @@ function benchmarkTargetFields(target: BenchmarkTarget, state?: ContainerStateVi
     targetPurpose: target.purpose,
     targetInstanceType: target.instanceType,
     expectedBuildId: target.buildId,
+    containerApp: target.containerApp,
+    containerClass: target.containerClass,
+    containerBinding: target.containerBinding,
     ...(state ? containerStateFields(state) : {}),
   };
 }
@@ -325,7 +406,7 @@ async function handleBenchmarkHealth(request: Request, env: Env): Promise<Respon
     return json(failure('invalid', 'Unknown benchmark target.'), 400);
   }
   try {
-    const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, target.targetId);
+    const container = containerForBenchmarkTarget(env, target);
     const response = await container.fetch(new Request('http://analysis-container/health', { method: 'GET' }));
     if (!response.ok) return json({ ...failure('engine_error', 'Analysis container health is unavailable.'), ...benchmarkTargetFields(target) }, 502);
     const text = await response.text();
@@ -345,12 +426,46 @@ async function handleBenchmarkHealth(request: Request, env: Env): Promise<Respon
       ...workerVersionFields(env),
       workerVerifyStopEngineOnceEnabled: env.ANALYSIS_VERIFY_STOP_ENGINE_ONCE === '1',
       workerBenchmarkEnabled: true,
-      workerExpectedInstanceType: env.ANALYSIS_EXPECTED_INSTANCE_TYPE ?? null,
+      workerExpectedInstanceType: target.instanceType,
       ...benchmarkTargetFields(target, state),
     });
   } catch {
     return json({ ...failure('engine_error', 'Analysis container health is unavailable.'), ...benchmarkTargetFields(target) }, 502);
   }
+}
+
+async function waitForStoppedState(
+  container: RoutedAnalysisContainer,
+  initialState: ContainerStateView,
+  deadline: number,
+): Promise<{ state: ContainerStateView; pollCount: number }> {
+  let state = initialState;
+  let pollCount = 0;
+  while (!isStopped(state)) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    if (pollCount > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(STOP_CONFIRM_INTERVAL_MS, remainingMs)));
+    }
+    const readRemainingMs = deadline - Date.now();
+    if (readRemainingMs <= 0) break;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let nextState: ContainerStateView | null;
+    try {
+      nextState = await Promise.race([
+        container.getState() as Promise<ContainerStateView>,
+        new Promise<null>((resolve) => {
+          timeout = setTimeout(() => resolve(null), readRemainingMs);
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
+    if (nextState === null) break;
+    state = nextState;
+    pollCount += 1;
+  }
+  return { state, pollCount };
 }
 
 async function handleBenchmarkStop(request: Request, env: Env): Promise<Response> {
@@ -366,21 +481,29 @@ async function handleBenchmarkStop(request: Request, env: Env): Promise<Response
   }
   const target = benchmarkTargetMap(env)?.get(record.targetId);
   if (!target) return json(failure('invalid', 'Unknown benchmark target.'), 400);
-  if (target.purpose !== 'capacity-control'
-    && (target.instanceType !== env.ANALYSIS_EXPECTED_INSTANCE_TYPE || target.buildId !== env.ANALYSIS_BENCHMARK_BUILD_ID)) {
+  if (target.purpose !== 'capacity-control' && target.buildId !== env.ANALYSIS_BENCHMARK_BUILD_ID) {
     return json(failure('invalid', 'Benchmark target is not bound to this deploy.'), 400);
   }
   try {
-    const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, target.targetId);
+    const container = containerForTarget(env, target);
     const stateBefore = await container.getState() as ContainerStateView;
-    if (!isStopped(stateBefore)) await container.destroy();
-    const stateAfter = await container.getState() as ContainerStateView;
+    let stateAfter = stateBefore;
+    let stopPollCount = 0;
+    if (!isStopped(stateBefore)) {
+      await container.destroy();
+      const deadline = Date.now() + STOP_CONFIRM_TIMEOUT_MS;
+      const confirmed = await waitForStoppedState(container, stateBefore, deadline);
+      stateAfter = confirmed.state;
+      stopPollCount = confirmed.pollCount;
+    }
     const stopped = isStopped(stateAfter);
     return json({
       stopped,
       ...benchmarkTargetFields(target, stateAfter),
       stateBefore: containerStateFields(stateBefore),
       stateAfter: containerStateFields(stateAfter),
+      stopPollCount,
+      stopConfirmTimeoutMs: STOP_CONFIRM_TIMEOUT_MS,
       stopCheckedWithoutFetch: true,
     }, stopped ? 200 : 409);
   } catch {
@@ -441,12 +564,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (typeof record.conditionId !== 'string') return json(failure('invalid', 'Unknown benchmark condition.'), 400);
     const condition = BENCHMARK_CONDITION_BY_ID.get(record.conditionId);
     if (!condition) return json(failure('invalid', 'Unknown benchmark condition.'), 400);
-    if (env.ANALYSIS_EXPECTED_INSTANCE_TYPE !== condition.instanceType) {
-      return json(failure('instance_mismatch', 'Benchmark condition does not match the deployed instance type.', record.sfen), 409);
-    }
     const target = selectBenchmarkTarget(env, record.targetId, record.segmentId);
-    if (!target || target.instanceType !== condition.instanceType) {
+    if (!target) {
       return json(failure('invalid', 'Unknown benchmark target or segment.'), 400);
+    }
+    if (target.instanceType !== condition.instanceType) {
+      return json(failure('invalid', 'Benchmark condition type does not match its fixed target app.'), 409);
     }
     const sfen = record.sfen;
     const rootMoves = legalMoves(sfen);
@@ -455,7 +578,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (rootMoves.length === 0) {
       const terminal: 'checkmate' | 'no-legal-moves' = position.checked ? 'checkmate' : 'no-legal-moves';
       try {
-        const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, target.targetId);
+        const container = containerForBenchmarkTarget(env, target);
         const healthResponse = await container.fetch(new Request('http://analysis-container/health', { method: 'GET' }));
         if (!healthResponse.ok) return json({ ...failure('engine_error', 'Analysis container health is unavailable.', sfen), ...benchmarkTargetFields(target) }, 502);
         const healthText = await healthResponse.text();
@@ -512,7 +635,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       }
     }
     try {
-      const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, target.targetId);
+      const container = containerForBenchmarkTarget(env, target);
       const internalRequest = new Request('http://analysis-container/benchmark', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

@@ -10,6 +10,31 @@ BUILD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 SEGMENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 INSTANCE_TYPES = frozenset({"standard-2", "standard-3"})
 SINGLETON_TARGET_ID = "analysis-mvp-singleton"
+CONTAINER_TARGETS = {
+    "standard-2": {
+        "containerApp": "meeshogi-analysis-mvp-staging-benchmark-standard-2",
+        "containerClass": "BenchmarkStandard2Container",
+        "containerBinding": "ANALYSIS_BENCHMARK_STANDARD_2",
+    },
+    "standard-3": {
+        "containerApp": "meeshogi-analysis-mvp-staging-benchmark-standard-3",
+        "containerClass": "BenchmarkStandard3Container",
+        "containerBinding": "ANALYSIS_BENCHMARK_STANDARD_3",
+    },
+}
+NORMAL_CONTAINER_TARGET = {
+    "containerApp": "meeshogi-analysis-mvp-staging-analysis",
+    "containerClass": "AnalysisContainer",
+    "containerBinding": "ANALYSIS_CONTAINER",
+}
+
+
+def container_target_fields(instance_type: str | None) -> dict[str, str]:
+    if instance_type is None:
+        return dict(NORMAL_CONTAINER_TARGET)
+    if instance_type not in CONTAINER_TARGETS:
+        raise ValueError("instance type must be standard-2 or standard-3")
+    return dict(CONTAINER_TARGETS[instance_type])
 
 
 def target_id(
@@ -50,12 +75,12 @@ def targets_for_run(
     run: dict[str, Any],
     conditions: dict[str, dict[str, Any]],
     build_id: str,
-    expected_instance_type: str,
+    expected_instance_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return the exact bounded target names that a run manifest may address."""
     if not BUILD_ID_RE.fullmatch(build_id):
         raise ValueError("build ID must be 32 lowercase hex characters")
-    if expected_instance_type not in INSTANCE_TYPES:
+    if expected_instance_type is not None and expected_instance_type not in INSTANCE_TYPES:
         raise ValueError("instance type must be standard-2 or standard-3")
     segment_id = run.get("segmentId")
     if not isinstance(segment_id, str) or not SEGMENT_ID_RE.fullmatch(segment_id):
@@ -68,9 +93,15 @@ def targets_for_run(
         if not isinstance(condition_id, str) or condition_id not in conditions:
             raise ValueError("run manifest selects an unknown condition")
         condition = conditions[condition_id]
-        if condition.get("instanceType") != expected_instance_type:
-            raise ValueError("all run conditions must match the deployed instance type")
+        if condition.get("instanceType") not in INSTANCE_TYPES:
+            raise ValueError("run condition has an unsupported instance type")
         selected.append(condition)
+    selected_types = {condition["instanceType"] for condition in selected}
+    if len(selected_types) != 1:
+        raise ValueError("all run conditions must match one fixed instance type")
+    instance_type = next(iter(selected_types))
+    if expected_instance_type is not None and instance_type != expected_instance_type:
+        raise ValueError("all run conditions must match the requested instance type")
 
     mode = run.get("mode")
     rows: list[dict[str, Any]] = []
@@ -83,11 +114,12 @@ def targets_for_run(
         if not SEGMENT_ID_RE.fullmatch(preflight_segment):
             raise ValueError("cold segmentId must leave room for the preflight suffix")
         rows.append({
-            "targetId": target_id(expected_instance_type, build_id, preflight_segment),
+            "targetId": target_id(instance_type, build_id, preflight_segment),
             "segmentId": segment_id,
-            "instanceType": expected_instance_type,
+            "instanceType": instance_type,
             "buildId": build_id,
             "purpose": "cold-preflight",
+            **container_target_fields(instance_type),
         })
         condition_id = condition_ids[0]
         repetitions, attempt_start = _positive_repetitions(run, condition_id)
@@ -97,20 +129,22 @@ def targets_for_run(
             raise ValueError("cold trial numbers must be JavaScript safe integers")
         for trial_no in range(attempt_start, attempt_start + repetitions):
             rows.append({
-                "targetId": target_id(expected_instance_type, build_id, segment_id, trial_no),
+                "targetId": target_id(instance_type, build_id, segment_id, trial_no),
                 "segmentId": segment_id,
-                "instanceType": expected_instance_type,
+                "instanceType": instance_type,
                 "buildId": build_id,
                 "purpose": "cold-trial",
                 "coldTrialNo": trial_no,
+                **container_target_fields(instance_type),
             })
     elif mode in {"positions", "game"}:
         rows.append({
-            "targetId": target_id(expected_instance_type, build_id, segment_id),
+            "targetId": target_id(instance_type, build_id, segment_id),
             "segmentId": segment_id,
-            "instanceType": expected_instance_type,
+            "instanceType": instance_type,
             "buildId": build_id,
             "purpose": "measurement",
+            **container_target_fields(instance_type),
         })
     else:
         raise ValueError("run mode must be positions, game, or cold")

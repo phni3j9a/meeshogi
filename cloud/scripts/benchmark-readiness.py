@@ -84,6 +84,9 @@ def inspect_health(
             "segmentIdMatches": body.get("segmentId") == expected_target["segmentId"],
             "targetTypeMatches": body.get("targetInstanceType") == expected_instance_type,
             "targetBuildIdMatches": body.get("expectedBuildId") == expected_build_id,
+            "containerAppMatches": body.get("containerApp") == expected_target["containerApp"],
+            "containerClassMatches": body.get("containerClass") == expected_target["containerClass"],
+            "containerBindingMatches": body.get("containerBinding") == expected_target["containerBinding"],
         })
     reasons: list[str] = []
     if transport_error:
@@ -114,6 +117,9 @@ def inspect_health(
         ("segmentIdMatches", "target_segment_mismatch"),
         ("targetTypeMatches", "target_instance_type_mismatch"),
         ("targetBuildIdMatches", "target_build_id_mismatch"),
+        ("containerAppMatches", "container_app_mismatch"),
+        ("containerClassMatches", "container_class_mismatch"),
+        ("containerBindingMatches", "container_binding_mismatch"),
     ):
         if name in checks and not checks[name]:
             reasons.append(reason)
@@ -142,6 +148,9 @@ def inspect_health(
         "segmentId": body.get("segmentId") if isinstance(body.get("segmentId"), str) else None,
         "targetInstanceType": body.get("targetInstanceType") if isinstance(body.get("targetInstanceType"), str) else None,
         "expectedBuildId": body.get("expectedBuildId") if isinstance(body.get("expectedBuildId"), str) else None,
+        "containerApp": body.get("containerApp") if isinstance(body.get("containerApp"), str) else None,
+        "containerClass": body.get("containerClass") if isinstance(body.get("containerClass"), str) else None,
+        "containerBinding": body.get("containerBinding") if isinstance(body.get("containerBinding"), str) else None,
         "containerState": body.get("containerState") if isinstance(body.get("containerState"), str) else None,
         "containerStateLastChangeWall": body.get("containerStateLastChangeWall") if isinstance(body.get("containerStateLastChangeWall"), str) else None,
         "resourceEvidence": {
@@ -243,6 +252,8 @@ def main() -> int:
         stop_row = {
             "recordType": "target-stop", "targetId": SINGLETON_TARGET_ID,
             "segmentId": "preexisting-singleton", "targetPurpose": "capacity-control",
+            "containerApp": "meeshogi-analysis-mvp-staging-analysis",
+            "containerClass": "AnalysisContainer", "containerBinding": "ANALYSIS_CONTAINER",
             "requestStartWall": stop_start, "requestEndWall": stop_end,
             "httpStatus": stop_status, "transportError": stop_error,
             "stopConfirmed": isinstance(stop_payload, dict) and stop_payload.get("stopped") is True,
@@ -298,6 +309,9 @@ def main() -> int:
                 "recordType": "target-health", "targetId": expected_target["targetId"],
                 "segmentId": expected_target["segmentId"], "targetPurpose": expected_target["purpose"],
                 "expectedInstanceType": args.expected_instance_type, "expectedBuildId": args.expected_build_id,
+                "containerApp": expected_target["containerApp"],
+                "containerClass": expected_target["containerClass"],
+                "containerBinding": expected_target["containerBinding"],
                 "requestStartWall": request_start_wall, "requestEndWall": request_end_wall,
                 "httpStatus": status, "health": evidence,
             })
@@ -315,6 +329,9 @@ def main() -> int:
                     "recordType": "target-stop", "targetId": expected_target["targetId"],
                     "segmentId": expected_target["segmentId"], "expectedInstanceType": args.expected_instance_type,
                     "expectedBuildId": args.expected_build_id, "firstDispatchWall": first_dispatch_wall,
+                    "containerApp": expected_target["containerApp"],
+                    "containerClass": expected_target["containerClass"],
+                    "containerBinding": expected_target["containerBinding"],
                     "requestStartWall": stop_start, "requestEndWall": _wall_now(), "httpStatus": stop_status,
                     "transportError": stop_error,
                     "stopConfirmed": stop_confirmed,
