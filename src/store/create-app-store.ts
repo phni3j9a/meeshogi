@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import {
   DEFAULT_SETTINGS,
+  cloudProfileOf,
   type GameRecord,
   type ParsedGame,
   type PositionAnalysis,
@@ -13,6 +14,13 @@ import {
 } from '../domain/model';
 import { inferAttribution, sameGameOccasion, sameRecordedGame } from '../domain';
 import type { LocalRepository } from '../storage/repository';
+import { attemptBlocksDelete, type CloudAttempt } from '../cloud/contract';
+import {
+  toCloudPositionResult,
+  validateCloudResult,
+  type CloudPositionResult,
+} from '../cloud/results';
+import { makeCloudController, type CloudDeps } from './cloud-controller';
 import { isCompatibleAnalysis } from '../analysis/cache';
 import { AnalysisBudgetIncompleteError } from '../analysis/errors';
 import type { AnalysisJob } from './analysis-job';
@@ -41,6 +49,10 @@ export interface AppState {
   games: GameRecord[];
   settings: Settings;
   analysisJob: AnalysisJob | null;
+  cloudAttempts: CloudAttempt[];
+  /** Validated display rows keyed by attemptId; incomplete plies are absent. */
+  cloudResults: Record<string, CloudPositionResult[]>;
+  cloudLoadError: string | null;
   initialize(): Promise<void>;
   saveImport(parsed: ParsedGame, options: ImportOptions): Promise<GameRecord>;
   updateGame(id: string, patch: GamePatch): Promise<void>;
@@ -51,6 +63,12 @@ export interface AppState {
   startAnalysis(id: string): Promise<void>;
   stopAnalysis(): void;
   analyzePosition(sfen: string): Promise<PositionAnalysis>;
+  /** Start or reconnect a Cloud attempt for the game under the selected method. */
+  startCloudAnalysis(id: string): Promise<void>;
+  cancelCloudAnalysis(attemptId: string): Promise<void>;
+  loadCloudResults(gameId: string): Promise<void>;
+  resumeCloudJobs(): void;
+  pauseCloudJobs(): void;
   clearError(): void;
 }
 export type { AnalysisJob } from './analysis-job';
@@ -59,6 +77,8 @@ interface Dependencies {
   analyze(sfen: string, conditions: AnalysisConditions): Promise<PositionAnalysis>;
   cancel(): void | Promise<void>;
   createId(): string;
+  /** Cloud job integration. Absent in environments without a configured client. */
+  cloud?: CloudDeps;
 }
 export function makeAppStore(deps: Dependencies) {
   let repository: LocalRepository | undefined;
@@ -99,6 +119,29 @@ export function makeAppStore(deps: Dependencies) {
     return repository;
   };
   const store = createStore<AppState>((set, get) => {
+    const cloud = deps.cloud
+      ? makeCloudController(deps.cloud, {
+          getAttempts: () => get().cloudAttempts,
+          getGame: (id) => get().games.find((g) => g.id === id),
+          getCloudMethodProfile: () => cloudProfileOf(get().settings.analysisMethod),
+          getCloudPositions: (id) => get().games.find((g) => g.id === id)?.positions,
+          repo,
+          write,
+          setAttempts: (fn) => set((state) => ({ cloudAttempts: fn(state.cloudAttempts) })),
+          onResultsCommitted: (attemptId, rows) =>
+            set((state) => {
+              const byPly = new Map<number, CloudPositionResult>();
+              for (const result of state.cloudResults[attemptId] ?? []) byPly.set(result.ply, result);
+              for (const row of rows) byPly.set(row.ply, toCloudPositionResult(row));
+              return {
+                cloudResults: {
+                  ...state.cloudResults,
+                  [attemptId]: [...byPly.values()].sort((a, b) => a.ply - b.ply),
+                },
+              };
+            }),
+        })
+      : undefined;
     const report = (error: unknown) => {
       set({
         error:
@@ -121,6 +164,9 @@ export function makeAppStore(deps: Dependencies) {
       games: [],
       settings: { ...DEFAULT_SETTINGS, playerNames: { shogiwars: [], kiou: [], unknown: [] } },
       analysisJob: null,
+      cloudAttempts: [],
+      cloudResults: {},
+      cloudLoadError: null,
       clearError: () => set({ error: null }),
       initialize: () => {
         if (!initialization)
@@ -128,7 +174,19 @@ export function makeAppStore(deps: Dependencies) {
             try {
               repository = await deps.openRepository();
               const data = await repository.load();
-              set({ ...data, ready: true, error: null });
+              let cloudAttempts: CloudAttempt[] = [];
+              let cloudLoadError: string | null = null;
+              if (deps.cloud && repository.cloud) {
+                try {
+                  cloudAttempts = await repository.cloud.attempts();
+                } catch {
+                  // Cloud read errors must never block game loading.
+                  cloudLoadError =
+                    'Cloud解析の保存データを読み込めませんでした。端末内解析と棋譜は通常どおり使えます。';
+                }
+              }
+              set({ ...data, cloudAttempts, cloudLoadError, ready: true, error: null });
+              cloud?.resume();
             } catch (error) {
               report(error);
               initialization = undefined;
@@ -171,7 +229,15 @@ export function makeAppStore(deps: Dependencies) {
           };
           await repo().insert(game);
           set((state) => ({ games: [game, ...state.games], error: null }));
-          if (options.autoAnalyze ?? get().settings.autoAnalyze) void get().startAnalysis(game.id);
+          if (options.autoAnalyze ?? get().settings.autoAnalyze) {
+            if (get().settings.analysisMethod === 'sekirei') {
+              void get().startAnalysis(game.id);
+            } else {
+              void get()
+                .startCloudAnalysis(game.id)
+                .catch(() => undefined);
+            }
+          }
           return game;
         }),
       updateGame: (id, patch) =>
@@ -211,12 +277,33 @@ export function makeAppStore(deps: Dependencies) {
         }),
       deleteGame: (id) =>
         write(async () => {
+          const blocking = get().cloudAttempts.find(
+            (attempt) => attempt.gameId === id && attemptBlocksDelete(attempt),
+          );
+          if (blocking) {
+            throw new Error(
+              'この棋譜はCloud解析を実行中または未回収です。Cloud解析を取消してから削除してください。',
+            );
+          }
           if (get().analysisJob?.gameId === id) {
             get().stopAnalysis();
             set({ analysisJob: null });
           }
           await repo().delete(id);
-          set((state) => ({ games: state.games.filter((g) => g.id !== id) }));
+          // The FK cascade removes attempt/result rows; drop their in-memory
+          // copies so late results can never reappear for a deleted game.
+          const gone = new Set(
+            get()
+              .cloudAttempts.filter((attempt) => attempt.gameId === id)
+              .map((attempt) => attempt.attemptId),
+          );
+          set((state) => ({
+            games: state.games.filter((g) => g.id !== id),
+            cloudAttempts: state.cloudAttempts.filter((attempt) => attempt.gameId !== id),
+            cloudResults: Object.fromEntries(
+              Object.entries(state.cloudResults).filter(([attemptId]) => !gone.has(attemptId)),
+            ),
+          }));
         }),
       updateSettings: (patch) =>
         write(async () => {
@@ -361,6 +448,45 @@ export function makeAppStore(deps: Dependencies) {
           }
         }
       },
+      startCloudAnalysis: async (id) => {
+        if (!cloud) throw new Error('Cloud解析はこの環境では利用できません。');
+        await cloud.start(id);
+      },
+      cancelCloudAnalysis: async (attemptId) => {
+        if (!cloud) return;
+        await cloud.cancel(attemptId);
+      },
+      loadCloudResults: async (gameId) => {
+        const cloudRepo = deps.cloud && repository?.cloud;
+        if (!cloudRepo) return;
+        const attempts = get().cloudAttempts.filter((attempt) => attempt.gameId === gameId);
+        const game = get().games.find((g) => g.id === gameId);
+        const loaded = await write(() =>
+          Promise.all(
+            attempts.map(
+              async (attempt) =>
+                [attempt, await cloudRepo.results(attempt.attemptId)] as const,
+            ),
+          ),
+        );
+        set((state) => {
+          const cloudResults = { ...state.cloudResults };
+          for (const [attempt, rows] of loaded) {
+            if (!game || attempt.gameIdentity !== game.identity) continue;
+            const results: CloudPositionResult[] = [];
+            for (const row of rows) {
+              const expected = game.positions[row.ply];
+              if (expected === undefined) continue;
+              const valid = validateCloudResult(row, expected, attempt.profileId);
+              if (valid) results.push(toCloudPositionResult(valid));
+            }
+            cloudResults[attempt.attemptId] = results;
+          }
+          return { cloudResults };
+        });
+      },
+      resumeCloudJobs: () => cloud?.resume(),
+      pauseCloudJobs: () => cloud?.pause(),
     };
   });
   return store;

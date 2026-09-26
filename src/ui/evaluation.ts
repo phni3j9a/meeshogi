@@ -68,6 +68,38 @@ export function toEvaluationChartValue(value: EvaluationValue): number | null {
 }
 
 /**
+ * The minimal shape needed to resolve a display evaluation — satisfied by both
+ * Sekirei PositionAnalysis rows and persisted CloudPositionResult rows.
+ */
+export interface DisplayResult {
+  sfen: string;
+  terminal?: 'checkmate' | 'no-legal-moves' | null;
+  candidates: AnalysisCandidate[];
+}
+
+/**
+ * Resolve the display value of one already-trusted result. Callers are
+ * responsible for identity/condition checks before trusting stored data.
+ */
+export function resolveDisplayEvaluation(
+  result: DisplayResult | null | undefined,
+): EvaluationValue {
+  if (!result) return { kind: 'missing' };
+  if (result.terminal === 'no-legal-moves') return { kind: 'missing' };
+  if (result.terminal === 'checkmate') {
+    const side = sideToMove(result.sfen);
+    if (!side) return { kind: 'missing' };
+    const winner: Side = side === 'white' ? 'black' : 'white';
+    return {
+      kind: 'checkmate',
+      value: winner === 'black' ? EVALUATION_CHART_EDGE : -EVALUATION_CHART_EDGE,
+      winner,
+    };
+  }
+  return toEvaluationValue(result.candidates[0]);
+}
+
+/**
  * Resolve the current-position display value from one complete analysis.
  *
  * This intentionally takes the whole result so terminal summaries cannot be
@@ -88,18 +120,7 @@ export function resolveCurrentEvaluation(
   ) {
     return { kind: 'missing' };
   }
-  if (analysis.terminal === 'no-legal-moves') return { kind: 'missing' };
-  if (analysis.terminal === 'checkmate') {
-    const side = sideToMove(analysis.sfen);
-    if (!side) return { kind: 'missing' };
-    const winner: Side = side === 'white' ? 'black' : 'white';
-    return {
-      kind: 'checkmate',
-      value: winner === 'black' ? EVALUATION_CHART_EDGE : -EVALUATION_CHART_EDGE,
-      winner,
-    };
-  }
-  return toEvaluationValue(analysis.candidates[0]);
+  return resolveDisplayEvaluation(analysis);
 }
 
 export function isDisplayableMateProof(

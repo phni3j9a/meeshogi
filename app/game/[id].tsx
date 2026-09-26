@@ -13,7 +13,23 @@ import { usePreventRemove } from 'expo-router/react-navigation';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { applyUsi, boardView, legalMoves, moveLabel } from '@/domain';
-import { PositionAnalysis, Side, SIDE_LABELS } from '@/domain/model';
+import {
+  ANALYSIS_METHOD_LABELS,
+  ANALYSIS_METHODS,
+  cloudProfileOf,
+  PositionAnalysis,
+  Side,
+  SIDE_LABELS,
+  type AnalysisMethod,
+} from '@/domain/model';
+import {
+  CLOUD_PROFILE_LABELS,
+  CLOUD_MAX_MOVES,
+  isActiveAttempt,
+  type CloudAttempt,
+} from '@/cloud/contract';
+import { cloudEndpoint } from '@/cloud/config';
+import type { CloudPositionResult } from '@/cloud/results';
 import { useAppStore } from '@/store/app-store';
 import { shareKif } from '@/platform/kif-files';
 import { AppText, EmptyState, Icon, IconButton, Notice, TextButton } from '@/ui/primitives';
@@ -26,12 +42,42 @@ import { errorMessage, useChoice } from '@/ui/use-choice';
 import {
   formatEvaluation,
   isDisplayableMateProof,
-  resolveCurrentEvaluation,
+  resolveDisplayEvaluation,
   toEvaluationChartValue,
   toEvaluationValue,
+  type DisplayResult,
 } from '@/ui/evaluation';
 import { currentGameAnalysis, isCompatibleAnalysis } from '@/analysis/cache';
 import { analysisJobProcessed, partialAnalysisMessage } from '@/store/analysis-job';
+
+function latestAttempt(attempts: CloudAttempt[], profileId: 'free' | 'precision') {
+  return attempts
+    .filter((attempt) => attempt.profileId === profileId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+function cloudStatusLabel(attempt: CloudAttempt): string {
+  switch (attempt.status) {
+    case 'requesting':
+      return 'Cloud解析を開始しています';
+    case 'queued':
+      return 'Cloud解析の順番を待っています';
+    case 'running':
+      return `Cloud解析中・処理 ${attempt.serverNextPly} / ${attempt.totalPlies}局面`;
+    case 'cancel-requested':
+      return 'Cloud解析を取消しています';
+    case 'completed':
+      return attempt.validCount >= attempt.totalPlies
+        ? 'Cloud解析が完了しました'
+        : `Cloud解析が終了しました・有効 ${attempt.validCount} / ${attempt.totalPlies}局面`;
+    case 'failed':
+      return 'Cloud解析が失敗しました';
+    case 'cancelled':
+      return 'Cloud解析を取消しました';
+    case 'error':
+      return 'Cloud解析を再開できます';
+  }
+}
 
 type Branch = { origin: number; positions: string[]; moves: string[]; cursor: number };
 
@@ -61,6 +107,12 @@ export default function GameScreen() {
   const stopAnalysis = useAppStore((state) => state.stopAnalysis);
   const analyzePosition = useAppStore((state) => state.analyzePosition);
   const updateGame = useAppStore((state) => state.updateGame);
+  const updateSettings = useAppStore((state) => state.updateSettings);
+  const startCloudAnalysis = useAppStore((state) => state.startCloudAnalysis);
+  const cancelCloudAnalysis = useAppStore((state) => state.cancelCloudAnalysis);
+  const loadCloudResults = useAppStore((state) => state.loadCloudResults);
+  const cloudAttempts = useAppStore((state) => state.cloudAttempts);
+  const cloudLoadError = useAppStore((state) => state.cloudLoadError);
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight, fontScale } = useWindowDimensions();
@@ -86,6 +138,37 @@ export default function GameScreen() {
   const sfen = branch ? branch.positions[branch.cursor] : game?.positions[ply];
   const validMoves = useMemo(() => (sfen ? legalMoves(sfen) : []), [sfen]);
   const position = useMemo(() => (sfen ? boardView(sfen) : null), [sfen]);
+  const method = settings.analysisMethod;
+  const profileId = cloudProfileOf(method);
+  const gameAttempts = useMemo(
+    () => cloudAttempts.filter((attempt) => attempt.gameId === id),
+    [cloudAttempts, id],
+  );
+  const attempt = useMemo(
+    () => (profileId ? latestAttempt(gameAttempts, profileId) : undefined),
+    [gameAttempts, profileId],
+  );
+  const otherProfileActive = gameAttempts.find(
+    (item) => item.profileId !== profileId && isActiveAttempt(item.status),
+  );
+  const runningElsewhere = useMemo(
+    () =>
+      cloudAttempts.find(
+        (item) => item.gameId !== id && isActiveAttempt(item.status),
+      ),
+    [cloudAttempts, id],
+  );
+  const cloudRows = useAppStore((state) =>
+    attempt ? state.cloudResults[attempt.attemptId] : undefined,
+  );
+  useEffect(() => {
+    if (profileId && attempt) void loadCloudResults(id).catch(() => undefined);
+  }, [profileId, attempt?.attemptId, id, loadCloudResults]);
+  const cloudLine = useMemo(() => {
+    const byPly = new Map<number, CloudPositionResult>();
+    for (const row of cloudRows ?? []) byPly.set(row.ply, row);
+    return byPly;
+  }, [cloudRows]);
   const mainlineAnalysis = useMemo(
     () =>
       game
@@ -96,20 +179,34 @@ export default function GameScreen() {
         : [],
     [game?.positions, game?.analysis, settings.analysisNodes, settings.multiPV],
   );
-  const currentAnalysis =
-    sfen &&
+  const focusedOk =
+    !!sfen &&
     isCompatibleAnalysis(focusedAnalysis, sfen, {
       nodes: Math.min(1000000, settings.analysisNodes * 5),
       multiPV: settings.multiPV,
-    })
-      ? focusedAnalysis
-      : !branch
-        ? mainlineAnalysis[ply]
-        : null;
+    });
+  const currentAnalysis = focusedOk
+    ? focusedAnalysis
+    : !branch
+      ? mainlineAnalysis[ply]
+      : null;
+  const mainlineResult: DisplayResult | null = branch
+    ? null
+    : method === 'sekirei'
+      ? (mainlineAnalysis[ply] ?? null)
+      : (cloudLine.get(ply) ?? null);
+  const currentResult: DisplayResult | null = focusedOk
+    ? focusedAnalysis
+    : mainlineResult;
   const candidates =
-    currentAnalysis?.candidates.filter((candidate) => validMoves.includes(candidate.usi)) ?? [];
-  const displayAnalysis = currentAnalysis ? { ...currentAnalysis, candidates } : currentAnalysis;
-  const currentEvaluation = resolveCurrentEvaluation(displayAnalysis);
+    currentResult?.candidates
+      ?.filter(
+        (candidate): candidate is PositionAnalysis['candidates'][number] =>
+          !!candidate && validMoves.includes(candidate.usi),
+      ) ?? [];
+  const currentEvaluation = resolveDisplayEvaluation(
+    currentResult ? { ...currentResult, candidates } : currentResult,
+  );
   const bottomSide: Side = flipped
     ? game?.mySide === 'white'
       ? 'black'
@@ -281,7 +378,12 @@ export default function GameScreen() {
     }
   };
   const proof = currentAnalysis?.mateProof;
-  const proven = settings.showMateBadges && isDisplayableMateProof(proof, position?.turn);
+  // Mate badges are only ever produced from proven Sekirei mateProof results.
+  // Under a Cloud method nothing on screen is a proof, so badges stay hidden.
+  const proven =
+    settings.showMateBadges &&
+    method === 'sekirei' &&
+    isDisplayableMateProof(proof, position?.turn);
   if (!game || !sfen)
     return (
       <EmptyState
@@ -291,10 +393,25 @@ export default function GameScreen() {
         onAction={() => router.dismissTo('/')}
       />
     );
-  const completed = mainlineAnalysis.filter(Boolean).length;
-  const fullyAnalyzed = completed >= game.positions.length;
-  const previousResults = Object.keys(game.analysis).length - completed;
+  const lineResults: (DisplayResult | null)[] =
+    method === 'sekirei'
+      ? mainlineAnalysis
+      : game.positions.map((_, index) => cloudLine.get(index) ?? null);
+  const completed =
+    method === 'sekirei'
+      ? mainlineAnalysis.filter(Boolean).length
+      : (attempt?.validCount ?? 0);
+  const fullyAnalyzed =
+    method === 'sekirei'
+      ? completed >= game.positions.length
+      : !!attempt &&
+        !isActiveAttempt(attempt.status) &&
+        attempt.status === 'completed' &&
+        attempt.validCount >= attempt.totalPlies;
+  const previousResults =
+    method === 'sekirei' ? Object.keys(game.analysis).length - completed : 0;
   const processed = job ? analysisJobProcessed(job) : completed;
+  const cloudProcessed = attempt ? Math.max(attempt.serverNextPly, attempt.receivedCount) : 0;
   const partial = job?.status === 'partial';
   const lastMove = branch
     ? branch.cursor > 0
@@ -319,22 +436,28 @@ export default function GameScreen() {
   const statusLabel = branch
     ? focusBusy
       ? '分岐を解析中'
-      : currentAnalysis
-        ? '分岐の解析結果'
+      : currentResult
+        ? method === 'sekirei'
+          ? '分岐の解析結果'
+          : '分岐の解析結果（ローカル・Sekirei）'
         : '分岐は未解析'
-    : partial
-      ? '解析処理が終了しました'
-      : fullyAnalyzed
-        ? '全局解析が完了しました'
-        : job?.status === 'running'
-          ? `解析中 ${processed} / ${job.total}局面`
-          : job?.status === 'paused'
-            ? `解析を停止中 ${processed} / ${job.total}局面`
-            : job?.status === 'error'
-              ? '解析を再開できます'
-              : completed
-                ? `解析済み ${completed} / ${game.positions.length}局面`
-                : 'この棋譜は未解析です';
+    : profileId
+      ? attempt
+        ? cloudStatusLabel(attempt)
+        : 'この棋譜はCloud未解析です'
+      : partial
+        ? '解析処理が終了しました'
+        : fullyAnalyzed
+          ? '全局解析が完了しました'
+          : job?.status === 'running'
+            ? `解析中 ${processed} / ${job.total}局面`
+            : job?.status === 'paused'
+              ? `解析を停止中 ${processed} / ${job.total}局面`
+              : job?.status === 'error'
+                ? '解析を再開できます'
+                : completed
+                  ? `解析済み ${completed} / ${game.positions.length}局面`
+                  : 'この棋譜は未解析です';
   return (
     <View
       style={{ flex: 1, backgroundColor: theme.background, paddingBottom: insets.bottom }}
@@ -429,7 +552,7 @@ export default function GameScreen() {
           ) : null}
           <View
             testID={
-              candidates.length > 0 && currentAnalysis?.sfen === sfen ? 'analysis-ready' : undefined
+              candidates.length > 0 && currentResult?.sfen === sfen ? 'analysis-ready' : undefined
             }
             style={[styles.evaluationSection, { borderColor: theme.border }]}
           >
@@ -479,7 +602,10 @@ export default function GameScreen() {
                   </Pressable>
                 ) : (
                   <View style={styles.inline}>
-                    {focusBusy || (!branch && job?.status === 'running') ? (
+                    {focusBusy ||
+                    (!branch &&
+                      (job?.status === 'running' ||
+                        (attempt ? isActiveAttempt(attempt.status) : false))) ? (
                       <ActivityIndicator size="small" color={theme.win} />
                     ) : fullyAnalyzed && !branch ? (
                       <Icon name="check" size={13} color={theme.win} />
@@ -488,7 +614,9 @@ export default function GameScreen() {
                       {branch
                         ? focusBusy
                           ? '局面を解析中'
-                          : '分岐の評価'
+                          : method === 'sekirei'
+                            ? '分岐の評価'
+                            : '分岐の評価・ローカル'
                         : focusBusy
                           ? '追加解析中'
                           : fullyAnalyzed
@@ -497,20 +625,22 @@ export default function GameScreen() {
                     </AppText>
                   </View>
                 )}
-                {!branch && currentAnalysis === focusedAnalysis && currentAnalysis && (
+                {!branch && currentResult === focusedAnalysis && focusedAnalysis && (
                   <AppText variant="small" tone="accent">
-                    追加解析の評価値
+                    {method === 'sekirei'
+                      ? '追加解析の評価値'
+                      : 'ローカル解析（Sekirei）の評価値'}
                   </AppText>
                 )}
               </View>
             </View>
             {!branch && (
               <LineChart
-                values={mainlineAnalysis.map((result) =>
-                  toEvaluationChartValue(resolveCurrentEvaluation(result)),
+                values={lineResults.map((result) =>
+                  toEvaluationChartValue(resolveDisplayEvaluation(result)),
                 )}
-                valueLabels={mainlineAnalysis.map((result) => {
-                  const evaluation = resolveCurrentEvaluation(result);
+                valueLabels={lineResults.map((result) => {
+                  const evaluation = resolveDisplayEvaluation(result);
                   return evaluation.kind === 'missing' ? '未解析' : formatEvaluation(evaluation);
                 })}
                 selected={ply}
@@ -667,7 +797,10 @@ export default function GameScreen() {
               })}
               {!candidates.length && (
                 <View style={[styles.emptyCandidates, { backgroundColor: theme.surface }]}>
-                  {focusBusy || (!branch && job?.status === 'running') ? (
+                  {focusBusy ||
+                  (!branch &&
+                    (job?.status === 'running' ||
+                      (attempt ? isActiveAttempt(attempt.status) : false))) ? (
                     <ActivityIndicator size="small" color={theme.win} />
                   ) : (
                     <Icon
@@ -682,14 +815,19 @@ export default function GameScreen() {
                         ? 'この局面を解析しています'
                         : !validMoves.length
                           ? 'この局面には合法手がありません'
-                          : job?.status === 'running' && !branch
+                          : !branch && job?.status === 'running'
                             ? '候補手の解析を待っています'
-                            : job?.status === 'paused' && !branch
-                              ? '解析を停止しています'
-                              : '候補手はまだありません'}
+                            : !branch && attempt && isActiveAttempt(attempt.status)
+                              ? 'Cloud解析の候補手を待っています'
+                              : !branch && job?.status === 'paused'
+                                ? '解析を停止しています'
+                                : '候補手はまだありません'}
                     </AppText>
                     <AppText variant="small" tone="secondary">
-                      {focusBusy || (!branch && job?.status === 'running')
+                      {focusBusy ||
+                      (!branch &&
+                        (job?.status === 'running' ||
+                          (attempt ? isActiveAttempt(attempt.status) : false)))
                         ? '解析中も盤面を動かして検討できます。'
                         : !validMoves.length
                           ? '手を戻して、気になる局面を振り返れます。'
@@ -741,6 +879,69 @@ export default function GameScreen() {
                 text={`以前のモデル・解析条件の結果が${previousResults}局面あります。現在の設定で解析し直せます。`}
               />
             )}
+            {!branch && cloudLoadError && <Notice text={cloudLoadError} error />}
+            {!branch && profileId && !cloudEndpoint() && (
+              <Notice
+                text="Cloud解析の接続先が設定されていないため、この方式では解析できません。端末内（Sekirei）をお使いください。"
+              />
+            )}
+            {!branch &&
+              profileId &&
+              game.moves.length > CLOUD_MAX_MOVES && (
+                <Notice
+                  text={`Cloud解析は${CLOUD_MAX_MOVES}手までの棋譜に対応しています。この棋譜は${game.moves.length}手のため、端末内（Sekirei）をお使いください。`}
+                />
+              )}
+            {!branch && otherProfileActive && (
+              <Notice
+                text={`${CLOUD_PROFILE_LABELS[otherProfileActive.profileId]}の解析をサーバーで実行中です（処理 ${otherProfileActive.serverNextPly} / ${otherProfileActive.totalPlies}局面）。`}
+                action="取消する"
+                onAction={() =>
+                  void cancelCloudAnalysis(otherProfileActive.attemptId).catch((e) =>
+                    setError(errorMessage(e)),
+                  )
+                }
+              />
+            )}
+            {!branch &&
+              profileId &&
+              runningElsewhere &&
+              !(attempt && isActiveAttempt(attempt.status)) &&
+              !otherProfileActive && (
+                <Notice text="別の棋譜のCloud解析を実行中です。その解析の終了または取消を待ってから開始できます。" />
+              )}
+            {!branch && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="解析方式を変更"
+                testID="analysis-method"
+                onPress={() =>
+                  void choose('解析方法', [
+                    ...ANALYSIS_METHODS.map((value) => ({
+                      label: ANALYSIS_METHOD_LABELS[value],
+                      value,
+                    })),
+                  ]).then((value: AnalysisMethod | undefined) => {
+                    if (value !== undefined && value !== method)
+                      void updateSettings({ analysisMethod: value }).catch((e) =>
+                        setError(errorMessage(e)),
+                      );
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.methodRow,
+                  { borderColor: theme.border, opacity: pressed ? 0.6 : 1 },
+                ]}
+              >
+                <AppText variant="caption" tone="secondary">
+                  解析方式
+                </AppText>
+                <AppText variant="caption" style={{ fontWeight: '600' }}>
+                  {ANALYSIS_METHOD_LABELS[method]}
+                </AppText>
+                <Icon name="next" size={13} color={theme.muted} />
+              </Pressable>
+            )}
             <View style={styles.inline}>
               {fullyAnalyzed && !branch && <Icon name="check" size={14} color={theme.win} />}
               <AppText
@@ -752,13 +953,27 @@ export default function GameScreen() {
                 {statusLabel}
               </AppText>
             </View>
-            {!branch && currentAnalysis && currentAnalysis === focusedAnalysis && (
+            {!branch && currentResult === focusedAnalysis && focusedAnalysis && (
               <AppText variant="caption" tone="secondary" testID="focused-analysis-ready">
-                この局面の追加解析結果を表示中
+                {method === 'sekirei'
+                  ? 'この局面の追加解析結果を表示中'
+                  : 'この局面のローカル解析（Sekirei）結果を表示中'}
               </AppText>
             )}
             {job?.status === 'error' && (
               <Notice text={job.error ?? '解析に失敗しました。もう一度解析できます。'} error />
+            )}
+            {!branch && attempt?.status === 'error' && (
+              <Notice
+                text={attempt.failureMessage ?? attempt.lastError ?? 'Cloud解析に失敗しました。'}
+                error
+              />
+            )}
+            {!branch && attempt?.status === 'failed' && (
+              <Notice
+                text={attempt.failureMessage ?? 'Cloud解析が失敗しました。'}
+                error
+              />
             )}
             {job?.status === 'running' && !branch && (
               <View
@@ -778,9 +993,76 @@ export default function GameScreen() {
                 />
               </View>
             )}
+            {!branch && attempt && isActiveAttempt(attempt.status) && (
+              <View
+                accessibilityRole="progressbar"
+                accessibilityLabel="Cloud解析の進捗"
+                accessibilityValue={{ now: cloudProcessed, min: 0, max: attempt.totalPlies }}
+                style={[styles.progressTrack, { backgroundColor: theme.inset }]}
+              >
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      backgroundColor: theme.accent,
+                      width: `${attempt.totalPlies ? (cloudProcessed / attempt.totalPlies) * 100 : 0}%`,
+                    },
+                  ]}
+                />
+              </View>
+            )}
             <View style={styles.actionButtons}>
               {!branch &&
-                (job?.status === 'running' ? (
+                (profileId ? (
+                  attempt && isActiveAttempt(attempt.status) ? (
+                    <TextButton
+                      label="Cloud解析を取消"
+                      testID="cloud-cancel"
+                      onPress={() =>
+                        void cancelCloudAnalysis(attempt.attemptId).catch((e) =>
+                          setError(errorMessage(e)),
+                        )
+                      }
+                      icon="pause"
+                    />
+                  ) : (
+                    <>
+                      <TextButton
+                        label={
+                          fullyAnalyzed
+                            ? 'Cloud解析済み'
+                            : attempt
+                              ? 'Cloud解析を再試行'
+                              : 'Cloud解析を開始'
+                        }
+                        disabled={
+                          fullyAnalyzed ||
+                          !cloudEndpoint() ||
+                          game.moves.length > CLOUD_MAX_MOVES ||
+                          !!runningElsewhere ||
+                          !!otherProfileActive
+                        }
+                        testID="cloud-start"
+                        onPress={() =>
+                          void startCloudAnalysis(id).catch((e) => setError(errorMessage(e)))
+                        }
+                        icon={fullyAnalyzed ? 'check' : 'play'}
+                      />
+                      {attempt?.status === 'error' && attempt.jobId ? (
+                        <TextButton
+                          label="中断した解析を取消"
+                          testID="cloud-cancel-error"
+                          onPress={() =>
+                            void cancelCloudAnalysis(attempt.attemptId).catch((e) =>
+                              setError(errorMessage(e)),
+                            )
+                          }
+                          icon="pause"
+                        />
+                      ) : null}
+                    </>
+                  )
+                ) : job?.status === 'running' ? (
                   <TextButton
                     label="解析を停止"
                     testID="analysis-stop"
@@ -804,7 +1086,13 @@ export default function GameScreen() {
                 ))}
               <TextButton
                 testID="analysis-focus"
-                label={focusBusy ? '追加解析中…' : 'この局面を深く解析'}
+                label={
+                  focusBusy
+                    ? '追加解析中…'
+                    : method === 'sekirei'
+                      ? 'この局面を深く解析'
+                      : 'この局面を深く解析（ローカル・Sekirei）'
+                }
                 onPress={() => void focus(sfen)}
                 disabled={focusBusy}
               />
@@ -943,6 +1231,16 @@ const styles = StyleSheet.create({
   analysisActions: { marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
   progressTrack: { height: 3, borderRadius: 3, marginVertical: 6, overflow: 'hidden' },
   progressFill: { height: 3, borderRadius: 3 },
+  methodRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 44,
+    paddingHorizontal: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 6,
+    marginBottom: 4,
+  },
   actionButtons: {
     flexDirection: 'row',
     flexWrap: 'wrap',
