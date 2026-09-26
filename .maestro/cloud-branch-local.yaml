@@ -23,19 +23,30 @@ env:
     element:
       id: analysis-method
     direction: DOWN
-- tapOn:
+# Precondition: method stays 'Cloud・無料' (persisted from cloud-free-start).
+# Assert instead of tapping — the sheet item label duplicates the method
+# row's own value text, so tapping 'Cloud・無料' resolves ambiguously.
+- assertVisible:
     id: analysis-method
-- waitForAnimationToEnd
-- tapOn: Cloud・無料
-- waitForAnimationToEnd
-# Enter a branch from ply 0 (2g-2f is the fixture's first move).
+- assertVisible: 'Cloud・無料'
+# Enter a branch from ply 0. Board square taps raced whenever analysis rows
+# were still populating (board remount eats the touches), so use the designed
+# affordance instead: a candidate row tap ("タップして分岐を検討") opens the
+# branch directly via previewCandidate.
+# Cloud results sync back slowly on a cold start — wait for the candidate
+# rows to exist before tapping.
+- extendedWaitUntil:
+    visible: 第一候補
+    timeout: 240000
+- scrollUntilVisible:
+    element:
+      id: candidate-0
+    direction: DOWN
 - tapOn:
-    id: move-first
-- tapOn:
-    id: square-2g
-- tapOn:
-    id: square-2f
-- assertVisible: 分岐検討
+    id: candidate-0
+- extendedWaitUntil:
+    visible: 分岐検討
+    timeout: 10000
 - assertVisible: '0手目から分岐'
 # Branch analysis label must carry the local-Sekirei marker under Cloud.
 # Wait for the completed label only — '分岐を解析中' would match too early.
@@ -62,11 +73,18 @@ env:
 - assertVisible: 'この局面を深く解析（ローカル・Sekirei）'
 - tapOn:
     id: analysis-focus
+# In branch mode the deep-analysis result feeds the candidate list; the
+# 'focused-analysis-ready' banner only renders on the mainline view
+# ({!branch && ...} in app/game/[id].tsx). Completion is observable as the
+# button's busy label ('追加解析中…') clearing back to the local label.
 - extendedWaitUntil:
-    visible:
-      id: focused-analysis-ready
+    visible: 'この局面を深く解析（ローカル・Sekirei）'
     timeout: 180000
-- assertVisible: 'この局面のローカル解析（Sekirei）結果を表示中'
+- assertVisible: 第一候補
 - takeScreenshot: c31-focus-local-label
+- scrollUntilVisible:
+    element:
+      text: 本譜に戻る
+    direction: UP
 - tapOn: 本譜に戻る
 - assertVisible: '0 / 80手'

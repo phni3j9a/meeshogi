@@ -43,24 +43,52 @@ env:
 # Terminal ply: checkmate label, and no proof badge anywhere.
 - tapOn:
     id: move-last
-- assertVisible: '80 / 80手'
-- scrollUntilVisible:
-    element:
-      text: '後手勝ち・詰み終局'
-    direction: UP
-- assertVisible: '後手勝ち・詰み終局'
+- runFlow:
+    when:
+      notVisible: '80 / 80手'
+    commands:
+      - tapOn:
+          id: move-last
+- extendedWaitUntil:
+    visible: '80 / 80手'
+    timeout: 15000
+# '後手勝ち・詰み終局' renders only once the position's Cloud result has
+# synced (formatEvaluation 'checkmate' needs the stored row; '—' meanwhile).
+# Results pull is slow on a cold app — allow minutes.
+- extendedWaitUntil:
+    visible: '後手勝ち・詰み終局'
+    timeout: 300000
 - assertNotVisible: '.*手詰め ›'
 - takeScreenshot: c22-cloud-terminal
 # One ply earlier Cloud must report a signed mate/eval value — still no badge.
 - tapOn:
     id: move-prev
-- assertVisible: '79 / 80手'
+- runFlow:
+    when:
+      notVisible: '79 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
+- extendedWaitUntil:
+    visible: '79 / 80手'
+    timeout: 15000
 - assertNotVisible: '.*手詰め ›'
 - takeScreenshot: c23-cloud-mate-or-eval
 # Mid-game ply: Cloud candidates + principal variation are visible.
 - tapOn:
     id: move-first
-- assertVisible: '0 / 80手'
+- runFlow:
+    when:
+      notVisible: '0 / 80手'
+    commands:
+      - tapOn:
+          id: move-first
+- extendedWaitUntil:
+    visible: '0 / 80手'
+    timeout: 15000
+- extendedWaitUntil:
+    visible: 第一候補
+    timeout: 240000
 - scrollUntilVisible:
     element:
       id: candidate-0
@@ -68,30 +96,43 @@ env:
 - assertVisible:
     id: candidate-0
 - takeScreenshot: c24-cloud-candidates
-# The ply where Sekirei proves 1手詰め: under Cloud the badge must be absent
-# even though a mate value may be displayed.
+# A ply where Sekirei proves 1手詰め — in this fixture run that is ply 53
+# (plies 41-64 block has several '探索量不足' shortfall plies incl. 51; the
+# proven short-mate ply is 53). Under Cloud the badge must be absent even
+# though a mate value may be displayed.
 - tapOn:
     id: move-last
+- runFlow:
+    when:
+      notVisible: '80 / 80手'
+    commands:
+      - tapOn:
+          id: move-last
+- extendedWaitUntil:
+    visible: '80 / 80手'
+    timeout: 15000
 - tapOn:
     id: move-prev
-    repeat: 29
+    repeat: 27
     delay: 800
 - runFlow:
     when:
-      visible: '52 / 80手'
+      visible: '54 / 80手'
     commands:
       - tapOn:
           id: move-prev
 - runFlow:
     when:
-      visible: '50 / 80手'
+      visible: '52 / 80手'
     commands:
       - tapOn:
           id: move-next
-- assertVisible: '51 / 80手'
+- extendedWaitUntil:
+    visible: '53 / 80手'
+    timeout: 15000
 - assertNotVisible: '後手・1手詰め ›'
 - assertNotVisible: '.*手詰め ›'
-- takeScreenshot: c25-cloud-no-badge-ply51
+- takeScreenshot: c25-cloud-no-badge-ply53
 # --- switch back to Sekirei: stored local results return, same plies show
 # the proven badge (proof exists only on the Sekirei result set).
 - scrollUntilVisible:
@@ -107,14 +148,17 @@ env:
     element:
       id: analysis-status
     direction: DOWN
-# Wait for the local end-state label; if the auto-analysis ended partial,
-# resume once (same finite-resume semantics as analysis-review).
+# Wait for a local end-state label. The partial state shows
+# '解析済み N / 81局面' + a '解析を再開' button — neither matches the
+# '局面を解析済み' wording, so that label must be an alternative here.
 - extendedWaitUntil:
-    visible: '全局解析が完了しました|解析処理が終了しました|.*局面を解析済み.*'
+    visible: '全局解析が完了しました|解析処理が終了しました|.*局面を解析済み.*|解析済み.*|解析を再開'
     timeout: 600000
+# If the run ended partial, resume once (same finite-resume semantics as
+# analysis-review) then wait for the real end state again.
 - runFlow:
     when:
-      visible: '.*局面を解析済み.*'
+      visible: '解析を再開'
     commands:
       - scrollUntilVisible:
           element:
@@ -125,10 +169,10 @@ env:
       - extendedWaitUntil:
           visible: '全局解析が完了しました|解析処理が終了しました|.*局面を解析済み.*'
           timeout: 600000
-- assertVisible: '51 / 80手'
+- assertVisible: '53 / 80手'
 - scrollUntilVisible:
     element:
       text: '後手・1手詰め ›'
     direction: UP
 - assertVisible: '後手・1手詰め ›'
-- takeScreenshot: c26-sekirei-badge-ply51
+- takeScreenshot: c26-sekirei-badge-ply53
