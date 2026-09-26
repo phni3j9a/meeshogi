@@ -32,6 +32,7 @@ import { cloudEndpoint } from '@/cloud/config';
 import type { CloudPositionResult } from '@/cloud/results';
 import { useAppStore } from '@/store/app-store';
 import { shareKif } from '@/platform/kif-files';
+import { shareComparisonExport } from '@/platform/comparison-files';
 import { AppText, EmptyState, Icon, IconButton, Notice, TextButton } from '@/ui/primitives';
 import { Playback, ShogiBoard } from '@/ui/board';
 import { LineChart } from '@/ui/charts';
@@ -113,6 +114,7 @@ export default function GameScreen() {
   const loadCloudResults = useAppStore((state) => state.loadCloudResults);
   const cloudAttempts = useAppStore((state) => state.cloudAttempts);
   const cloudLoadError = useAppStore((state) => state.cloudLoadError);
+  const exportComparison = useAppStore((state) => state.exportComparison);
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight, fontScale } = useWindowDimensions();
@@ -360,17 +362,29 @@ export default function GameScreen() {
       setError(errorMessage(e));
     }
   };
+  // Development-only comparison export (Plan §5). Hidden in release builds
+  // unless EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1 was set at build time.
+  const canExportComparison =
+    __DEV__ || process.env.EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT === '1';
   const menu = async () => {
     if (!game) return;
     const action = await choose('棋譜の操作', [
       { label: game.favorite ? 'お気に入りを解除' : 'お気に入りに追加', value: 'favorite' },
       { label: 'KIFを書き出す', value: 'share' },
+      ...(canExportComparison
+        ? [{ label: '比較レポートを書き出す（開発用）', value: 'comparison' }]
+        : []),
       { label: '対局情報を確認・修正', value: 'info' },
       { label: '盤面を反転', value: 'flip' },
     ]);
     try {
       if (action === 'favorite') await updateGame(id, { favorite: !game.favorite });
       if (action === 'share') await shareKif(game);
+      if (action === 'comparison') {
+        const doc = await exportComparison(id);
+        const path = await shareComparisonExport(id, doc);
+        Alert.alert('比較レポート', `書き出しました:\n${path}`);
+      }
       if (action === 'info') router.push({ pathname: '/game-info/[id]', params: { id } });
       if (action === 'flip') setFlipped((value) => !value);
     } catch (e) {

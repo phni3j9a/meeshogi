@@ -10,7 +10,19 @@
 - 1 方式につき選択された 1 試行（`attemptId`）だけを含める。Cloud は復帰・照合のために `jobId` も保持する。
 - **credential・token・接続先 secret を export に絶対に含めない**。validator は `mcd1_…` 形式の cloud credential や `Bearer …` 形式の文字列を値・キーのどこにあっても拒否する。
 
-> アプリからの書き出し経路は別作業で実装される。実装されるまでは、このファイルの手順はスキーマに従う JSON を生成する任意の方法（手作り fixture・別スクリプト）に読み替えてよい。writer 側は `validateComparisonExport` をそのまま import して書き出し前に検証できる。
+## アプリからの書き出し手順（開発用）
+
+export writer は `src/comparison/export.ts`（`buildComparisonExport`）。store 経路は `exportComparison(gameId)`（`src/store/create-app-store.ts`）で、最新の Sekirei run 記録（`GameRecord.analysisRun`）と、棋譜に紐づく `gameIdentity` が一致する Cloud attempt のうち profile ごとに最新 `createdAt` の 1 件を選び、永続化済みの結果行を再検証してから写す。**書き出し前に `validateComparisonExport` で検証し、失敗した場合は書き出さず画面にエラーを表示する**。
+
+UI への入口は開発用のみ:
+
+1. 棋譜詳細画面（`app/game/[id].tsx`）右上メニュー「棋譜の操作」を開く。
+2. 「比較レポートを書き出す（開発用）」を選ぶ。この項目は **`__DEV__` が true** か、ビルド時に **`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`** を付けた場合にだけ表示され、通常の Release ビルドには出ない。
+3. JSON が端末のキャッシュ領域へ決定的パスで書き出される:
+   - パス: `<Paths.cache>/meeshogi-comparison-<gameId>.json`（`src/platform/comparison-files.ts` の `comparisonExportPath`）
+   - 書き出し後に `console.log('[comparison-export] wrote <file uri>')` を出し、完了時にパスを Alert でも表示する
+   - `expo-sharing` が使える環境では続けて共有シート（保存・送信）が開く
+4. 受け入れスクリプト等でファイルを取得する場合は、logcat / Metro ログの `[comparison-export] wrote` 行、またはアプリのキャッシュディレクトリ配下の `meeshogi-comparison-<gameId>.json`（Android は `adb` で `cache/files` 相当、iOS シミュレータはアプリコンテナの `Library/Caches` 相当）を参照する。
 
 ## レポートの再生成
 
@@ -64,6 +76,7 @@ npm run analysis-compare -- <export.json> [<export2.json> …] \
 | Cloud | `timing.createdAt → finishedAt`（server job 時刻。queue・retry 込み） | 行の `timing.kind: 'server-search'` の `elapsedMs`（`result.meta.elapsedMs`。1局面の search+drain のみ。起動・queue・network を含まない） |
 
 - Sekirei の実行種別: `fresh-complete`（新規探索のみ）/ `completed-with-cache-reuse`（`cacheReuseCount > 0`）/ `resumed`（以前の試行の結果を引き継いだ）/ `partial` / `interrupted` / `unknown`。`interrupted`・`resumed`・`cacheReuseCount` は方式レベルの `timing` に保持し、cache 再利用 ply は行 `fromCache: true` で call 時間を持たない。
+- Sekirei の計測はアプリの JS 側が記録する: 全局 run 記録は `GameRecord.analysisRun`、行の call 時間は `PositionAnalysis.callElapsedMs`・生成 run は `runId` に保存する。記録方式の導入前に保存された結果にはこれらが無く、`completedAt` 等から推測もしない。
 - Cloud job は background・再起動をまたいで server 側で継続するため、クライアント側の中断・再開という概念は持たない（idempotency key / jobId で同一 job に復帰する）。
 - 旧結果などで計測が無い値は `null` のまま保持する。**不明な時間を推定で埋めない**。
 

@@ -24,6 +24,10 @@ import { makeCloudController, type CloudDeps } from './cloud-controller';
 import { isCompatibleAnalysis } from '../analysis/cache';
 import { AnalysisBudgetIncompleteError } from '../analysis/errors';
 import type { AnalysisJob } from './analysis-job';
+import type { PersistedCloudResult } from '../storage/cloud-repository';
+import { buildComparisonExport } from '../comparison/export';
+import { validateComparisonExport } from '../comparison/validate';
+import type { ComparisonExport } from '../comparison/schema';
 type ImportOptions = {
   service: Service;
   mySide?: Side | null;
@@ -69,6 +73,11 @@ export interface AppState {
   loadCloudResults(gameId: string): Promise<void>;
   resumeCloudJobs(): void;
   pauseCloudJobs(): void;
+  /**
+   * Build and validate a development comparison export for one game.
+   * Throws on validation failure — nothing is written by the caller then.
+   */
+  exportComparison(id: string): Promise<ComparisonExport>;
   clearError(): void;
 }
 export type { AnalysisJob } from './analysis-job';
@@ -79,6 +88,11 @@ interface Dependencies {
   createId(): string;
   /** Cloud job integration. Absent in environments without a configured client. */
   cloud?: CloudDeps;
+  /** Comparison-export plumbing: hash + device info, supplied by the platform layer. */
+  comparison?: {
+    sha256Hex(text: string): Promise<string>;
+    generator(): ComparisonExport['generator'];
+  };
 }
 export function makeAppStore(deps: Dependencies) {
   let repository: LocalRepository | undefined;
@@ -353,6 +367,12 @@ export function makeAppStore(deps: Dependencies) {
           reusable(game.analysis[ply], sfen),
         ).length;
         const budgetShortfallPlies: number[] = [];
+        // JS-measured run record for the comparison export. Persisted even on
+        // interruption so a partial run is distinguishable from a fresh pass.
+        const runId = `sek-${deps.createId()}`;
+        const startedAt = Date.now();
+        let cacheReuseCount = 0;
+        let coveredAll = false;
         const makeJob = (status: AnalysisJob['status'], error?: string): AnalysisJob => ({
           gameId: id,
           status,
@@ -376,12 +396,19 @@ export function makeAppStore(deps: Dependencies) {
             if (!isCurrentRun()) return;
             const current = get().games.find((g) => g.id === id);
             if (!current) return;
-            if (reusable(current.analysis[ply], sfen)) continue;
+            if (reusable(current.analysis[ply], sfen)) {
+              cacheReuseCount++;
+              continue;
+            }
             let result: PositionAnalysis;
+            let callElapsedMs = 0;
             try {
               result = await engine(async () => {
                 if (!isCurrentRun()) throw new Error('解析を停止しました。');
-                return deps.analyze(sfen, conditions);
+                const t0 = Date.now();
+                const analysis = await deps.analyze(sfen, conditions);
+                callElapsedMs = Date.now() - t0;
+                return analysis;
               });
             } catch (error) {
               if (!(error instanceof AnalysisBudgetIncompleteError)) throw error;
@@ -400,7 +427,8 @@ export function makeAppStore(deps: Dependencies) {
               if (!isCurrentRun()) return;
               const latest = get().games.find((g) => g.id === id);
               if (!latest) return;
-              const next = { ...latest, analysis: { ...latest.analysis, [ply]: result } };
+              const timed = { ...result, callElapsedMs, runId };
+              const next = { ...latest, analysis: { ...latest.analysis, [ply]: timed } };
               await repo().save(next);
               replaceGame(next);
             });
@@ -409,6 +437,7 @@ export function makeAppStore(deps: Dependencies) {
             set({ analysisJob: makeJob('running') });
           }
           if (!isCurrentRun()) return;
+          coveredAll = true;
           set({
             analysisJob: budgetShortfallPlies.length ? makeJob('partial') : null,
           });
@@ -420,6 +449,35 @@ export function makeAppStore(deps: Dependencies) {
                 error instanceof Error ? error.message : '解析に失敗しました。',
               ),
             });
+        } finally {
+          try {
+            await write(async () => {
+              const latest = get().games.find((g) => g.id === id);
+              if (!latest) return;
+              const next = {
+                ...latest,
+                analysisRun: {
+                  runId,
+                  conditions,
+                  wholeGameWallMs: Date.now() - startedAt,
+                  cacheReuseCount,
+                  interrupted: !coveredAll,
+                  resumed: cacheReuseCount > 0,
+                  completion: coveredAll
+                    ? budgetShortfallPlies.length
+                      ? ('partial' as const)
+                      : ('completed' as const)
+                    : ('interrupted' as const),
+                },
+              };
+              await repo().save(next);
+              replaceGame(next);
+            });
+          } catch (error) {
+            // Timing is bookkeeping; its persistence failure must not lose
+            // analysis results. Surface it like other store errors.
+            report(error);
+          }
         }
       },
       analyzePosition: async (sfen) => {
@@ -487,6 +545,40 @@ export function makeAppStore(deps: Dependencies) {
       },
       resumeCloudJobs: () => cloud?.resume(),
       pauseCloudJobs: () => cloud?.pause(),
+      exportComparison: async (id) => {
+        const game = get().games.find((g) => g.id === id);
+        if (!game) throw new Error('棋譜が見つかりません。');
+        const comparison = deps.comparison;
+        if (!comparison) throw new Error('比較exportはこの環境では利用できません。');
+        const doc = await write(async () => {
+          // Only attempts that belong to this game's immutable content are
+          // eligible; stale-identity attempts are ignored entirely.
+          const attempts = get().cloudAttempts.filter(
+            (attempt) => attempt.gameId === id && attempt.gameIdentity === game.identity,
+          );
+          const results: Record<string, PersistedCloudResult[]> = {};
+          for (const attempt of attempts) {
+            results[attempt.attemptId] = await repo().cloud.results(attempt.attemptId);
+          }
+          return buildComparisonExport(
+            {
+              game,
+              attempts,
+              results,
+              generator: comparison.generator(),
+              exportedAt: new Date().toISOString(),
+            },
+            comparison.sha256Hex,
+          );
+        });
+        const validation = validateComparisonExport(doc);
+        if (!validation.ok) {
+          throw new Error(
+            `比較exportの検証に失敗しました: ${validation.errors[0] ?? '形式が不正です'}`,
+          );
+        }
+        return doc;
+      },
     };
   });
   return store;

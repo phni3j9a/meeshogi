@@ -1,6 +1,7 @@
 import { useStore } from 'zustand';
-import { randomUUID } from 'expo-crypto';
-import { AppState as NativeAppState } from 'react-native';
+import { randomUUID, digestStringAsync, CryptoDigestAlgorithm } from 'expo-crypto';
+import Constants from 'expo-constants';
+import { AppState as NativeAppState, Platform } from 'react-native';
 import { openRepository } from '../storage/native';
 import { analyzeNative, cancelNative } from '../analysis/native-engine';
 import { cloudEndpoint } from '../cloud/config';
@@ -21,6 +22,19 @@ export const appStore = makeAppStore({
     nowIso: () => new Date().toISOString(),
     pollIntervalMs: 2_000,
     maxBackoffMs: 30_000,
+  },
+  comparison: {
+    sha256Hex: (text) => digestStringAsync(CryptoDigestAlgorithm.SHA256, text),
+    generator: () => ({
+      platform: Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : 'unknown',
+      osVersion: Platform.Version === undefined ? null : String(Platform.Version),
+      deviceModel: Constants.modelName ?? Constants.deviceName ?? null,
+      appVersion: Constants.expoConfig?.version ?? null,
+      buildId:
+        Platform.OS === 'ios'
+          ? (Constants.expoConfig?.ios?.buildNumber ?? null)
+          : (Constants.expoConfig?.android?.versionCode?.toString() ?? null),
+    }),
   },
 });
 export function useAppStore<T>(selector: (state: AppState) => T): T {

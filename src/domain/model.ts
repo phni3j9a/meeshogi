@@ -81,6 +81,33 @@ export interface PositionAnalysis {
   terminal?: 'checkmate' | 'no-legal-moves';
   mateProof: MateProof | null;
   completedAt: string;
+  /**
+   * JS wall time (ms) of the analyze() call that produced this row. Absent on
+   * results stored before call timing existed — never inferred elsewhere.
+   */
+  callElapsedMs?: number;
+  /** runId of the whole-game analysis run that produced this row. */
+  runId?: string;
+}
+/**
+ * Record of the latest Sekirei whole-game analysis run, persisted with the
+ * game. Absent for results stored before run timing existed; the comparison
+ * export reports those values as null/unknown rather than guessing.
+ */
+export interface SekireiRunRecord {
+  /** Identifies the run; doubles as the export's attemptId for Sekirei. */
+  runId: string;
+  /** Conditions snapshot of this run. */
+  conditions: AnalysisConditions;
+  /** JS-measured wall clock covering the whole pass over all plies (ms). */
+  wholeGameWallMs: number;
+  /** Plies answered by a stored compatible result instead of a new search. */
+  cacheReuseCount: number;
+  /** The run stopped before covering every ply (cancel/invalidation/error). */
+  interrupted: boolean;
+  /** The run continued from results persisted by earlier runs. */
+  resumed: boolean;
+  completion: 'completed' | 'partial' | 'interrupted';
 }
 export interface GameRecord extends ParsedGame {
   /** App-only correction; the result parsed from rawKif remains unchanged. */
@@ -93,6 +120,8 @@ export interface GameRecord extends ParsedGame {
   mySide: Side | null;
   attribution: 'automatic' | 'manual' | 'ambiguous' | 'none';
   analysis: Record<number, PositionAnalysis>;
+  /** Latest Sekirei whole-game run record; absent for pre-timing data. */
+  analysisRun?: SekireiRunRecord;
 }
 export interface Settings {
   playerNames: Record<Service, string[]>;

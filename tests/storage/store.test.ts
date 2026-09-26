@@ -136,7 +136,8 @@ describe('棋譜の更新と解析の隔離', () => {
     await run;
     const analyzed = store.getState().games[0];
     expect(analyzed.rawKif).toBe(game.rawKif);
-    expect(analyzed.analysis[0]).toEqual(firstResult);
+    // The stored row gains run timing fields on top of the analyze() result.
+    expect(analyzed.analysis[0]).toMatchObject(firstResult);
     expect(Object.keys(analyzed.analysis)).toHaveLength(game.positions.length);
     expect(store.getState().settings.pieceSet).toBe('shiraki');
   });
@@ -243,12 +244,14 @@ describe('棋譜の更新と解析の隔離', () => {
 
       analyze.mockResolvedValue(currentResult);
       await store.getState().startAnalysis(oldGame.id);
-      expect((await reopened.repository.load()).games[0].analysis[0]).toEqual(currentResult);
+      expect((await reopened.repository.load()).games[0].analysis[0]).toMatchObject(currentResult);
       reopened.db.close();
 
       const afterRestart = database(path);
       await afterRestart.repository.initialize();
-      expect((await afterRestart.repository.load()).games[0].analysis[0]).toEqual(currentResult);
+      expect((await afterRestart.repository.load()).games[0].analysis[0]).toMatchObject(
+        currentResult,
+      );
       afterRestart.db.close();
     } finally {
       rmSync(dir, { recursive: true });
