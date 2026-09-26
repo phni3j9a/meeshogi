@@ -53,9 +53,13 @@ env:
             visible: 'Meeshogi Export.*'
           commands:
             - tapOn: 'Meeshogi Export.*'
+            # After the helper receives the share the app shows the
+            # '書き出しました' Alert, which covers the game-screen testID —
+            # so wait on the alert text, not the screen id (verified on
+            # evidence/issue22-android-20260927: target tap landed, write
+            # succeeded, but the game-screen wait timed out on the Alert).
             - extendedWaitUntil:
-                visible:
-                  id: game-screen
+                visible: '.*書き出しました.*'
                 timeout: 30000
       - runFlow:
           when:
