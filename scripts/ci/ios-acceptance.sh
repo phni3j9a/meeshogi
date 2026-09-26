@@ -26,7 +26,7 @@ mkdir -p "$maestro_dir"
 # those flows, in the normal order, after the licenses/import setup flows.
 # Later flows reuse app state from earlier ones, so a focused run is iteration
 # evidence, not acceptance; leave it unset for the full run.
-known_flows=",licenses-review,import-review,ios-visual-review,player-names,player-names-kiou,analysis-review,analysis-partial-review,candidate-review,file-import,management-review,appearance-review,appearance-dark,export-review-ios,background-review,large-text-review,search-delete-review,"
+known_flows=",licenses-review,import-review,ios-visual-review,player-names,player-names-kiou,analysis-review,analysis-partial-review,candidate-review,file-import,management-review,appearance-review,appearance-dark,export-review-ios,background-review,large-text-review,search-delete-review,cloud-method-picker,cloud-free-start,cloud-interruptions,cloud-free-verify,cloud-branch-local,cloud-cancel,cloud-precision-denied,cloud-precision-run,cloud-export,"
 if [[ -n "${ACCEPTANCE_FLOWS:-}" ]]; then
   IFS=, read -r -a requested_flows <<< "$ACCEPTANCE_FLOWS"
   for requested in "${requested_flows[@]}"; do
@@ -39,6 +39,12 @@ fi
 flow_selected() {
   [[ -z "${ACCEPTANCE_FLOWS:-}" || "$1" == licenses-review || "$1" == import-review ||
      ",${ACCEPTANCE_FLOWS}," == *",$1,"* ]]
+}
+# Issue #22 cloud flows are opt-in only: they need a Release build bundled
+# with EXPO_PUBLIC_CLOUD_ENDPOINT (and real staging quota), so they never run
+# in the default "all" suite — only via an explicit ACCEPTANCE_FLOWS list.
+flow_requested() {
+  [[ -n "${ACCEPTANCE_FLOWS:-}" && ",${ACCEPTANCE_FLOWS}," == *",$1,"* ]]
 }
 printf '%s\n' "${ACCEPTANCE_FLOWS:-all}" > "$run_dir/selected-flows.txt"
 record_pid=''
@@ -320,5 +326,59 @@ printf '%s\n' "$content_size_original" > "$run_dir/content-size-restored.txt"
 if flow_selected large-text-review; then
   run_large_text_review
 fi
+
+# --- Issue #22 cloud acceptance (opt-in; see flow_requested above) ---------
+# Requires a Release app bundled with EXPO_PUBLIC_CLOUD_ENDPOINT=<staging>
+# and EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1. Runs against staging with real
+# Free/Precision quota. The interruption helper needs IOS_SIMULATOR_UDID and
+# CLOUD_ENDPOINT (to resolve the endpoint IPs for the pf-based network cut;
+# pf rules need passwordless sudo on the host, else the step is SKIPPED).
+export IOS_SIMULATOR_UDID="$device"
+mkdir -p "$run_dir/cloud"
+if flow_requested cloud-method-picker; then
+  bash scripts/ci/cloud-db-snapshot.sh ios "$run_dir/cloud/picker-before.txt" || true
+  run_flow cloud-method-picker .maestro/cloud-method-picker.yaml
+  bash scripts/ci/cloud-db-snapshot.sh ios "$run_dir/cloud/picker-after.txt" || true
+fi
+if flow_requested cloud-free-start; then
+  run_flow cloud-free-start .maestro/cloud-free-start.yaml
+fi
+if flow_requested cloud-interruptions; then
+  bash scripts/ci/cloud-interruption.sh ios "$run_dir" \
+    || echo 'cloud-interruption.sh reported failures — see cloud/summary.txt' >&2
+fi
+if flow_requested cloud-free-verify; then
+  run_flow cloud-free-verify .maestro/cloud-free-verify.yaml
+fi
+if flow_requested cloud-branch-local; then
+  bash scripts/ci/cloud-db-snapshot.sh ios "$run_dir/cloud/branch-before.txt" || true
+  run_flow cloud-branch-local .maestro/cloud-branch-local.yaml
+  bash scripts/ci/cloud-db-snapshot.sh ios "$run_dir/cloud/branch-after.txt" || true
+fi
+if flow_requested cloud-cancel; then
+  run_flow cloud-cancel .maestro/cloud-cancel.yaml
+  bash scripts/ci/cloud-db-snapshot.sh ios "$run_dir/cloud/cancel-after.txt" || true
+fi
+if flow_requested cloud-precision-denied; then
+  run_flow cloud-precision-denied .maestro/cloud-precision-denied.yaml
+  bash scripts/ci/cloud-db-snapshot.sh ios "$run_dir/cloud/precision-denied.txt" || true
+fi
+if flow_requested cloud-precision-run; then
+  run_flow cloud-precision-run .maestro/cloud-precision-run.yaml
+  bash scripts/ci/cloud-db-snapshot.sh ios "$run_dir/cloud/precision-run.txt" || true
+fi
+if flow_requested cloud-export; then
+  run_flow cloud-export .maestro/cloud-export.yaml
+  # The writer's deterministic cache path inside the app container.
+  app_container="$(xcrun simctl get_app_container "$device" com.meeshogi.app data)"
+  comparison_export="$(ls -t "$app_container"/Library/Caches/meeshogi-comparison-*.json 2>/dev/null | head -1)"
+  if [[ -n "$comparison_export" ]]; then
+    cp "$comparison_export" "$run_dir/comparison-export.json"
+    echo "comparison export: $comparison_export -> comparison-export.json"
+  else
+    echo 'comparison export not found in Library/Caches' >&2
+  fi
+fi
+# ---------------------------------------------------------------------------
 
 run_flow search-delete-review .maestro/search-delete-review.yaml

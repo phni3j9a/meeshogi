@@ -11,6 +11,8 @@
         <action android:name="android.intent.action.SEND" />
         <category android:name="android.intent.category.DEFAULT" />
         <data android:mimeType="text/plain" />
+        <!-- Issue #22: the comparison export shares application/json. -->
+        <data android:mimeType="application/json" />
       </intent-filter>
     </activity>
   </application>

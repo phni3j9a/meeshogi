@@ -1,0 +1,55 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: Cloud Precision requires a server-side allowlist. Without it the
+# POST must fail with 403/profile_not_allowed and the UI must surface the
+# server message (Notice) while the attempt stays resumable. This flow must
+# run BEFORE the acceptance owner is allowlisted; after allowlisting use
+# cloud-precision-run instead.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- tapOn: Cloud・精密
+- waitForAnimationToEnd
+- assertVisible: この棋譜はCloud未解析です
+- takeScreenshot: c50-precision-selected
+- tapOn:
+    id: cloud-start
+    waitToSettleTimeoutMs: 500
+# 403 profile_not_allowed is non-transient: the attempt lands on 'error' with
+# the server failure message, and the retry affordance stays available.
+- extendedWaitUntil:
+    visible: '.*allowlist.*|Cloud解析を再開できます|.*Cloud解析が失敗.*'
+    timeout: 120000
+- assertVisible: '.*allowlist.*'
+- assertVisible: 'Cloud解析を再開できます'
+- takeScreenshot: c51-precision-403
+# Leave the stored method on Sekirei for the remaining flows.
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- tapOn: 端末内（Sekirei）
+- waitForAnimationToEnd
+- takeScreenshot: c52-back-to-sekirei

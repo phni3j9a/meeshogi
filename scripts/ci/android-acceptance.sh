@@ -17,7 +17,7 @@ mkdir -p "$maestro_dir" "$video_dir"
 # those flows, in the normal order, after the licenses/import setup flows.
 # Later flows reuse app state from earlier ones, so a focused run is iteration
 # evidence, not acceptance; leave it unset for the full run.
-known_flows=",licenses-review,import-review,player-names,player-names-kiou,analysis-review,analysis-partial-review,candidate-review,file-import,management-review,appearance-review,appearance-dark,export-review,background-review,large-text-review,search-delete-review,"
+known_flows=",licenses-review,import-review,player-names,player-names-kiou,analysis-review,analysis-partial-review,candidate-review,file-import,management-review,appearance-review,appearance-dark,export-review,background-review,large-text-review,search-delete-review,cloud-method-picker,cloud-free-start,cloud-interruptions,cloud-free-verify,cloud-branch-local,cloud-cancel,cloud-precision-denied,cloud-precision-run,cloud-export,"
 if [[ -n "${ACCEPTANCE_FLOWS:-}" ]]; then
   IFS=, read -r -a requested_flows <<< "$ACCEPTANCE_FLOWS"
   for requested in "${requested_flows[@]}"; do
@@ -30,6 +30,12 @@ fi
 flow_selected() {
   [[ -z "${ACCEPTANCE_FLOWS:-}" || "$1" == licenses-review || "$1" == import-review ||
      ",${ACCEPTANCE_FLOWS}," == *",$1,"* ]]
+}
+# Issue #22 cloud flows are opt-in only: they need a Release build bundled
+# with EXPO_PUBLIC_CLOUD_ENDPOINT (and real staging quota), so they never run
+# in the default "all" suite — only via an explicit ACCEPTANCE_FLOWS list.
+flow_requested() {
+  [[ -n "${ACCEPTANCE_FLOWS:-}" && ",${ACCEPTANCE_FLOWS}," == *",$1,"* ]]
 }
 printf '%s\n' "${ACCEPTANCE_FLOWS:-all}" > "$run_dir/selected-flows.txt"
 
@@ -165,6 +171,51 @@ if flow_selected export-review; then
   cmp fixtures/kif/shogiwars.kif "$run_dir/exported.kifu"
 fi
 run_flow background-review .maestro/background-review.yaml
+
+# --- Issue #22 cloud acceptance (opt-in; see flow_requested above) ---------
+# Requires a Release APK bundled with EXPO_PUBLIC_CLOUD_ENDPOINT=<staging>
+# and EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1. Runs against staging with real
+# Free/Precision quota.
+mkdir -p "$run_dir/cloud"
+if flow_requested cloud-method-picker; then
+  bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/picker-before.txt" || true
+  run_flow cloud-method-picker .maestro/cloud-method-picker.yaml
+  bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/picker-after.txt" || true
+fi
+if flow_requested cloud-free-start; then
+  run_flow cloud-free-start .maestro/cloud-free-start.yaml
+fi
+if flow_requested cloud-interruptions; then
+  bash scripts/ci/cloud-interruption.sh android "$run_dir" \
+    || echo 'cloud-interruption.sh reported failures — see cloud/summary.txt' >&2
+fi
+if flow_requested cloud-free-verify; then
+  run_flow cloud-free-verify .maestro/cloud-free-verify.yaml
+fi
+if flow_requested cloud-branch-local; then
+  bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/branch-before.txt" || true
+  run_flow cloud-branch-local .maestro/cloud-branch-local.yaml
+  bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/branch-after.txt" || true
+fi
+if flow_requested cloud-cancel; then
+  run_flow cloud-cancel .maestro/cloud-cancel.yaml
+  bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/cancel-after.txt" || true
+fi
+if flow_requested cloud-precision-denied; then
+  run_flow cloud-precision-denied .maestro/cloud-precision-denied.yaml
+  bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/precision-denied.txt" || true
+fi
+if flow_requested cloud-precision-run; then
+  run_flow cloud-precision-run .maestro/cloud-precision-run.yaml
+  bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/precision-run.txt" || true
+fi
+if flow_requested cloud-export; then
+  run_flow cloud-export .maestro/cloud-export.yaml
+  adb pull /sdcard/Download/meeshogi-comparison.json "$run_dir/comparison-export.json" \
+    || echo 'comparison export not in /sdcard/Download (helper share step did not run?)' >&2
+fi
+# ---------------------------------------------------------------------------
+
 if flow_selected large-text-review; then
   original_font_scale="$(adb shell settings get system font_scale | tr -d '\r')"
   adb shell settings put system font_scale 1.3

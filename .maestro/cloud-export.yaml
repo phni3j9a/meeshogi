@@ -1,0 +1,76 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: developer comparison export. The menu item exists only when the
+# Release build was bundled with EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1. The
+# file is written to the deterministic cache path
+# meeshogi-comparison-<gameId>.json BEFORE the share sheet opens; the
+# acceptance scripts pull it (Android: helper share target -> /sdcard/Download;
+# iOS: Library/Caches inside the app container) and run analysis-compare.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- tapOn: 棋譜の操作
+- waitForAnimationToEnd
+- takeScreenshot: c70-game-menu
+# The item must exist in this build; if it does not the release bundle lacks
+# EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1 and that is the failure to report.
+- assertVisible: '比較レポートを書き出す（開発用）'
+- tapOn: '比較レポートを書き出す（開発用）'
+- waitForAnimationToEnd
+- takeScreenshot: c71-export-share-sheet
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      # Route the share through the CI helper so the JSON bytes also land in
+      # /sdcard/Download/meeshogi-comparison.json (Release builds have no
+      # run-as access to the app cache).
+      - repeat:
+          times: 4
+          while:
+            notVisible: Meeshogi Export Test
+          commands:
+            - swipe:
+                start: 50%, 90%
+                end: 50%, 65%
+      - runFlow:
+          when:
+            visible: Meeshogi Export Test
+          commands:
+            - tapOn: Meeshogi Export Test
+            - extendedWaitUntil:
+                visible:
+                  id: game-screen
+                timeout: 30000
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # The file is already in the app container's Library/Caches; dismiss the
+      # system share sheet without picking an activity (Files RemoteUI does
+      # not present under automation anyway).
+      - tapOn:
+          point: '50%,10%'
+          optional: true
+      - tapOn:
+          text: '閉じる|Close|完了|Done'
+          optional: true
+- extendedWaitUntil:
+    visible: '.*書き出しました.*'
+    timeout: 60000
+- takeScreenshot: c72-export-written
+- tapOn:
+    text: OK
+    optional: true

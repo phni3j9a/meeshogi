@@ -1,0 +1,38 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22 (phase B, post-allowlist): the acceptance owner's Precision job
+# must run to a terminal state under the Precision contract
+# (threads=2, hash=64, 5000 ms/ply, MultiPV=3). ~81 plies x 5 s plus queue:
+# allow 15 minutes. Run only after the owner was allowlisted for this install.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- tapOn: Cloud・精密
+- waitForAnimationToEnd
+- tapOn:
+    id: cloud-start
+    waitToSettleTimeoutMs: 500
+- extendedWaitUntil:
+    visible: 'Cloud解析が完了しました|.*Cloud解析が終了しました.*|Cloud解析を再開できます'
+    timeout: 900000
+- takeScreenshot: c60-precision-result
+- assertVisible: 'Cloud解析が完了しました|.*Cloud解析が終了しました.*'

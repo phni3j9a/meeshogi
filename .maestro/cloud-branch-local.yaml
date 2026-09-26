@@ -1,0 +1,72 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: while a Cloud method is selected, branch analysis and the
+# per-position deep analysis must stay on the local Sekirei engine — the UI
+# labels must say so. The acceptance script snapshots cloud_attempts before
+# and after this flow to prove no new Cloud job was created.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- tapOn: Cloud・無料
+- waitForAnimationToEnd
+# Enter a branch from ply 0 (2g-2f is the fixture's first move).
+- tapOn:
+    id: move-first
+- tapOn:
+    id: square-2g
+- tapOn:
+    id: square-2f
+- assertVisible: 分岐検討
+- assertVisible: '0手目から分岐'
+# Branch analysis label must carry the local-Sekirei marker under Cloud.
+# Wait for the completed label only — '分岐を解析中' would match too early.
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- extendedWaitUntil:
+    visible: '分岐の解析結果（ローカル・Sekirei）'
+    timeout: 180000
+- takeScreenshot: c30-branch-local-label
+# The evaluation caption sits above the analysis section; scroll it back.
+- scrollUntilVisible:
+    element:
+      text: '分岐の評価・ローカル'
+    direction: UP
+- assertVisible: '分岐の評価・ローカル'
+- takeScreenshot: c30b-branch-eval-local
+# Deep-analysis button label must carry the local-Sekirei marker too.
+- scrollUntilVisible:
+    element:
+      id: analysis-focus
+    direction: DOWN
+- assertVisible: 'この局面を深く解析（ローカル・Sekirei）'
+- tapOn:
+    id: analysis-focus
+- extendedWaitUntil:
+    visible:
+      id: focused-analysis-ready
+    timeout: 180000
+- assertVisible: 'この局面のローカル解析（Sekirei）結果を表示中'
+- takeScreenshot: c31-focus-local-label
+- tapOn: 本譜に戻る
+- assertVisible: '0 / 80手'

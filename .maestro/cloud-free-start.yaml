@@ -1,0 +1,39 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: start a real Cloud Free full-game job and leave it running.
+# cloud-interruption.sh then exercises background/kill/network cuts against
+# this attempt, and cloud-free-verify waits for its completion.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- tapOn: Cloud・無料
+- waitForAnimationToEnd
+- takeScreenshot: c10-cloud-free-selected
+- tapOn:
+    id: cloud-start
+    waitToSettleTimeoutMs: 500
+# The attempt persists before POST /jobs, so an active or already-terminal
+# label must appear shortly after the tap.
+- extendedWaitUntil:
+    visible: '.*Cloud解析を開始しています.*|.*Cloud解析の順番を待っています.*|.*Cloud解析中・処理.*|.*Cloud解析を取消しています.*|Cloud解析が完了しました|.*Cloud解析が終了しました.*|Cloud解析を再開できます'
+    timeout: 120000
+- takeScreenshot: c11-cloud-job-started

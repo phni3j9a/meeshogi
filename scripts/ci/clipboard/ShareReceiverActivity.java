@@ -22,9 +22,14 @@ public final class ShareReceiverActivity extends Activity {
   // MediaStore appends .txt to unrecognized extensions for text/plain.
   private static final String OUTPUT_NAME = "meeshogi-export.txt";
   private static final String OUTPUT_MIME = "text/plain";
+  // Issue #22: the developer comparison export shares application/json.
+  private static final String OUTPUT_NAME_JSON = "meeshogi-comparison.json";
+  private static final String OUTPUT_MIME_JSON = "application/json";
   private static final String PREF_LAST_OUTPUT = "last_output_uri";
 
   private TextView statusView;
+  private String outputName = OUTPUT_NAME;
+  private String outputMime = OUTPUT_MIME;
 
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
@@ -42,10 +47,18 @@ public final class ShareReceiverActivity extends Activity {
   }
 
   private void handleIntent(Intent intent) {
-    if (intent == null
-        || !Intent.ACTION_SEND.equals(intent.getAction())
-        || !OUTPUT_MIME.equals(intent.getType())) {
-      fail("Expected ACTION_SEND text/plain");
+    if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) {
+      fail("Expected ACTION_SEND");
+      return;
+    }
+    if (OUTPUT_MIME.equals(intent.getType())) {
+      outputName = OUTPUT_NAME;
+      outputMime = OUTPUT_MIME;
+    } else if (OUTPUT_MIME_JSON.equals(intent.getType())) {
+      outputName = OUTPUT_NAME_JSON;
+      outputMime = OUTPUT_MIME_JSON;
+    } else {
+      fail("Expected ACTION_SEND text/plain or application/json");
       return;
     }
 
@@ -57,7 +70,7 @@ public final class ShareReceiverActivity extends Activity {
 
     try {
       Uri destination = saveToDownloads(source);
-      statusView.setText("Saved " + OUTPUT_NAME);
+      statusView.setText("Saved " + outputName);
       setResult(RESULT_OK, new Intent().setData(destination));
       finish();
     } catch (Exception error) {
@@ -83,8 +96,8 @@ public final class ShareReceiverActivity extends Activity {
     deletePreviousOutput(resolver);
 
     ContentValues values = new ContentValues();
-    values.put(MediaStore.MediaColumns.DISPLAY_NAME, OUTPUT_NAME);
-    values.put(MediaStore.MediaColumns.MIME_TYPE, OUTPUT_MIME);
+    values.put(MediaStore.MediaColumns.DISPLAY_NAME, outputName);
+    values.put(MediaStore.MediaColumns.MIME_TYPE, outputMime);
     values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/");
     values.put(MediaStore.MediaColumns.IS_PENDING, 1);
 
@@ -149,7 +162,7 @@ public final class ShareReceiverActivity extends Activity {
     Uri downloads = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
     String selection = MediaStore.MediaColumns.DISPLAY_NAME + "=? AND "
         + MediaStore.MediaColumns.OWNER_PACKAGE_NAME + "=?";
-    String[] selectionArgs = {OUTPUT_NAME, getPackageName()};
+    String[] selectionArgs = {outputName, getPackageName()};
     try (Cursor cursor = resolver.query(
         downloads,
         new String[] {MediaStore.MediaColumns._ID},

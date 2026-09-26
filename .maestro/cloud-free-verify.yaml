@@ -1,0 +1,122 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: after cloud-interruption.sh the same Cloud Free attempt must be
+# visible and reach a terminal state; its stored rows then drive the existing
+# graph / candidates / PV / mate UI. Mate values under Cloud must never grow
+# the Sekirei proof badge ('・N手詰め ›'). The flow ends on Sekirei where the
+# same plies DO show proven badges — the A/B gate evidence.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+# The Free job (81 plies x ~1 s server-side) plus interruption delays: allow
+# up to 10 minutes for the terminal label.
+- extendedWaitUntil:
+    visible: 'Cloud解析が完了しました|.*Cloud解析が終了しました.*'
+    timeout: 600000
+- takeScreenshot: c20-cloud-completed
+# Evaluation graph fed by Cloud results.
+- scrollUntilVisible:
+    element:
+      id: evaluation-chart
+    direction: UP
+- assertVisible:
+    id: evaluation-chart
+- assertVisible:
+    id: evaluation-chart-plot
+- takeScreenshot: c21-cloud-graph
+# Terminal ply: checkmate label, and no proof badge anywhere.
+- tapOn:
+    id: move-last
+- assertVisible: '80 / 80手'
+- scrollUntilVisible:
+    element:
+      text: '後手勝ち・詰み終局'
+    direction: UP
+- assertVisible: '後手勝ち・詰み終局'
+- assertNotVisible: '.*手詰め ›'
+- takeScreenshot: c22-cloud-terminal
+# One ply earlier Cloud must report a signed mate/eval value — still no badge.
+- tapOn:
+    id: move-prev
+- assertVisible: '79 / 80手'
+- assertNotVisible: '.*手詰め ›'
+- takeScreenshot: c23-cloud-mate-or-eval
+# Mid-game ply: Cloud candidates + principal variation are visible.
+- tapOn:
+    id: move-first
+- assertVisible: '0 / 80手'
+- scrollUntilVisible:
+    element:
+      id: candidate-0
+    direction: DOWN
+- assertVisible:
+    id: candidate-0
+- takeScreenshot: c24-cloud-candidates
+# The ply where Sekirei proves 1手詰め: under Cloud the badge must be absent
+# even though a mate value may be displayed.
+- tapOn:
+    id: move-last
+- tapOn:
+    id: move-prev
+    repeat: 29
+    delay: 500
+- assertVisible: '51 / 80手'
+- assertNotVisible: '後手・1手詰め ›'
+- assertNotVisible: '.*手詰め ›'
+- takeScreenshot: c25-cloud-no-badge-ply51
+# --- switch back to Sekirei: stored local results return, same plies show
+# the proven badge (proof exists only on the Sekirei result set).
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- tapOn: 端末内（Sekirei）
+- waitForAnimationToEnd
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+# Wait for the local end-state label; if the auto-analysis ended partial,
+# resume once (same finite-resume semantics as analysis-review).
+- extendedWaitUntil:
+    visible: '全局解析が完了しました|解析処理が終了しました|.*局面を解析済み.*'
+    timeout: 600000
+- runFlow:
+    when:
+      visible: '.*局面を解析済み.*'
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: analysis-start
+          direction: DOWN
+      - tapOn:
+          id: analysis-start
+      - extendedWaitUntil:
+          visible: '全局解析が完了しました|解析処理が終了しました|.*局面を解析済み.*'
+          timeout: 600000
+- assertVisible: '51 / 80手'
+- scrollUntilVisible:
+    element:
+      text: '後手・1手詰め ›'
+    direction: UP
+- assertVisible: '後手・1手詰め ›'
+- takeScreenshot: c26-sekirei-badge-ply51
