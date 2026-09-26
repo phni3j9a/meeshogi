@@ -40,6 +40,7 @@ import { Playback, ShogiBoard } from '@/ui/board';
 import { LineChart } from '@/ui/charts';
 import { openingDescription } from '@/ui/game-row';
 import { openMateSession } from '@/ui/mate-session';
+import { createLatestRunner } from '@/ui/latest-runner';
 import { useTheme } from '@/ui/theme';
 import { errorMessage, useChoice } from '@/ui/use-choice';
 import {
@@ -170,21 +171,30 @@ export default function GameScreen() {
   // FP-015: the persisted failureCode is a snapshot — recovery eligibility is
   // re-evaluated live via the store whenever the attempt changes or the
   // screen regains focus, so a restored credential re-enables retry/cancel.
+  // FP-016: only the latest evaluation may apply — a slow stale probe (e.g. a
+  // pre-restore 'absent') must not overwrite a newer state, and cleanup / blur
+  // / a target change voids every in-flight request.
   const unconfirmedAttempt =
     attempt && attemptServerUnconfirmed(attempt) ? attempt : null;
   const [cloudRecovery, setCloudRecovery] = useState<CloudRecoveryState | null>(null);
+  const [cloudRecoveryRunner] = useState(() =>
+    createLatestRunner<CloudRecoveryState>(setCloudRecovery, () =>
+      setCloudRecovery('transient'),
+    ),
+  );
   const refreshCloudRecovery = useCallback(() => {
     if (!unconfirmedAttempt) {
+      cloudRecoveryRunner.invalidate();
       setCloudRecovery(null);
       return;
     }
-    void cloudRecoveryState(id)
-      .then(setCloudRecovery)
-      .catch(() => setCloudRecovery('transient'));
-  }, [cloudRecoveryState, id, unconfirmedAttempt?.attemptId]);
+    cloudRecoveryRunner.run(cloudRecoveryState(id));
+  }, [cloudRecoveryRunner, cloudRecoveryState, id, unconfirmedAttempt?.attemptId]);
   useEffect(() => {
     refreshCloudRecovery();
+    return cloudRecoveryRunner.invalidate;
   }, [
+    cloudRecoveryRunner,
     refreshCloudRecovery,
     unconfirmedAttempt?.status,
     unconfirmedAttempt?.failureCode,
@@ -193,7 +203,8 @@ export default function GameScreen() {
   useFocusEffect(
     useCallback(() => {
       refreshCloudRecovery();
-    }, [refreshCloudRecovery]),
+      return cloudRecoveryRunner.invalidate;
+    }, [cloudRecoveryRunner, refreshCloudRecovery]),
   );
   const runningElsewhere = useMemo(
     () =>
