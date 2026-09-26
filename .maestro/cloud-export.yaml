@@ -52,10 +52,13 @@ env:
       # run-as access to the app cache). The collapsed sharesheet truncates
       # long labels, so match a prefix; expansion can need several swipes with
       # a settle between each (a single fling can overshoot the row).
+      # The collapsed sharesheet truncates the helper label to 'Meeshogi E…' /
+      # 'meeshogi t…' (full 'Meeshogi Export Test' only lands below the fold),
+      # so accept the truncated forms too.
       - repeat:
           times: 8
           while:
-            notVisible: 'Meeshogi Export.*'
+            notVisible: 'Meeshogi Export.*|Meeshogi E.*|meeshogi t.*'
           commands:
             - swipe:
                 start: 50%, 90%
@@ -63,9 +66,9 @@ env:
             - waitForAnimationToEnd
       - runFlow:
           when:
-            visible: 'Meeshogi Export.*'
+            visible: 'Meeshogi Export.*|Meeshogi E.*|meeshogi t.*'
           commands:
-            - tapOn: 'Meeshogi Export.*'
+            - tapOn: 'Meeshogi Export.*|Meeshogi E.*|meeshogi t.*'
             # After the helper receives the share the app shows the
             # '書き出しました' Alert, which covers the game-screen testID —
             # so wait on the alert text, not the screen id (verified on

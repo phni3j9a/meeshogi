@@ -25,6 +25,11 @@ env:
 - tapOn:
     id: analysis-method
 - waitForAnimationToEnd
+# The method ActionSheet can mount late (Modal mount lag observed after big
+# cloud syncs) — wait on the option itself before tapping it.
+- extendedWaitUntil:
+    visible: 'Cloud・無料'
+    timeout: 120000
 - tapOn: Cloud・無料
 - waitForAnimationToEnd
 - takeScreenshot: c10-cloud-free-selected
