@@ -47,6 +47,8 @@ meetermのネイティブターミナル描画要件をこのアプリへ転用�
 
 Issue #19のCloudflare Worker / Containerは、認証・private engine image・同期解析のstaging技術検証に限り、2026-09-25に実環境でsmokeとtimeout/recoveryを確認済み。Containerに必要なclass、binding、SQLite migrationと標準lifecycleだけを使い、独自のDO storage・調停・alarm・retry・recoveryを追加しない。モバイルの解析経路や無料初期版の利用条件には接続せず、production・同期・ログイン機能の採用を意味しない。実装と検証結果・運用条件は[`cloud/README.md`](../cloud/README.md)に記録する。
 
+Issue #20の比較ベンチマークでは、同一Container appの`instance_type`切替後に設定とruntimeが一致しない実測があったため、benchmark専用のstandard-2 / standard-3 class・binding・appを固定して使う。通常APIは既存のstandard-2 singleton class / binding / appのままにし、通常deployでも測定用class定義とSQLite migrationを整合して残すが、benchmark routeとallowlistは無効にする。これは再現可能なstaging測定経路であり、モバイル製品やproduction採用ではない。VM再利用を不一致の確定原因とは扱わず、各classのruntime readinessを測定前に検証する。測定定義にapp用storage、Queue、scheduler、独自のDO状態管理は追加しない。詳細は[`cloud/README.md`](../cloud/README.md)を参照。
+
 ## 詰みと戦型
 
 短手数の詰みは通常評価とは別の確定結果として扱う。1手・3手の範囲で合法手・王手回避・打ち歩詰めなどの規則を含めて検証し、手順表示の結果と証明の結果を区別する。Sekireiに必要なAPIがあるかは実装前に調べ、不足する場合は共通ロジックとして実装する。

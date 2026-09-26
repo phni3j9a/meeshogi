@@ -1,9 +1,21 @@
 import { handPieceTypes, Position, Square } from 'tsshogi';
+import benchmarkManifest from '../bench/conditions.json' with { type: 'json' };
 
 export const CONTRACT_VERSION = 'analysis-json-v1';
+export const BENCHMARK_CONTRACT_VERSION = 'analysis-json-v2';
 export const DRIVER_VERSION = 'usi-driver-v1';
 export const MAX_BODY_BYTES = 1024;
 export const MAX_SFEN_BYTES = 256;
+const BENCHMARK_IDENTITY_DIGEST_KEYS = [
+  'engineSha256', 'weightSha256', 'optionsSha256', 'sourceArchiveSha256', 'sourceTreeSha256',
+] as const;
+
+function hasBenchmarkIdentityDigests(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const digests = value as Record<string, unknown>;
+  return Object.keys(digests).length === BENCHMARK_IDENTITY_DIGEST_KEYS.length
+    && BENCHMARK_IDENTITY_DIGEST_KEYS.every((key) => typeof digests[key] === 'string' && /^[0-9a-f]{64}$/u.test(digests[key] as string));
+}
 
 export const SEARCH_CONDITIONS = Object.freeze({
   threads: 1,
@@ -11,6 +23,21 @@ export const SEARCH_CONDITIONS = Object.freeze({
   moveTimeMs: 1500,
   multiPV: 3,
 });
+
+export type BenchmarkCondition = {
+  conditionId: string;
+  instanceType: 'standard-2' | 'standard-3';
+  threads: number;
+  hashMb: number;
+  moveTimeMs: number;
+  multiPV: number;
+  role: 'candidate' | 'reference';
+};
+
+export const BENCHMARK_CONDITIONS = benchmarkManifest.conditions as unknown as readonly BenchmarkCondition[];
+export const BENCHMARK_CONDITION_BY_ID = new Map(
+  BENCHMARK_CONDITIONS.map((condition) => [condition.conditionId, condition]),
+);
 
 export const EXPECTED_IDENTITY = Object.freeze({
   engineName: 'YaneuraOu NNUE 9.70git 64AVX2',
@@ -33,6 +60,7 @@ export type FailureCode =
   | 'busy'
   | 'timeout'
   | 'identity_mismatch'
+  | 'instance_mismatch'
   | 'engine_error';
 
 export type Score =
@@ -76,15 +104,21 @@ export type FailureResult = {
   schemaVersion: 1;
   sfen: string | null;
   status: 'failure';
-  failure: { code: FailureCode; message: string };
+  failure: { code: FailureCode; message: string; detail?: string };
 };
 
 export function failure(
   code: FailureCode,
   message: string,
   sfen: string | null = null,
+  detail?: string,
 ): FailureResult {
-  return { schemaVersion: 1, sfen, status: 'failure', failure: { code, message } };
+  return {
+    schemaVersion: 1,
+    sfen,
+    status: 'failure',
+    failure: { code, message, ...(detail ? { detail } : {}) },
+  };
 }
 
 export function isValidSfen(value: unknown): value is string {
@@ -272,4 +306,234 @@ export function validateDriverResult(
     }
   }
   return value as AnalysisResult;
+}
+
+function safePositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function safeNonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+export function hasBenchmarkRuntime(value: unknown, expectedInstanceType: string | null, driverBootId?: string): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const runtime = value as Record<string, unknown>;
+  if (
+    runtime.expectedInstanceType !== expectedInstanceType ||
+    typeof runtime.driverBootId !== 'string' || !/^[0-9a-f]{32}$/u.test(runtime.driverBootId) ||
+    !(runtime.osCpuCount === null || safePositiveInteger(runtime.osCpuCount)) ||
+    !(runtime.affinityCpuCount === null || safePositiveInteger(runtime.affinityCpuCount)) ||
+    !(runtime.cpuMax === null || typeof runtime.cpuMax === 'string') ||
+    !(runtime.cpuQuota === null || safeNonNegativeNumber(runtime.cpuQuota)) ||
+    !(runtime.memoryMaxBytes === null || safePositiveInteger(runtime.memoryMaxBytes)) ||
+    !(runtime.memTotalBytes === null || safePositiveInteger(runtime.memTotalBytes)) ||
+    !(runtime.rootDiskTotalBytes === null || safePositiveInteger(runtime.rootDiskTotalBytes))
+  ) return false;
+  return driverBootId === undefined || runtime.driverBootId === driverBootId;
+}
+
+export function benchmarkRuntimeMismatch(value: unknown, expectedInstanceType: string): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'runtime_missing';
+  const runtime = value as Record<string, unknown>;
+  const expectedCpu = expectedInstanceType === 'standard-2' ? 1 : 2;
+  const expectedMemory = (expectedInstanceType === 'standard-2' ? 6 : 8) * 1024 ** 3;
+  const minimumMemory = expectedMemory - 1.5 * 1024 ** 3;
+  const maximumMemory = expectedMemory + 0.25 * 1024 ** 3;
+  if (runtime.expectedInstanceType !== expectedInstanceType) return 'driver_expected_instance_type_mismatch';
+  if (runtime.osCpuCount !== expectedCpu || runtime.affinityCpuCount !== expectedCpu) return 'cpu_count_mismatch';
+  if (typeof runtime.memTotalBytes !== 'number' || !Number.isSafeInteger(runtime.memTotalBytes)
+    || runtime.memTotalBytes < minimumMemory || runtime.memTotalBytes > maximumMemory) return 'mem_total_mismatch';
+  if (runtime.cpuQuota !== null && (typeof runtime.cpuQuota !== 'number'
+    || Math.abs(runtime.cpuQuota - expectedCpu) > 0.05)) return 'cpu_quota_mismatch';
+  if (runtime.memoryMaxBytes !== null && (typeof runtime.memoryMaxBytes !== 'number'
+    || runtime.memoryMaxBytes < minimumMemory || runtime.memoryMaxBytes > maximumMemory)) return 'memory_limit_mismatch';
+  return null;
+}
+
+export type BenchmarkDriverFailure = {
+  schemaVersion: 2;
+  contractVersion: typeof BENCHMARK_CONTRACT_VERSION;
+  sfen: string;
+  perspective: 'sente';
+  status: 'failure';
+  failure: {
+    code: 'busy' | 'timeout' | 'identity_mismatch' | 'instance_mismatch' | 'engine_error';
+    message: string;
+    diagnostics?: {
+      exitCode: number | null;
+      terminatingSignal: string | null;
+      waitReturnCode: number;
+      stdoutEof: boolean;
+      lastInfo: { depth: number; nodes: number | null; timeMs: number | null; adopted: false } | null;
+      lastNonInfoLineKind: string | null;
+    };
+  };
+  conditionId: string;
+  driverBootId: string;
+  engineEpoch: number;
+  expectedInstanceType: string | null;
+  buildId?: string;
+  gitCommit?: string;
+  runtime: Record<string, unknown>;
+  identityDigests: Record<string, unknown>;
+  runtimeMismatch?: string;
+};
+
+export type BenchmarkValidationDiagnostic = { check?: string };
+
+/** Validate the benchmark-only contract without changing v1 validation semantics. */
+export function validateBenchmarkDriverResult(
+  value: unknown,
+  sfen: string,
+  rootLegalMoves: string[],
+  condition: BenchmarkCondition,
+  diagnostic?: BenchmarkValidationDiagnostic,
+): Record<string, unknown> | BenchmarkDriverFailure | null {
+  const reject = (check: string): null => {
+    if (diagnostic && diagnostic.check === undefined) diagnostic.check = check;
+    return null;
+  };
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return reject('result.object');
+  const result = value as Record<string, unknown>;
+  if (result.schemaVersion !== 2) return reject('schemaVersion');
+  if (result.contractVersion !== BENCHMARK_CONTRACT_VERSION) return reject('contractVersion');
+  if (result.sfen !== sfen) return reject('sfen');
+  if (result.perspective !== 'sente') return reject('perspective');
+  if (result.conditionId !== condition.conditionId) return reject('conditionId');
+  if (!hasBenchmarkIdentityDigests(result.identityDigests)) return reject('identityDigests');
+  if (!(result.expectedInstanceType === null || result.expectedInstanceType === 'standard-2' || result.expectedInstanceType === 'standard-3')) return reject('expectedInstanceType');
+  if (typeof result.driverBootId !== 'string' || !/^[0-9a-f]{32}$/u.test(result.driverBootId)) return reject('driverBootId');
+  if (!(typeof result.engineEpoch === 'number' && Number.isSafeInteger(result.engineEpoch) && result.engineEpoch >= 0)) return reject('engineEpoch');
+  if (typeof result.driverVersion !== 'string' || result.driverVersion.length === 0) return reject('driverVersion');
+  if (!hasBenchmarkRuntime(result.runtime, result.expectedInstanceType)) return reject('runtime.shape');
+  const runtime = result.runtime as Record<string, unknown>;
+  if (runtime.driverBootId !== result.driverBootId) return reject('runtime.driverBootId');
+
+  if (result.status === 'failure') {
+    const failureValue = result.failure;
+    if (typeof failureValue !== 'object' || failureValue === null || Array.isArray(failureValue)) return reject('failure.object');
+    const failureRecord = failureValue as Record<string, unknown>;
+    if (!['busy', 'timeout', 'identity_mismatch', 'instance_mismatch', 'engine_error'].includes(String(failureRecord.code))) return reject('failure.code');
+    if (typeof failureRecord.message !== 'string') return reject('failure.message');
+    const evidenceMismatch = result.expectedInstanceType !== condition.instanceType
+      ? 'driver_expected_instance_type_mismatch'
+      : benchmarkRuntimeMismatch(runtime, condition.instanceType);
+    if (failureRecord.code === 'instance_mismatch') {
+      return evidenceMismatch || result.runtimeMismatch === 'condition_instance_type_mismatch'
+        ? value as BenchmarkDriverFailure
+        : reject('failure.instance_mismatch_unsubstantiated');
+    }
+    if (evidenceMismatch) return {
+      schemaVersion: 2,
+      contractVersion: BENCHMARK_CONTRACT_VERSION,
+      sfen,
+      perspective: 'sente',
+      status: 'failure',
+      failure: { code: 'instance_mismatch', message: 'Container runtime evidence does not match the benchmark condition.' },
+      conditionId: condition.conditionId,
+      driverBootId: result.driverBootId,
+      engineEpoch: result.engineEpoch,
+      expectedInstanceType: result.expectedInstanceType,
+      ...(typeof result.buildId === 'string' ? { buildId: result.buildId } : {}),
+      ...(typeof result.gitCommit === 'string' ? { gitCommit: result.gitCommit } : {}),
+      runtime,
+      identityDigests: result.identityDigests,
+      runtimeMismatch: evidenceMismatch,
+    };
+    return value as BenchmarkDriverFailure;
+  }
+  const evidenceMismatch = result.expectedInstanceType !== condition.instanceType
+    ? 'driver_expected_instance_type_mismatch'
+    : benchmarkRuntimeMismatch(runtime, condition.instanceType);
+  if (evidenceMismatch) return {
+    schemaVersion: 2,
+    contractVersion: BENCHMARK_CONTRACT_VERSION,
+    sfen,
+    perspective: 'sente',
+    status: 'failure',
+    failure: { code: 'instance_mismatch', message: 'Container runtime evidence does not match the benchmark condition.' },
+    conditionId: condition.conditionId,
+    driverBootId: result.driverBootId,
+    engineEpoch: result.engineEpoch,
+    expectedInstanceType: result.expectedInstanceType,
+    ...(typeof result.buildId === 'string' ? { buildId: result.buildId } : {}),
+    ...(typeof result.gitCommit === 'string' ? { gitCommit: result.gitCommit } : {}),
+    runtime,
+    identityDigests: result.identityDigests,
+    runtimeMismatch: evidenceMismatch,
+  };
+  if (!['success', 'incomplete'].includes(String(result.status)) || result.terminal !== null) return reject('status_or_terminal');
+  if (!safePositiveInteger(result.engineEpoch)) return reject('engineEpoch');
+
+  const conditions = result.conditions;
+  if (typeof conditions !== 'object' || conditions === null || Array.isArray(conditions)) return reject('conditions.object');
+  const requested = (conditions as Record<string, unknown>).requested;
+  const actual = (conditions as Record<string, unknown>).actual;
+  if (typeof requested !== 'object' || requested === null || Array.isArray(requested)) return reject('conditions.requested');
+  if (typeof actual !== 'object' || actual === null || Array.isArray(actual)) return reject('conditions.actual');
+  const expected = {
+    conditionId: condition.conditionId,
+    instanceType: condition.instanceType,
+    threads: condition.threads,
+    hashMb: condition.hashMb,
+    moveTimeMs: condition.moveTimeMs,
+    multiPV: condition.multiPV,
+  };
+  const requestedRecord = requested as Record<string, unknown>;
+  if (Object.entries(expected).some(([key, item]) => requestedRecord[key] !== item)) return reject('conditions.requested.values');
+  const effectiveMultiPV = Math.min(condition.multiPV, rootLegalMoves.length);
+  const actualRecord = actual as Record<string, unknown>;
+  if (
+    actualRecord.threads !== condition.threads || actualRecord.hashMb !== condition.hashMb ||
+    actualRecord.moveTimeMs !== condition.moveTimeMs || actualRecord.multiPV !== condition.multiPV ||
+    actualRecord.effectiveMultiPV !== effectiveMultiPV || actualRecord.instanceType !== condition.instanceType
+  ) return reject('conditions.actual.values');
+
+  const meta = result.meta;
+  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return reject('meta.object');
+  const m = meta as Record<string, unknown>;
+  const nullablePositive = (item: unknown): item is number | null => item === null || safePositiveInteger(item);
+  const nullableNonNegative = (item: unknown): item is number | null => item === null || safeNonNegativeNumber(item);
+  if (
+    !nullablePositive(m.nodes) || !nullablePositive(m.completedDepth) ||
+    !nullablePositive(m.searchElapsedMs) || !nullablePositive(m.processElapsedMs) ||
+    !nullableNonNegative(m.engineNps) || !nullableNonNegative(m.derivedNps) ||
+    !nullableNonNegative(m.processCpuSeconds)
+  ) return reject('meta.values');
+  if (!Array.isArray(result.candidates)) return reject('candidates.array');
+  if (result.status === 'incomplete') {
+    if (result.candidates.length !== 0 || m.nodes !== null || m.completedDepth !== null ||
+      m.searchElapsedMs !== null || m.engineNps !== null || m.derivedNps !== null) return reject('incomplete.adopted_metrics');
+    if (Object.hasOwn(result, 'lastInfo')) {
+      const lastInfo = result.lastInfo;
+      if (typeof lastInfo !== 'object' || lastInfo === null || Array.isArray(lastInfo)) return reject('lastInfo.object');
+      const info = lastInfo as Record<string, unknown>;
+      if (!safePositiveInteger(info.depth) || !(info.nodes === null || safePositiveInteger(info.nodes)) ||
+        !(info.timeMs === null || safeNonNegativeNumber(info.timeMs)) || info.adopted !== false) return reject('lastInfo.values');
+    }
+    return value as Record<string, unknown>;
+  }
+  if (
+    result.candidates.length !== effectiveMultiPV || m.nodes === null || m.completedDepth === null ||
+    m.searchElapsedMs === null || m.processElapsedMs === null
+  ) return reject('success.metrics_or_candidate_count');
+
+  const seenMoves = new Set<string>();
+  for (const candidateValue of result.candidates) {
+    if (typeof candidateValue !== 'object' || candidateValue === null || Array.isArray(candidateValue)) return reject('candidate.object');
+    const candidate = candidateValue as Record<string, unknown>;
+    if (
+      typeof candidate.move !== 'string' || !rootLegalMoves.includes(candidate.move) || seenMoves.has(candidate.move) ||
+      !Array.isArray(candidate.pv) || candidate.pv[0] !== candidate.move || !isLegalPv(sfen, candidate.pv)
+    ) return reject('candidate.move_or_pv');
+    seenMoves.add(candidate.move);
+    if (typeof candidate.score !== 'object' || candidate.score === null || Array.isArray(candidate.score)) return reject('candidate.score');
+    const score = candidate.score as Record<string, unknown>;
+    if (!Number.isSafeInteger(score.value) || typeof score.value !== 'number') return reject('candidate.score.value');
+    if (score.kind === 'mate') {
+      if (!['sente', 'gote', 'unknown'].includes(String(score.winningSide))) return reject('candidate.score.winningSide');
+    } else if (score.kind !== 'cp') return reject('candidate.score.kind');
+  }
+  return value as Record<string, unknown>;
 }

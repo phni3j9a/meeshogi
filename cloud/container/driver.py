@@ -8,6 +8,7 @@ import json
 import os
 import queue
 import re
+import resource
 import signal
 import subprocess
 import threading
@@ -22,6 +23,11 @@ ENGINE_PATH = Path(os.environ.get("ENGINE_PATH", "/opt/engine/engine"))
 WEIGHT_PATH = Path(os.environ.get("WEIGHT_PATH", "/opt/engine/nn.bin"))
 OPTIONS_PATH = Path(os.environ.get("ENGINE_OPTIONS_PATH", "/opt/engine/engine_options.txt"))
 MANIFEST_PATH = Path(os.environ.get("ARTIFACT_MANIFEST_PATH", "/opt/app/artifact-manifest.json"))
+CONDITIONS_MANIFEST_PATH = Path(os.environ.get(
+    "CONDITIONS_MANIFEST_PATH",
+    str(Path(__file__).resolve().parents[1] / "bench" / "conditions.json"),
+))
+BUILD_INFO_PATH = Path(os.environ.get("BUILD_INFO_PATH", "/opt/app/build-info.json"))
 
 MAX_BODY_BYTES = 1024
 MAX_SFEN_BYTES = 256
@@ -39,7 +45,26 @@ READY_TIMEOUT_SECONDS = 45.0
 MOVE_RE = re.compile(r"^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$")
 SFEN_RE = re.compile(r"^[0-9KkLlNnSsGgBbRrPp/+ bw-]+$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+BUILD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DRIVER_BOOT_ID = uuid.uuid4().hex
+GIB = 1 << 30
+DEV_BUILD_INFO = {"buildId": "0" * 32, "gitCommit": "0" * 40}
+
+
+def read_build_info(path: Path = BUILD_INFO_PATH) -> dict[str, str]:
+    """Read the immutable build identity baked into the Container image."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return dict(DEV_BUILD_INFO)
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("buildId"), str) or not BUILD_ID_RE.fullmatch(value["buildId"])
+        or not isinstance(value.get("gitCommit"), str) or not GIT_COMMIT_RE.fullmatch(value["gitCommit"])
+    ):
+        return dict(DEV_BUILD_INFO)
+    return {"buildId": value["buildId"], "gitCommit": value["gitCommit"]}
 
 
 class DriverError(Exception):
@@ -57,6 +82,11 @@ class IdentityMismatch(DriverError):
 class SearchTimeout(DriverError):
     def __init__(self):
         super().__init__("timeout", "The engine exceeded the fixed search deadline.")
+
+
+class EngineExitedUnexpectedly(DriverError):
+    def __init__(self, message: str):
+        super().__init__("engine_error", message)
 
 
 def is_valid_sfen(value: Any) -> bool:
@@ -165,6 +195,150 @@ def artifact_identity(manifest: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def load_benchmark_conditions(path: Path) -> dict[str, dict[str, Any]]:
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            raise ValueError("manifest root is not an object")
+        rows = manifest["conditions"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        raise DriverError("engine_error", "Benchmark conditions manifest is unavailable.") from error
+    if manifest.get("schemaVersion") != 1 or not isinstance(rows, list):
+        raise DriverError("engine_error", "Benchmark conditions manifest is invalid.")
+    conditions: dict[str, dict[str, Any]] = {}
+    allowed_times = {100, 250, 500, 1000, 2000, 5000, 10000}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise DriverError("engine_error", "Benchmark conditions manifest is invalid.")
+        condition_id = row.get("conditionId")
+        instance_type = row.get("instanceType")
+        if (
+            not isinstance(condition_id, str) or not re.fullmatch(r"[a-z0-9-]{1,80}", condition_id)
+            or condition_id in conditions
+            or instance_type not in {"standard-2", "standard-3"}
+            or type(row.get("threads")) is not int or row.get("threads") not in {1, 2}
+            or type(row.get("hashMb")) is not int or row.get("hashMb") != 64
+            or type(row.get("moveTimeMs")) is not int or row.get("moveTimeMs") not in allowed_times
+            or type(row.get("multiPV")) is not int or row.get("multiPV") not in {2, 3}
+            or row.get("role") not in {"candidate", "reference"}
+        ):
+            raise DriverError("engine_error", "Benchmark conditions manifest is invalid.")
+        conditions[condition_id] = dict(row)
+    if not conditions:
+        raise DriverError("engine_error", "Benchmark conditions manifest is empty.")
+    return conditions
+
+
+def _read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def parse_mem_total_bytes(text: str | None) -> int | None:
+    if text is None:
+        return None
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[0] == "MemTotal:" and fields[2] == "kB":
+            try:
+                value = int(fields[1]) * 1024
+                return value if value > 0 else None
+            except ValueError:
+                return None
+    return None
+
+
+def mem_total_bytes() -> int | None:
+    return parse_mem_total_bytes(_read_text(Path("/proc/meminfo")))
+
+
+def root_disk_total_bytes() -> int | None:
+    try:
+        facts = os.statvfs("/")
+        total = facts.f_blocks * facts.f_frsize
+        return total if total > 0 else None
+    except (AttributeError, OSError, OverflowError):
+        return None
+
+
+def benchmark_runtime_mismatch(runtime: dict[str, Any], expected_instance_type: str | None) -> str | None:
+    if expected_instance_type not in {"standard-2", "standard-3"}:
+        return "driver_expected_instance_type_mismatch"
+    expected_cpu = 1 if expected_instance_type == "standard-2" else 2
+    expected_memory = (6 if expected_instance_type == "standard-2" else 8) * GIB
+    lower_memory = expected_memory - (3 * GIB // 2)
+    upper_memory = expected_memory + (GIB // 4)
+    if runtime.get("expectedInstanceType") != expected_instance_type:
+        return "driver_expected_instance_type_mismatch"
+    if runtime.get("osCpuCount") != expected_cpu or runtime.get("affinityCpuCount") != expected_cpu:
+        return "cpu_count_mismatch"
+    mem_total = runtime.get("memTotalBytes")
+    if not isinstance(mem_total, int) or not lower_memory <= mem_total <= upper_memory:
+        return "mem_total_mismatch"
+    cpu_quota = runtime.get("cpuQuota")
+    if cpu_quota is not None and (
+        not isinstance(cpu_quota, (int, float)) or abs(float(cpu_quota) - expected_cpu) > 0.05
+    ):
+        return "cpu_quota_mismatch"
+    memory_limit = runtime.get("memoryMaxBytes")
+    if memory_limit is not None and (
+        not isinstance(memory_limit, int) or not lower_memory <= memory_limit <= upper_memory
+    ):
+        return "memory_limit_mismatch"
+    return None
+
+
+def runtime_facts(expected_instance_type: str | None) -> dict[str, Any]:
+    cpu_max = _read_text(Path("/sys/fs/cgroup/cpu.max"))
+    cpu_quota: float | None = None
+    if cpu_max:
+        parts = cpu_max.split()
+        if len(parts) == 2 and parts[0] != "max":
+            try:
+                quota, period = int(parts[0]), int(parts[1])
+                if quota > 0 and period > 0:
+                    cpu_quota = quota / period
+            except ValueError:
+                pass
+    else:
+        quota_raw = _read_text(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us"))
+        period_raw = _read_text(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us"))
+        if quota_raw and period_raw:
+            try:
+                quota, period = int(quota_raw), int(period_raw)
+                if quota > 0 and period > 0:
+                    cpu_quota = quota / period
+                    cpu_max = f"{quota} {period}"
+            except ValueError:
+                pass
+    memory_raw = _read_text(Path("/sys/fs/cgroup/memory.max"))
+    if memory_raw is None:
+        memory_raw = _read_text(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
+    try:
+        memory_bytes = int(memory_raw) if memory_raw and memory_raw.isdigit() else None
+        if memory_bytes is not None and memory_bytes >= (1 << 60):
+            memory_bytes = None
+    except ValueError:
+        memory_bytes = None
+    try:
+        affinity_cpu_count: int | None = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity_cpu_count = None
+    return {
+        "driverBootId": DRIVER_BOOT_ID,
+        "expectedInstanceType": expected_instance_type,
+        "osCpuCount": os.cpu_count(),
+        "affinityCpuCount": affinity_cpu_count,
+        "cpuMax": cpu_max,
+        "cpuQuota": cpu_quota,
+        "memoryMaxBytes": memory_bytes,
+        "memTotalBytes": mem_total_bytes(),
+        "rootDiskTotalBytes": root_disk_total_bytes(),
+    }
+
+
 def parse_info_line(line: str, side_to_move: str) -> dict[str, Any] | None:
     tokens = line.strip().split()
     if not tokens or tokens[0] != "info":
@@ -220,11 +394,14 @@ def parse_info_line(line: str, side_to_move: str) -> dict[str, Any] | None:
     try:
         nodes = int(tokens[tokens.index("nodes") + 1]) if "nodes" in tokens else None
         engine_time = int(tokens[tokens.index("time") + 1]) if "time" in tokens else None
+        engine_nps = int(tokens[tokens.index("nps") + 1]) if "nps" in tokens else None
     except (ValueError, IndexError):
         return None
     if nodes is not None and nodes < 0:
         return None
     if engine_time is not None and engine_time < 0:
+        return None
+    if engine_nps is not None and engine_nps < 0:
         return None
     return {
         "depth": depth,
@@ -234,6 +411,7 @@ def parse_info_line(line: str, side_to_move: str) -> dict[str, Any] | None:
         "pv": pv,
         "nodes": nodes,
         "engineTime": engine_time,
+        "engineNps": engine_nps,
     }
 
 
@@ -245,11 +423,18 @@ class MultiPvCollector:
         self.completed: dict[int, list[dict[str, Any]]] = {}
         self.nodes: int | None = None
         self.engine_time: int | None = None
+        self.last_info: dict[str, Any] | None = None
 
     def observe(self, line: str) -> None:
         record = parse_info_line(line, self.side_to_move)
         if not record:
             return
+        self.last_info = {
+            "depth": record["depth"],
+            "nodes": record["nodes"],
+            "timeMs": record["engineTime"],
+            "adopted": False,
+        }
         if record["nodes"] is not None:
             self.nodes = max(self.nodes or 0, record["nodes"])
         if record["engineTime"] is not None:
@@ -285,8 +470,11 @@ class EngineSession:
         self.manifest = manifest
         self.settings = settings
         self.process: subprocess.Popen[str] | None = None
+        self.process_started_monotonic: float | None = None
         self.lines: queue.Queue[str | None] = queue.Queue()
         self.reader: threading.Thread | None = None
+        self.stdout_eof = False
+        self.last_non_info_line_kind: str | None = None
         self.engine_name = ""
         self.verification_stop_injected = False
 
@@ -303,6 +491,7 @@ class EngineSession:
                 errors="replace",
                 bufsize=1,
             )
+            self.process_started_monotonic = time.monotonic()
         except OSError as error:
             raise DriverError("engine_error", "Engine process could not be started.") from error
         assert self.process.stdout is not None
@@ -313,7 +502,7 @@ class EngineSession:
         while True:
             line = self.next_line(deadline)
             if line is None:
-                raise DriverError("engine_error", "Engine ended during the USI handshake.")
+                raise EngineExitedUnexpectedly("Engine ended during the USI handshake.")
             if line.startswith("id name "):
                 self.engine_name = line[len("id name ") :]
             if line == "usiok":
@@ -328,8 +517,8 @@ class EngineSession:
         if not required.issubset(options):
             missing = sorted(required - options)
             raise DriverError("engine_error", "Engine is missing a required fixed option: " + ",".join(missing))
-        self.send(f"setoption name Threads value {THREADS}")
-        self.send(f"setoption name USI_Hash value {HASH_MB}")
+        self.send(f"setoption name Threads value {self.settings.get('threads', THREADS)}")
+        self.send(f"setoption name USI_Hash value {self.settings.get('hashMb', HASH_MB)}")
         self.send(f"setoption name MultiPV value {self.settings['effectiveMultiPV']}")
         self.send("setoption name EvalDir value /opt/engine")
         self.send("setoption name FV_SCALE value 40")
@@ -345,7 +534,7 @@ class EngineSession:
         return self.__dict__.setdefault("options_seen", set())
 
     def send(self, command: str) -> None:
-        if self.process is None or self.process.stdin is None or self.process.poll() is not None:
+        if self.process is None or self.process.stdin is None or self.process.returncode is not None:
             raise DriverError("engine_error", "Engine process is not running.")
         try:
             self.process.stdin.write(command + "\n")
@@ -369,19 +558,32 @@ class EngineSession:
         try:
             for line in self.process.stdout:
                 clean = line.rstrip("\r\n")
+                if not clean.startswith("info "):
+                    self.last_non_info_line_kind = self._line_kind(clean)
                 if clean.startswith("option name "):
                     option = clean[len("option name ") :].split(" type ", 1)[0]
                     self._options_seen.add(option)
                 self.lines.put(clean)
+            self.stdout_eof = True
         finally:
             self.lines.put(None)
+
+    @staticmethod
+    def _line_kind(line: str) -> str:
+        tokens = line.split()
+        if not tokens:
+            return "empty"
+        token = tokens[0]
+        if token in {"id", "option", "usiok", "readyok", "bestmove", "checkmate"}:
+            return token
+        return "other"
 
     def _wait_for(self, token: str, timeout_seconds: float) -> None:
         deadline = time.monotonic() + timeout_seconds
         while True:
             line = self.next_line(deadline)
             if line is None:
-                raise DriverError("engine_error", f"Engine ended before {token}.")
+                raise EngineExitedUnexpectedly(f"Engine ended before {token}.")
             if line == token:
                 return
 
@@ -391,7 +593,7 @@ class EngineSession:
         move_time_ms = self.settings.get("moveTimeMs", MOVE_TIME_MS)
         self.send(f"go movetime {move_time_ms}")
         if stop_after_go:
-            if self.process is None or self.process.poll() is not None:
+            if self.process is None or self.process.returncode is not None:
                 raise DriverError("engine_error", "Verification engine process stopped before SIGSTOP.")
             try:
                 self.process.send_signal(signal.SIGSTOP)
@@ -405,7 +607,7 @@ class EngineSession:
             except TimeoutError as error:
                 raise SearchTimeout() from error
             if line is None:
-                raise DriverError("engine_error", "Engine ended during search.")
+                raise EngineExitedUnexpectedly("Engine ended during search.")
             if line.startswith("info "):
                 collector.observe(line)
             if line.startswith("bestmove "):
@@ -417,11 +619,11 @@ class EngineSession:
                     raise DriverError("engine_error", "Engine returned a malformed bestmove.")
                 return move
 
-    def stop_and_reap(self) -> dict[str, int] | None:
+    def stop_and_reap(self) -> dict[str, Any] | None:
         if self.process is None:
             return None
         process = self.process
-        if process.poll() is None:
+        if process.returncode is None:
             try:
                 self.send("stop")
             except DriverError:
@@ -430,18 +632,18 @@ class EngineSession:
                 self._wait_for_bestmove(self.settings["stopResponseGraceSeconds"])
             except (DriverError, TimeoutError):
                 pass
-        return {"enginePid": process.pid, "waitReturnCode": self._terminate_and_reap(process, force_terminate=True)}
+        return self._terminate_and_reap(process, force_terminate=True)
 
-    def close_after_search(self) -> dict[str, int] | None:
+    def close_after_search(self) -> dict[str, Any] | None:
         if self.process is None:
             return None
         process = self.process
-        if process.poll() is None:
+        if process.returncode is None:
             try:
                 self.send("quit")
             except DriverError:
                 pass
-        return {"enginePid": process.pid, "waitReturnCode": self._terminate_and_reap(process)}
+        return self._terminate_and_reap(process)
 
     def _wait_for_bestmove(self, timeout_seconds: float) -> None:
         deadline = time.monotonic() + timeout_seconds
@@ -450,28 +652,69 @@ class EngineSession:
             if line is None or line.startswith("bestmove "):
                 return
 
-    def _terminate_and_reap(self, process: subprocess.Popen[str], force_terminate: bool = False) -> int:
-        if process.poll() is None:
-            if force_terminate:
-                process.terminate()
+    def _wait4(self, process: subprocess.Popen[str], timeout_seconds: float | None) -> tuple[int, float | None]:
+        if process.returncode is not None:
+            return process.returncode, None
+        if not hasattr(os, "wait4"):
+            before = resource.getrusage(resource.RUSAGE_CHILDREN)
+            return_code = process.wait(timeout=timeout_seconds)
+            after = resource.getrusage(resource.RUSAGE_CHILDREN)
+            cpu_seconds = max(0.0, (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime))
+            return return_code, cpu_seconds
+        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        while True:
             try:
-                process.wait(timeout=self.settings["termGraceSeconds"])
+                waited_pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+            except ChildProcessError:
+                # A prior low-level wait is unavailable; Popen remains the final reap fallback.
+                return process.wait(timeout=timeout_seconds), None
+            if waited_pid == process.pid:
+                return_code = os.waitstatus_to_exitcode(status)
+                process.returncode = return_code
+                cpu_seconds = max(0.0, usage.ru_utime + usage.ru_stime)
+                return return_code, cpu_seconds
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(process.args, timeout_seconds)
+            time.sleep(0.02)
+
+    def _terminate_and_reap(self, process: subprocess.Popen[str], force_terminate: bool = False) -> dict[str, Any]:
+        if process.returncode is None:
+            if force_terminate:
+                try:
+                    os.kill(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            try:
+                wait_return_code, cpu_seconds = self._wait4(process, self.settings["termGraceSeconds"])
             except subprocess.TimeoutExpired:
                 if not force_terminate:
-                    process.terminate()
-                try:
-                    process.wait(timeout=self.settings["termGraceSeconds"])
-                except subprocess.TimeoutExpired:
-                    process.kill()
                     try:
-                        process.wait(timeout=self.settings["killGraceSeconds"])
-                    except subprocess.TimeoutExpired:
-                        # wait() after SIGKILL is required so the child is not left as a zombie.
-                        process.wait()
+                        os.kill(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    wait_return_code, cpu_seconds = self._wait4(process, self.settings["termGraceSeconds"])
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.kill(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    wait_return_code, cpu_seconds = self._wait4(process, None)
         else:
-            process.wait()
-        # Always call wait() and retain its return code as explicit reap evidence.
+            wait_return_code, cpu_seconds = process.returncode, None
+        # Keep the established Popen wait path as explicit reap evidence. After wait4 has
+        # reaped the child, returncode is already set and Popen.wait() returns it directly.
+        process.returncode = wait_return_code
         wait_return_code = process.wait()
+        terminating_signal = None
+        if wait_return_code < 0:
+            try:
+                terminating_signal = signal.Signals(-wait_return_code).name
+            except ValueError:
+                terminating_signal = f"SIG{-wait_return_code}"
+        process_elapsed_ms = None
+        if self.process_started_monotonic is not None:
+            process_elapsed_ms = max(1, round((time.monotonic() - self.process_started_monotonic) * 1000))
         if self.reader is not None:
             self.reader.join(timeout=1)
         for pipe in (process.stdin, process.stdout):
@@ -480,7 +723,14 @@ class EngineSession:
                     pipe.close()
                 except OSError:
                     pass
-        return wait_return_code
+        return {
+            "enginePid": process.pid,
+            "waitReturnCode": wait_return_code,
+            "exitCode": wait_return_code if wait_return_code >= 0 else None,
+            "terminatingSignal": terminating_signal,
+            "processCpuSeconds": cpu_seconds,
+            "processElapsedMs": process_elapsed_ms,
+        }
 
 
 def fixed_conditions(effective_multi_pv: int) -> dict[str, int]:
@@ -513,16 +763,20 @@ class AnalysisService:
         weight_path: Path = WEIGHT_PATH,
         options_path: Path = OPTIONS_PATH,
         manifest_path: Path = MANIFEST_PATH,
+        conditions_manifest_path: Path = CONDITIONS_MANIFEST_PATH,
         settings: dict[str, Any] | None = None,
+        build_info: dict[str, str] | None = None,
     ):
         self.engine_path = engine_path
         self.weight_path = weight_path
         self.options_path = options_path
         self.manifest_path = manifest_path
+        self.conditions_manifest_path = conditions_manifest_path
         self.manifest = expected_manifest if expected_manifest is not None else verify_identity(
             engine_path, weight_path, options_path, manifest_path
         )
         self.identity = artifact_identity(self.manifest)
+        self.build_info = dict(build_info) if build_info is not None else read_build_info()
         self.settings = {
             "searchGraceMs": SEARCH_GRACE_MS,
             "moveTimeMs": MOVE_TIME_MS,
@@ -537,6 +791,10 @@ class AnalysisService:
         self.busy = threading.Lock()
         self.verify_stop_engine_once_enabled = os.environ.get("ANALYSIS_VERIFY_STOP_ENGINE_ONCE") == "1"
         self.verify_stop_engine_once_pending = self.verify_stop_engine_once_enabled
+        self.benchmark_enabled = os.environ.get("ANALYSIS_BENCHMARK_ENABLED") == "1"
+        expected_instance_type = os.environ.get("ANALYSIS_EXPECTED_INSTANCE_TYPE")
+        self.expected_instance_type = expected_instance_type if expected_instance_type in {"standard-2", "standard-3"} else None
+        self.benchmark_conditions = load_benchmark_conditions(conditions_manifest_path)
         self.engine_epoch = 0
 
     def health(self) -> dict[str, Any]:
@@ -551,12 +809,15 @@ class AnalysisService:
             "schemaVersion": 1,
             "status": "ready",
             "driverBootId": DRIVER_BOOT_ID,
+            "expectedInstanceType": self.expected_instance_type,
+            "runtime": runtime_facts(self.expected_instance_type),
             "verifyStopEngineOnceEnabled": self.verify_stop_engine_once_enabled,
             "verifyStopEngineOnceConsumed": (
                 self.verify_stop_engine_once_enabled and not self.verify_stop_engine_once_pending
             ),
             "driverVersion": self.identity["driverVersion"],
             "contractVersion": self.identity["contractVersion"],
+            **self.build_info,
             "identityDigests": {key: self.identity[key] for key in digest_keys},
         }
 
@@ -582,6 +843,189 @@ class AnalysisService:
             )
         finally:
             self.busy.release()
+
+    def benchmark_response(self, payload: Any) -> tuple[int, dict[str, Any]]:
+        if not self.benchmark_enabled:
+            return 404, {"schemaVersion": 2, "contractVersion": "analysis-json-v2", "status": "failure", "failure": {"code": "invalid", "message": "Not found."}}
+        if not isinstance(payload, dict) or set(payload) != {"sfen", "legalMoveCount", "conditionId"}:
+            return 400, {"schemaVersion": 2, "contractVersion": "analysis-json-v2", "status": "failure", "failure": {"code": "invalid", "message": "Expected an SFEN, verified legal move count, and manifest condition ID."}}
+        sfen = payload["sfen"]
+        legal_move_count = payload["legalMoveCount"]
+        condition_id = payload["conditionId"]
+        if (
+            not is_valid_sfen(sfen) or not isinstance(legal_move_count, int) or isinstance(legal_move_count, bool)
+            or not 1 <= legal_move_count <= 600 or not isinstance(condition_id, str)
+        ):
+            return 400, {"schemaVersion": 2, "contractVersion": "analysis-json-v2", "sfen": sfen if isinstance(sfen, str) else None, "status": "failure", "failure": {"code": "invalid", "message": "Invalid benchmark input."}}
+        condition = self.benchmark_conditions.get(condition_id)
+        if condition is None:
+            return 400, {"schemaVersion": 2, "contractVersion": "analysis-json-v2", "sfen": sfen, "status": "failure", "failure": {"code": "invalid", "message": "Unknown benchmark condition."}}
+        effective = min(condition["multiPV"], legal_move_count)
+        result = self._benchmark_base(sfen, condition, effective, self.engine_epoch)
+        mismatch = benchmark_runtime_mismatch(result["runtime"], self.expected_instance_type)
+        if condition["instanceType"] != self.expected_instance_type:
+            mismatch = "condition_instance_type_mismatch"
+        if mismatch:
+            result.update({
+                "status": "failure",
+                "failure": {"code": "instance_mismatch", "message": "Container runtime evidence does not match the benchmark condition."},
+                "runtimeMismatch": mismatch,
+            })
+            return 409, result
+        if not self.busy.acquire(blocking=False):
+            return 409, result | {
+                "status": "failure", "failure": {"code": "busy", "message": "An analysis is already running."},
+            }
+        try:
+            return self._analyze_benchmark(sfen, legal_move_count, condition)
+        finally:
+            self.busy.release()
+
+    def _benchmark_base(
+        self,
+        sfen: str,
+        condition: dict[str, Any],
+        effective_multi_pv: int,
+        engine_epoch: int,
+    ) -> dict[str, Any]:
+        actual = {
+            "instanceType": condition["instanceType"],
+            "threads": condition["threads"],
+            "hashMb": condition["hashMb"],
+            "moveTimeMs": condition["moveTimeMs"],
+            "multiPV": condition["multiPV"],
+            "effectiveMultiPV": effective_multi_pv,
+        }
+        return {
+            "schemaVersion": 2,
+            "contractVersion": "analysis-json-v2",
+            "sfen": sfen,
+            "perspective": "sente",
+            "terminal": None,
+            "conditionId": condition["conditionId"],
+            "expectedInstanceType": self.expected_instance_type,
+            "driverBootId": DRIVER_BOOT_ID,
+            "engineEpoch": engine_epoch,
+            "driverVersion": self.identity["driverVersion"],
+            **self.build_info,
+            "identityDigests": {
+                key: self.identity[key]
+                for key in ("engineSha256", "weightSha256", "optionsSha256", "sourceArchiveSha256", "sourceTreeSha256")
+            },
+            "runtime": runtime_facts(self.expected_instance_type),
+            "conditions": {
+                "requested": {key: condition[key] for key in ("conditionId", "instanceType", "threads", "hashMb", "moveTimeMs", "multiPV")},
+                "actual": actual,
+            },
+            "candidates": [],
+            "meta": {
+                "nodes": None,
+                "completedDepth": None,
+                "searchElapsedMs": None,
+                "engineNps": None,
+                "derivedNps": None,
+                "processElapsedMs": None,
+                "processCpuSeconds": None,
+            },
+        }
+
+    def _analyze_benchmark(
+        self,
+        sfen: str,
+        legal_move_count: int,
+        condition: dict[str, Any],
+    ) -> tuple[int, dict[str, Any]]:
+        self.engine_epoch += 1
+        engine_epoch = self.engine_epoch
+        effective = min(condition["multiPV"], legal_move_count)
+        result = self._benchmark_base(sfen, condition, effective, engine_epoch)
+        collector = MultiPvCollector(effective, side_to_move=sfen.split(" ")[1])
+        session = EngineSession(
+            self.engine_path,
+            self.manifest,
+            {
+                **self.settings,
+                "threads": condition["threads"],
+                "hashMb": condition["hashMb"],
+                "moveTimeMs": condition["moveTimeMs"],
+                "effectiveMultiPV": effective,
+            },
+        )
+        timed_out = False
+        engine_outcome: str | None = None
+        error: DriverError | None = None
+        reap_evidence: dict[str, Any] | None = None
+        try:
+            session.start()
+            engine_outcome = session.search(sfen, collector)
+        except SearchTimeout:
+            timed_out = True
+        except DriverError as caught:
+            error = caught
+        except TimeoutError:
+            error = DriverError("engine_error", "Engine handshake timed out.")
+        finally:
+            reap_evidence = session.stop_and_reap() if timed_out else session.close_after_search()
+
+        if reap_evidence:
+            result["meta"]["processElapsedMs"] = reap_evidence["processElapsedMs"]
+            result["meta"]["processCpuSeconds"] = reap_evidence["processCpuSeconds"]
+        block = collector.best_block
+        if error is not None:
+            failure: dict[str, Any] = {"code": error.code, "message": error.message}
+            if isinstance(error, EngineExitedUnexpectedly) and reap_evidence is not None:
+                failure["diagnostics"] = {
+                    "exitCode": reap_evidence["exitCode"],
+                    "terminatingSignal": reap_evidence["terminatingSignal"],
+                    "waitReturnCode": reap_evidence["waitReturnCode"],
+                    "stdoutEof": session.stdout_eof,
+                    "lastInfo": collector.last_info,
+                    "lastNonInfoLineKind": session.last_non_info_line_kind,
+                }
+            result.update({"status": "failure", "failure": failure})
+            return (502 if error.code != "timeout" else 504), result
+        if timed_out:
+            if block:
+                depth, records = block
+                top = records[0]
+                result["meta"].update({
+                    "nodes": top["nodes"], "completedDepth": depth, "searchElapsedMs": top["engineTime"],
+                    "engineNps": top["engineNps"],
+                    "derivedNps": (top["nodes"] * 1000 / top["engineTime"]) if top["nodes"] is not None and top["engineTime"] else None,
+                })
+            result.update({"status": "failure", "failure": {"code": "timeout", "message": "The engine exceeded the condition deadline."}})
+            return 504, result
+        if engine_outcome in {"resign", "none", "(none)", "0000", "win"}:
+            result["status"] = "incomplete" if engine_outcome == "resign" else "failure"
+            if result["status"] == "failure":
+                result["failure"] = {"code": "engine_error", "message": "Engine returned an unsupported bestmove."}
+                return 502, result
+            if collector.last_info is not None:
+                result["lastInfo"] = collector.last_info
+            return 200, result
+        if block is None:
+            result["status"] = "incomplete"
+            if collector.last_info is not None:
+                result["lastInfo"] = collector.last_info
+            return 200, result
+        depth, records = block
+        top = records[0]
+        result["candidates"] = [
+            {"move": record["pv"][0], "pv": record["pv"], "score": record["score"]}
+            for record in records
+        ]
+        result["meta"].update({
+            "nodes": top["nodes"],
+            "completedDepth": depth,
+            "searchElapsedMs": top["engineTime"],
+            "engineNps": top["engineNps"],
+            "derivedNps": (top["nodes"] * 1000 / top["engineTime"]) if top["nodes"] is not None and top["engineTime"] else None,
+        })
+        if result["meta"]["nodes"] is None or result["meta"]["searchElapsedMs"] is None:
+            result.update({"status": "failure", "failure": {"code": "engine_error", "message": "Completed search omitted its same-line nodes or USI time."}})
+            return 502, result
+        result["status"] = "success"
+        return 200, result
 
     def _analyze_one(
         self,
@@ -710,8 +1154,11 @@ def create_handler(service: AnalysisService) -> type[BaseHTTPRequestHandler]:
             self._write(status, response)
 
         def do_POST(self) -> None:
-            if self.path != "/analyze":
+            if self.path not in {"/analyze", "/benchmark"}:
                 self._write(404, {"schemaVersion": 1, "sfen": None, "status": "failure", "failure": {"code": "invalid", "message": "Unknown route."}})
+                return
+            if self.path == "/benchmark" and not service.benchmark_enabled:
+                self._write(404, {"schemaVersion": 2, "contractVersion": "analysis-json-v2", "status": "failure", "failure": {"code": "invalid", "message": "Not found."}})
                 return
             content_type = self.headers.get("content-type", "").split(";", 1)[0].lower()
             if content_type != "application/json":
@@ -729,7 +1176,7 @@ def create_handler(service: AnalysisService) -> type[BaseHTTPRequestHandler]:
             except (UnicodeDecodeError, json.JSONDecodeError):
                 self._write(400, {"schemaVersion": 1, "sfen": None, "status": "failure", "failure": {"code": "invalid", "message": "Request body is not valid JSON."}})
                 return
-            status, response = service.response(payload)
+            status, response = service.benchmark_response(payload) if self.path == "/benchmark" else service.response(payload)
             self._write(status, response)
 
         def _write(self, status: int, value: dict[str, Any]) -> None:

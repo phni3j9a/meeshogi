@@ -104,6 +104,7 @@ install -m 0400 -- "$weight_path" "$CONTEXT/nn.bin"
 install -m 0400 -- "$options_path" "$CONTEXT/engine_options.txt"
 install -m 0440 -- "$CLOUD_DIR/container/driver.py" "$CONTEXT/driver.py"
 install -m 0440 -- "$CLOUD_DIR/container/artifact-manifest.json" "$CONTEXT/artifact-manifest.json"
+install -m 0440 -- "$CLOUD_DIR/bench/conditions.json" "$CONTEXT/conditions.json"
 install -m 0440 -- "$CLOUD_DIR/container/Dockerfile" "$CONTEXT/Dockerfile"
 install -m 0440 -- "$CLOUD_DIR/container/.dockerignore" "$CONTEXT/.dockerignore"
 
