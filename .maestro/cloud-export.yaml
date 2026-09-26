@@ -21,8 +21,15 @@ env:
     visible:
       id: game-screen
     timeout: 30000
-- tapOn: 棋譜の操作
-- waitForAnimationToEnd
+# The menu-open tap can be eaten while a big result batch is re-rendering the
+# screen (seen right after a completed cloud sync). Retry until the item shows.
+- repeat:
+    times: 5
+    while:
+      notVisible: '比較レポートを書き出す（開発用）'
+    commands:
+      - tapOn: 棋譜の操作
+      - waitForAnimationToEnd
 - takeScreenshot: c70-game-menu
 # The item must exist in this build; if it does not the release bundle lacks
 # EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1 and that is the failure to report.
