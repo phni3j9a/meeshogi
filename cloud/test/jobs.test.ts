@@ -415,6 +415,16 @@ describe('POST /v1/jobs validation and limits', () => {
 
   it('never exceeds the active-job limit under concurrent submissions', async () => {
     const { d1 } = createTestDb();
+    const batchErrors: string[] = [];
+    const rawBatch = d1.batch.bind(d1);
+    d1.batch = (async (statements: Parameters<typeof rawBatch>[0]) => {
+      try {
+        return await rawBatch(statements);
+      } catch (error) {
+        batchErrors.push(String(error));
+        throw error;
+      }
+    }) as typeof d1.batch;
     const env = makeJobsEnv({ d1, queue: queueProbe().queue });
     const { credential } = await issueCredential(env);
     // Six concurrent POSTs for one owner: exactly one may pass the conditional INSERT.
@@ -429,6 +439,7 @@ describe('POST /v1/jobs validation and limits', () => {
       const body = await response.json() as { failure: { code: string } };
       expect(body.failure.code).toBe('active_job_limit');
     }
+    expect(batchErrors).toHaveLength(0);
   });
 
   it('keeps the queue max_retries consistent between config and the wrangler template', async () => {
@@ -661,10 +672,10 @@ describe('queue consumer', () => {
     expect(done.status).toBe('completed');
   });
 
-  it('aborts the stream on its own budget and continues from the cursor', async () => {
+  it('aborts a stalled stream on its own budget and retries without progress', async () => {
     // The fake clock jumps past the 720 s budget while the driver stream is
-    // still open: committed progress is kept, a continuation is sent before
-    // the ack, and a later delivery resumes from the cursor.
+    // still open: the buffered lines are never processed, nothing commits, and
+    // the delivery takes the standard retry instead of a continuation.
     let fakeNow = 1_700_000_000_000;
     const { d1 } = createTestDb();
     const probe = queueProbe();
@@ -680,10 +691,11 @@ describe('queue consumer', () => {
           start(controller) {
             const encoder = new TextEncoder();
             controller.enqueue(encoder.encode(`${JSON.stringify(header)}\n${JSON.stringify(first)}\n`));
+            // Never closes: the driver would keep streaming; the consumer must stop on its own deadline.
           },
           pull() {
-            // The consumer asked for more data: the clock now jumps past its
-            // own budget deadline while this stream stays open forever.
+            // The consumer drained the first chunk and asked for more: jump
+            // past the budget deadline now.
             fakeNow += JOB_CONSUMER.budgetMs + 60_000;
           },
         }), { headers: { 'content-type': 'application/x-ndjson' } });
@@ -693,14 +705,52 @@ describe('queue consumer', () => {
     const { jobId } = await createGame(env, credential, ['2g2f', '8c8d', '2f2e']);
     const first = fakeBatch([{ v: 1, jobId }]);
     await handleJobBatch(first.batch, env, { now: () => fakeNow });
-    expect(first.messages[0].acked).toBe(true);
+    expect(first.messages[0].retried).toBe(true);
+    expect(first.messages[0].acked).toBe(false);
     expect(hangingCalls).toHaveLength(1);
-    // The admission send plus the continuation send both precede the ack.
+    expect(probe.sent).toEqual([{ v: 1, jobId }]); // admission only; no continuation
+    const view = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as Record<string, unknown>;
+    expect(view.status).toBe('running');
+    expect(view.nextPly).toBe(0);
+  });
+
+  it('stops at its own budget with buffered lines unprocessed, then resumes', async () => {
+    // One stream chunk carries header + 3 results + end. The fake clock jumps
+    // past the budget during the first commit: only one ply is committed, the
+    // consumer sends a continuation before acking, and a later delivery
+    // resumes from the cursor.
+    let fakeNow = 1_700_000_000_000;
+    const { d1 } = createTestDb();
+    const probe = queueProbe();
+    const calls: SessionCall[] = [];
+    const env = makeJobsEnv({
+      d1,
+      queue: probe.queue,
+      normal: sessionBinding('ANALYSIS_CONTAINER', calls, (body) => new Response(sessionLines(body.positions, 'free'))),
+    });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f', '8c8d', '2f2e']);
+    // Expire the budget as the first result commit lands.
+    const originalBatch = d1.batch.bind(d1);
+    let bumped = false;
+    d1.batch = (async (statements: Parameters<typeof originalBatch>[0]) => {
+      const result = await originalBatch(statements);
+      if (!bumped) {
+        bumped = true;
+        fakeNow += JOB_CONSUMER.budgetMs + 60_000;
+      }
+      return result;
+    }) as typeof d1.batch;
+    const first = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(first.batch, env, { now: () => fakeNow });
+    expect(first.messages[0].acked).toBe(true);
+    expect(calls).toHaveLength(1);
+    // Admission plus the continuation send both precede the ack.
     expect(probe.sent).toEqual([{ v: 1, jobId }, { v: 1, jobId }]);
     const partial = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as Record<string, unknown>;
     expect(partial.status).toBe('running');
     expect(partial.nextPly).toBe(1);
-    // A later delivery on a completing driver finishes the job from the cursor.
+    // A later delivery resumes from the cursor and finishes the job.
     const completeCalls: SessionCall[] = [];
     const envComplete = makeJobsEnv({
       d1,

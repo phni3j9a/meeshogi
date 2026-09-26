@@ -36,6 +36,11 @@ export class SqliteStatement {
     return { success: true, meta: { changes: Number(outcome.changes) } };
   }
 
+  runSync(): { success: true; meta: { changes: number } } {
+    const outcome = this.db.prepare(this.sql).run(...this.params as SqliteValue[]);
+    return { success: true, meta: { changes: Number(outcome.changes) } };
+  }
+
   async raw<T = unknown>(): Promise<T[]> {
     const rows = this.db.prepare(this.sql).all(...this.params as SqliteValue[]);
     return rows.map((row) => Object.values(row) as T);
@@ -43,7 +48,11 @@ export class SqliteStatement {
 }
 
 export class SqliteD1 {
-  private batchCounter = 0;
+  // Like D1's per-database write serialization: batches are queued on a
+  // promise chain so each batch is one independent atomic transaction that
+  // never interleaves with another batch. Statements inside a batch run
+  // synchronously, so no other request's write can land mid-transaction.
+  private batchChain: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly db: DatabaseSync) {}
 
@@ -51,21 +60,20 @@ export class SqliteD1 {
     return new SqliteStatement(this.db, sql);
   }
 
-  // Savepoints let concurrent batches interleave their statements on the one
-  // connection — the same interleaving a conditional INSERT must survive.
   async batch(statements: SqliteStatement[]): Promise<{ success: true; meta: { changes: number } }[]> {
-    const name = `batch_${this.batchCounter++}`;
-    this.db.exec(`SAVEPOINT "${name}"`);
-    try {
-      const results = [] as { success: true; meta: { changes: number } }[];
-      for (const statement of statements) results.push(await statement.run());
-      this.db.exec(`RELEASE "${name}"`);
-      return results;
-    } catch (error) {
-      this.db.exec(`ROLLBACK TO "${name}"`);
-      this.db.exec(`RELEASE "${name}"`);
-      throw error;
-    }
+    const run = this.batchChain.then(() => {
+      this.db.exec('BEGIN');
+      try {
+        const results = statements.map((statement) => statement.runSync());
+        this.db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    });
+    this.batchChain = run.catch(() => undefined);
+    return run;
   }
 
   get rawDb(): RawDb {

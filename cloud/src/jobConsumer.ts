@@ -167,14 +167,16 @@ async function runSession(
   };
   const readStep = async (): Promise<'eof' | 'timeout' | { line: string }> => {
     while (true) {
+      // The consumer deadline bounds buffered-line processing too, not just
+      // stream reads: a large chunk of ready results must not outrun the budget.
+      const remaining = sessionDeadline - now();
+      if (remaining <= 0) return 'timeout';
       const newline = buffer.indexOf('\n');
       if (newline >= 0) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
         return { line };
       }
-      const remaining = sessionDeadline - now();
-      if (remaining <= 0) return 'timeout';
       const chunk = await Promise.race([
         reader.read(),
         sleep(remaining).then(() => 'timeout' as const),
@@ -257,6 +259,9 @@ async function runSession(
         }
         return await abort(RETRY);
       }
+      if (sessionDeadline - now() <= 0) {
+        return await abort(progress > 0 ? CONTINUE : RETRY);
+      }
       const committed = await store.commitResult(
         job.job_id,
         expected.ply,
@@ -294,6 +299,7 @@ async function driveJob(
   now: () => number,
 ): Promise<Outcome> {
   for (;;) {
+    if (budgetDeadline - now() <= 0) return CONTINUE;
     let job = await store.jobById(jobId);
     if (!isActive(job)) return DONE;
     const profile = JOB_PROFILES[job.profile_id as JobProfileId];

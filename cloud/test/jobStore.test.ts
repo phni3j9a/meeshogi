@@ -47,6 +47,34 @@ function admitParams(overrides: Partial<AdmitJobParams> = {}): AdmitJobParams {
   };
 }
 
+describe('SqliteD1 batch serialization', () => {
+  it('persists two concurrent successful batches atomically', async () => {
+    const { sqlite, d1 } = createTestDb();
+    const results = await Promise.allSettled([
+      d1.batch([d1.prepare("INSERT INTO owners (owner_id, credential_hash, created_at) VALUES ('one','h1','2026-09-26T00:00:00Z')")]),
+      d1.batch([d1.prepare("INSERT INTO owners (owner_id, credential_hash, created_at) VALUES ('two','h2','2026-09-26T00:00:00Z')")]),
+    ]);
+    expect(results.every((result) => result.status === 'fulfilled')).toBe(true);
+    const owners = sqlite.prepare('SELECT owner_id FROM owners ORDER BY owner_id').all() as { owner_id: string }[];
+    expect(owners).toEqual([{ owner_id: 'one' }, { owner_id: 'two' }]);
+  });
+
+  it('rolls back only a failing batch while a concurrent batch persists', async () => {
+    const { sqlite, d1 } = createTestDb();
+    const results = await Promise.allSettled([
+      d1.batch([
+        d1.prepare("INSERT INTO owners (owner_id, credential_hash, created_at) VALUES ('one','h1','2026-09-26T00:00:00Z')"),
+        d1.prepare("INSERT INTO owners (owner_id, credential_hash, created_at) VALUES ('one','h1','2026-09-26T00:00:00Z')"),
+      ]),
+      d1.batch([d1.prepare("INSERT INTO owners (owner_id, credential_hash, created_at) VALUES ('two','h2','2026-09-26T00:00:00Z')")]),
+    ]);
+    expect(results[0].status).toBe('rejected');
+    expect(results[1].status).toBe('fulfilled');
+    const owners = sqlite.prepare('SELECT owner_id FROM owners').all() as { owner_id: string }[];
+    expect(owners).toEqual([{ owner_id: 'two' }]);
+  });
+});
+
 describe('jobStore schema and owners', () => {
   it('applies the migration and enforces owner uniqueness', async () => {
     const store = setup();

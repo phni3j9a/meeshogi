@@ -10,10 +10,17 @@ conditions/identity/engineLaunch evidence, and the precision allowlist gate.
 HTTP status is always kept in a dedicated ``httpStatus`` key so it can never
 be confused with a job payload's ``status`` field.
 
+Checks that cannot be observed (e.g. the job finishes before partial results
+become readable while non-terminal) are reported as UNVERIFIED: the script
+prints "smoke passed with UNVERIFIED items" and exits 3 instead of 0, so a
+green run always means every check was actually observed.
+
 Daily quota exhaustion is intentionally not exercised: each run consumes two
-of five daily Free jobs for its owner. To verify the quota, create five jobs
-with fresh idempotency keys for one owner (e.g. run this script twice plus one
-extra POST), then observe HTTP 429 with failure.code == "daily_limit".
+of five daily Free jobs for its owner and every run issues a new owner. To
+verify the quota manually, keep ONE credential (e.g. save the one this script
+issues in-memory via a small wrapper) and POST five jobs with distinct
+idempotency keys for that owner; the sixth POST must return HTTP 429 with
+failure.code == "daily_quota_exceeded".
 
 Usage:
     ANALYSIS_STAGING_URL=https://<worker>.workers.dev python3 smoke-jobs-staging.py
@@ -40,11 +47,13 @@ from staging_readiness import OPERATOR_USER_AGENT
 
 STARTPOS = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
 # A 26-move legal shuttle game keeps a job active long enough to observe
-# progress, partial results, the active-job limit, and cancellation.
+# progress, the active-job limit, and cancellation.
 GAME_MOVES = (
     ["2g2f", "8c8d", "2f2e", "8d8e", "2e2d", "8e8f"]
     + ["2h2g", "8b8c", "2g2h", "8c8b"] * 5
 )
+# A longer game widens the window in which partial results are observable.
+PARTIAL_MOVES = GAME_MOVES + ["2h2g", "8b8c", "2g2h", "8c8b"] * 4
 TOTAL_PLIES = len(GAME_MOVES) + 1
 PRECISION_OWNER_FILE = Path("/tmp/meeshogi-smoke-jobs-owner.json")
 JOB_DEADLINE_SECONDS = 15 * 60
@@ -131,26 +140,30 @@ def poll_progress(base_url: str, credential: str, job_id: str) -> dict[str, Any]
     raise RuntimeError(f"job {job_id} did not reach a terminal state: {last!r}")
 
 
-def read_partial_results(base_url: str, credential: str, job_id: str) -> None:
-    """Best-effort partial read while the job is running; skipped silently if
-    the job finishes before any result is observable."""
-    deadline = time.monotonic() + 120
+def read_partial_results(base_url: str, credential: str, job_id: str) -> bool:
+    """Poll /results until rows are visible. Only counts as partial evidence if
+    rows are read while the job is non-terminal with nextPly < totalPlies —
+    rows from an already-completed job never count. Returns whether it was
+    observed."""
+    deadline = time.monotonic() + 240
     while time.monotonic() < deadline:
         response = get_results(base_url, credential, job_id)
         expect(response["httpStatus"] == 200, f"partial results failed: HTTP {response['httpStatus']}")
         body = response["body"]
         rows = body.get("results", [])
-        if rows:
+        running = body.get("status") in ("queued", "running")
+        incomplete = isinstance(body.get("nextPly"), int) and body["nextPly"] < body.get("totalPlies", 0)
+        if rows and running and incomplete:
             row = rows[0]
             expect(isinstance(row.get("engineLaunch"), int) and row["engineLaunch"] >= 1,
                    f"partial row has no engineLaunch evidence: {row!r}")
-            print(f"  partial results visible while {body.get('status')}: {len(rows)} rows up to ply {row['ply']}..{rows[-1]['ply']}, engineLaunch={row['engineLaunch']}")
-            return
+            print(f"  partial results observed while {body.get('status')} (nextPly={body.get('nextPly')}/{body.get('totalPlies')}): "
+                  f"{len(rows)} rows, first engineLaunch={row['engineLaunch']}")
+            return True
         if body.get("status") in ("completed", "failed", "cancelled"):
-            print("  job reached terminal before partial results were observable (skipped)")
-            return
+            return False
         time.sleep(3)
-    print("  no partial results within 120s (skipped)")
+    return False
 
 
 def fetch_all_results(base_url: str, credential: str, job_id: str) -> list[dict[str, Any]]:
@@ -237,23 +250,30 @@ def run_job_flow(base_url: str, owner: dict[str, str], profile: str) -> None:
     print(f"{profile} job completed: {len(results)} ply results verified (conditions, identity, engineLaunch)")
 
 
-def attempt_cancel(base_url: str, owner: dict[str, str], key: str, wait_for_partials: bool) -> tuple[str, dict[str, Any]]:
-    created = post_job(base_url, owner["credential"], "free", key, GAME_MOVES)
+def attempt_cancel(base_url: str, owner: dict[str, str], key: str) -> tuple[str, dict[str, Any], bool]:
+    """Creates a longer job, waits for observable partial results, then cancels.
+    Returns (job_id, cancel_response, partial_observed)."""
+    created = post_job(base_url, owner["credential"], "free", key, PARTIAL_MOVES)
     expect(created["httpStatus"] in (200, 201), f"cancel-game job creation failed: HTTP {created['httpStatus']} {created['body']!r}")
     job_id = created["body"]["jobId"]
-    if wait_for_partials:
-        # Read partial results while the job is running (afterPly coverage).
-        read_partial_results(base_url, owner["credential"], job_id)
-    return job_id, api(base_url, "POST", f"/v1/jobs/{job_id}/cancel", owner["credential"], {})
+    observed = read_partial_results(base_url, owner["credential"], job_id)
+    return job_id, api(base_url, "POST", f"/v1/jobs/{job_id}/cancel", owner["credential"], {}), observed
 
 
-def run_cancel_flow(base_url: str, owner: dict[str, str]) -> None:
-    job_id, cancelled = attempt_cancel(base_url, owner, f"smoke-cancel-{int(time.time())}", True)
+def run_cancel_flow(base_url: str, owner: dict[str, str]) -> list[str]:
+    """Cancels a running job and verifies it stays cancelled. Returns the names
+    of checks that could not be observed (e.g. 'partial-results')."""
+    unverified: list[str] = []
+    job_id, cancelled, observed = attempt_cancel(base_url, owner, f"smoke-cancel-{int(time.time())}")
     if not (cancelled["httpStatus"] == 200 and cancelled["body"].get("status") == "cancelled"):
         # The job may have reached a terminal state before the cancel landed;
-        # retry once and cancel immediately.
-        print("  first job reached terminal before cancel; retrying with immediate cancel")
-        job_id, cancelled = attempt_cancel(base_url, owner, f"smoke-cancel-b-{int(time.time())}", False)
+        # retry once — also a second chance to observe partial results.
+        print("  first job reached terminal before cancel; retrying")
+        job_id, cancelled, observed2 = attempt_cancel(base_url, owner, f"smoke-cancel-b-{int(time.time())}")
+        observed = observed or observed2
+    if not observed:
+        unverified.append("partial-results")
+        print("  UNVERIFIED: no results were observed while a job was still running")
     expect(cancelled["httpStatus"] == 200 and cancelled["body"].get("status") == "cancelled",
            f"cancel failed: HTTP {cancelled['httpStatus']} {cancelled['body']!r}")
     print(f"cancel committed for job {job_id}; observing {CANCEL_OBSERVE_SECONDS}s for post-cancel writes")
@@ -268,6 +288,7 @@ def run_cancel_flow(base_url: str, owner: dict[str, str]) -> None:
     expect(view.get("nextPly") == baseline_ply, f"nextPly advanced after cancel: {baseline_ply} -> {view.get('nextPly')}")
     expect(view.get("resultCounts") == baseline_counts, f"result counts changed after cancel: {baseline_counts!r} -> {view.get('resultCounts')!r}")
     print(f"cancel holds: status=cancelled, nextPly={baseline_ply}, resultCounts unchanged")
+    return unverified
 
 
 def main() -> int:
@@ -301,9 +322,13 @@ def main() -> int:
     # The cancel flow also performs the running-state partial results read:
     # it waits for committed rows via afterPly, then cancels and verifies the
     # job stays cancelled with no further progress.
-    run_cancel_flow(base_url, owner)
+    unverified = run_cancel_flow(base_url, owner)
 
-    print("smoke ok: free profile, progress, idempotent replay, active-job limit, owner isolation, precision gate, cancel")
+    if unverified:
+        print(f"smoke passed with UNVERIFIED items: {', '.join(unverified)}")
+        return 3
+    print("smoke ok: all checks passed (free profile, progress, idempotent replay, "
+          "active-job limit, owner isolation, precision gate, partial results, cancel)")
     return 0
 
 
