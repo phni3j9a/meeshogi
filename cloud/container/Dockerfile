@@ -8,6 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ENGINE_OPTIONS_PATH=/opt/engine/engine_options.txt \
     ARTIFACT_MANIFEST_PATH=/opt/app/artifact-manifest.json \
     CONDITIONS_MANIFEST_PATH=/opt/app/conditions.json \
+    JOB_PROFILES_PATH=/opt/app/job-profiles.json \
     BUILD_INFO_PATH=/opt/app/build-info.json
 
 RUN apt-get update \
@@ -20,13 +21,14 @@ RUN apt-get update \
 COPY --chown=analysis:analysis driver.py /opt/app/driver.py
 COPY --chown=analysis:analysis artifact-manifest.json /opt/app/artifact-manifest.json
 COPY --chown=analysis:analysis conditions.json /opt/app/conditions.json
+COPY --chown=analysis:analysis job-profiles.json /opt/app/job-profiles.json
 COPY --chown=analysis:analysis build-info.json /opt/app/build-info.json
 COPY --chown=analysis:analysis engine /opt/engine/engine
 COPY --chown=analysis:analysis nn.bin /opt/engine/nn.bin
 COPY --chown=analysis:analysis engine_options.txt /opt/engine/engine_options.txt
 
 RUN chmod 0550 /opt/app/driver.py /opt/engine/engine \
-    && chmod 0440 /opt/app/artifact-manifest.json /opt/app/conditions.json /opt/app/build-info.json /opt/engine/nn.bin /opt/engine/engine_options.txt
+    && chmod 0440 /opt/app/artifact-manifest.json /opt/app/conditions.json /opt/app/job-profiles.json /opt/app/build-info.json /opt/engine/nn.bin /opt/engine/engine_options.txt
 
 USER analysis
 WORKDIR /opt/engine

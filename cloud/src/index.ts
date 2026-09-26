@@ -4,17 +4,20 @@ import {
   BENCHMARK_CONDITION_BY_ID,
   BENCHMARK_CONTRACT_VERSION,
   SEARCH_CONDITIONS,
+  SINGLETON_TARGET_ID,
   failure,
   isValidSfen,
   legalMoves,
   hasBenchmarkRuntime,
   benchmarkRuntimeMismatch,
-  MAX_BODY_BYTES,
   type BenchmarkValidationDiagnostic,
   validateDriverResult,
   validateBenchmarkDriverResult,
 } from './contract';
 import { Position } from 'tsshogi';
+import { json, readBody } from './httpUtil';
+import { handleV1Request } from './jobs';
+import { handleJobBatch } from './jobConsumer';
 
 export interface Env {
   ANALYSIS_INTERNAL_TOKEN?: string;
@@ -27,6 +30,13 @@ export interface Env {
   ANALYSIS_CONTAINER: DurableObjectNamespace<AnalysisContainer>;
   ANALYSIS_BENCHMARK_STANDARD_2: DurableObjectNamespace<BenchmarkStandard2Container>;
   ANALYSIS_BENCHMARK_STANDARD_3: DurableObjectNamespace<BenchmarkStandard3Container>;
+  JOBS_DB?: D1Database;
+  JOBS_QUEUE?: Queue<JobQueueMessage>;
+}
+
+export interface JobQueueMessage {
+  v: 1;
+  jobId: string;
 }
 
 function workerVersionFields(env: Env): Record<string, string> {
@@ -44,7 +54,6 @@ const HEALTH_PATH = '/internal/health';
 const BENCHMARK_PATH = '/internal/benchmark';
 const BENCHMARK_HEALTH_PATH = '/internal/benchmark/health';
 const BENCHMARK_STOP_PATH = '/internal/benchmark/stop';
-const SINGLETON_TARGET_ID = 'analysis-mvp-singleton';
 const TARGET_ID_RE = /^bench-(standard-2|standard-3)-[0-9a-f]{32}-[a-z0-9][a-z0-9-]{0,63}(?:-cold-trial-[1-9][0-9]*)?$/u;
 const NORMAL_CONTAINER_TARGET = {
   containerApp: 'meeshogi-analysis-mvp-staging-analysis',
@@ -112,16 +121,6 @@ export class BenchmarkStandard3Container extends Container<Env> {
   }
 }
 
-function json(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store',
-    },
-  });
-}
-
 function constantTimeEqual(a: string, b: string): boolean {
   let difference = a.length ^ b.length;
   const count = Math.max(a.length, b.length);
@@ -129,35 +128,6 @@ function constantTimeEqual(a: string, b: string): boolean {
     difference |= (a.charCodeAt(index) || 0) ^ (b.charCodeAt(index) || 0);
   }
   return difference === 0;
-}
-
-async function readBody(request: Request): Promise<Uint8Array | null> {
-  const declaredLength = request.headers.get('content-length');
-  if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) || Number(declaredLength) > MAX_BODY_BYTES)) {
-    return null;
-  }
-  if (!request.body) return new Uint8Array();
-
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_BODY_BYTES) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
 }
 
 function unauthorized(status: number, code: 'auth_unconfigured' | 'unauthorized'): Response {
@@ -517,6 +487,7 @@ async function handleBenchmarkStop(request: Request, env: Env): Promise<Response
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname.startsWith('/v1/')) return handleV1Request(request, env);
   if (url.pathname === BENCHMARK_HEALTH_PATH) return handleBenchmarkHealth(request, env);
   if (url.pathname === BENCHMARK_STOP_PATH) return handleBenchmarkStop(request, env);
   if (url.pathname === HEALTH_PATH) {
@@ -524,7 +495,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const authFailure = authorize(request, env);
     if (authFailure) return authFailure;
     try {
-      const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, 'analysis-mvp-singleton');
+      const container = getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, SINGLETON_TARGET_ID);
       const response = await container.fetch(new Request('http://analysis-container/health', { method: 'GET' }));
       if (!response.ok) return json(failure('engine_error', 'Analysis container health is unavailable.'), 502);
       const text = await response.text();
@@ -746,4 +717,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   }
 }
 
-export default { fetch: handleRequest };
+export default {
+  fetch: handleRequest,
+  queue: (batch: MessageBatch, env: Env): Promise<void> => handleJobBatch(batch as MessageBatch<JobQueueMessage>, env),
+} satisfies ExportedHandler<Env>;

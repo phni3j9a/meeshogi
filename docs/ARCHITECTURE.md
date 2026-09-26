@@ -49,6 +49,12 @@ Issue #19のCloudflare Worker / Containerは、認証・private engine image・�
 
 Issue #20の比較ベンチマークでは、同一Container appの`instance_type`切替後に設定とruntimeが一致しない実測があったため、benchmark専用のstandard-2 / standard-3 class・binding・appを固定して使う。通常APIは既存のstandard-2 singleton class / binding / appのままにし、通常deployでも測定用class定義とSQLite migrationを整合して残すが、benchmark routeとallowlistは無効にする。これは再現可能なstaging測定経路であり、モバイル製品やproduction採用ではない。VM再利用を不一致の確定原因とは扱わず、各classのruntime readinessを測定前に検証する。測定定義にapp用storage、Queue、scheduler、独自のDO状態管理は追加しない。詳細は[`cloud/README.md`](../cloud/README.md)を参照。
 
+## Issue #21 非同期jobバックエンド
+
+同じstaging Workerに公開`/v1/*`の非同期解析APIを追加した。`/internal/*`は変更しない。取り込んだ1局を1つの永続jobとし、`POST /v1/jobs`がSFENと全指し手をtsshogiで再生検証してD1に保存し、job IDをQueueへ送る。consumer（batch 1・同時実行1・再試行3回+DLQ）は保存済みcursor `next_ply`から継続し、driverの`POST /session`ストリームで残り局面を順に解析する。1セッションが残り全局面を運ぶため、driverは1回の実行でengine processを使い回し、Workerは局面ごとにidentity・条件・合法PVを再検証して結果を永続化する。結果のコミットは「jobがactiveかつcursorがそのply」の条件付きbatchだけが行い、キャンセル確定後の遅延結果や重複配達は書き込まれない。15分のQueue実行上限に対しconsumer予算は約12分（tail margin 20秒）とし、残りがあればack前に継続メッセージをdurably送る。一般的な復旧基盤や独自schedulerは追加せず、標準のQueue再配達を使う。
+
+匿名identityは発行時だけ返す`mcd1_`形式のcredentialで、D1はSHA-256 hashだけを保持する。raw credentialは永続化・記録しない。Issue #22でアプリがSecureStoreに保存して提示するまでの引き渡し境界であり、端末を跨ぐ復旧やアカウント機能は持たない。profileは`free`と`precision`だけを受け付け、movetime・Threads・Hash・MultiPVやbenchmark条件は公開APIへ露出しない。profile値と利用制限（Free 5局/日・Asia/Tokyo、5局/60秒、同時active 1）は`cloud/config/job-profiles.json`に集約し、stagingの調整可能な既定値とする。`precision`はowner行の`precision_allowed`をoperatorが`wrangler d1 execute`で立てた場合のみ許可する。sessionの経路は、freeが`/internal/analyze`と同じ`analysis-mvp-singleton`インスタンスを共有し（max_instances=1で別名を増やせず、busy競合はtransient retryで処理）、precisionが既存のstandard-3 benchmark app上の専用名`analysis-jobs-standard-3`を使う。precision jobとbenchmark計測は同じappの単一要求ガードを共用するため、benchmark modeはprecision job利用と同時に走らせない。各局面は`legalMoveCount`を送り、driverの実効MultiPVは`min(profile.multiPV, legalMoveCount)`となる。これはモバイル接続（Issue #22）・本番切替（Issue #24）の前段であり、stagingの技術ゲートの範囲を出ない。
+
 ## 詰みと戦型
 
 短手数の詰みは通常評価とは別の確定結果として扱う。1手・3手の範囲で合法手・王手回避・打ち歩詰めなどの規則を含めて検証し、手順表示の結果と証明の結果を区別する。Sekireiに必要なAPIがあるかは実装前に調べ、不足する場合は共通ロジックとして実装する。

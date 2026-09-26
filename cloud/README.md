@@ -1,6 +1,6 @@
 # Issue #19 staging analysis gate
 
-This package is an isolated technical gate for one authenticated, synchronous SFEN analysis request. It is not connected to the mobile app. The iOS and Android app continue to analyze on-device, and staging access, an account, and network access are not required to use the initial product.
+This package is an isolated technical gate. It serves an authenticated, synchronous SFEN analysis endpoint (Issue #19) and an asynchronous game-analysis job backend over D1 and Queues (Issue #21). It is not connected to the mobile app. The iOS and Android app continue to analyze on-device, and staging access, an account, and network access are not required to use the initial product.
 
 ## Contract and boundaries
 
@@ -72,6 +72,7 @@ The only operator environment values are:
 | `ANALYSIS_IMAGE_REF` | Digest-pinned image for deploy and operator Wrangler commands | No |
 | `ANALYSIS_INTERNAL_TOKEN` | Worker bearer secret and authenticated smoke requests | **Yes** |
 | `ANALYSIS_STAGING_URL` | Deployed Worker base URL for smoke and timeout requests | No |
+| `JOBS_D1_DATABASE_ID` | UUID of the `meeshogi-jobs-staging` D1 database, rendered into the deploy config | No |
 
 ## Fixed staging smoke
 
@@ -210,6 +211,82 @@ python3 cloud/scripts/smoke-staging.py
 The readiness check polls for at most two minutes by default (change with `--max-wait-seconds` and `--poll-interval-seconds`) and prints one non-secret JSON evidence line per poll. It succeeds only when Worker/driver deployment flags agree, `osCpuCount` and CPU affinity both equal the requested vCPU count (standard-2: 1, standard-3: 2), and MemTotal is in the expected memory range (6 or 8 GiB, allowing 1.5 GiB VM overhead and 0.25 GiB above). Cgroup CPU quota and memory limits are checked when exposed, but are not required; missing facts remain null. The output distinguishes a stale or contract-mismatched container, deployment-flag lag, wrong CPU count, and missing or out-of-range MemTotal. Root filesystem total bytes are reported as an observation and are not used to infer the Container size. The smoke is the separate normal-analysis check. Both require `ANALYSIS_STAGING_URL` and the existing token environment.
 
 The fixed benchmark apps have no type-switch path: each readiness check names the target for its declared type and checks the matching app/class/binding as well as runtime and build. If a fixed app fails that check, do not start measurements. A standard-2 failure in the normal singleton also means normal staging has not been restored, regardless of the template's declared type. The benchmark-only class and app definitions remain in the Wrangler config after restore; they are not deleted or used by the normal API.
+
+## Issue #21 asynchronous job backend
+
+The same staging Worker also serves the public asynchronous game-analysis API under `/v1/*`. One imported game becomes one persisted job: a Queue consumer analyzes each position through the driver's `POST /session` streaming endpoint and commits validated per-position results to D1. All `/internal/*` routes behave exactly as before.
+
+| Route | Behavior |
+| --- | --- |
+| `POST /v1/credentials` | Issues an install-scoped anonymous credential. |
+| `POST /v1/jobs` | Validates and persists one game as one queued job, then enqueues its id. |
+| `GET /v1/jobs/:id` | Owner-scoped status, profile, progress, and cursor for reconnecting clients. |
+| `GET /v1/jobs/:id/results?afterPly&limit` | Persisted per-position results in ply order (default limit 100, max 200). |
+| `POST /v1/jobs/:id/cancel` | Atomic persisted cancellation. |
+
+### Anonymous credential and identity
+
+The credential is `mcd1_<43 url-safe characters>` (32 random bytes, unpadded base64url) and is returned exactly once at issuance. D1 stores only its SHA-256 hash and derives the `own_<24 hex>` owner id from it; the raw credential is never logged or persisted. Unknown or malformed credentials get a plain 401. Issue #22 is the intended mobile handoff: the app stores this credential in Expo SecureStore and presents it as a bearer token. The identity is install-scoped only — it cannot be recovered cross-device, carries no account claims, and uninstalling or reissuing produces a new owner with separate jobs and quotas.
+
+### Job admission
+
+`POST /v1/jobs` accepts exactly `{idempotencyKey, profileId, initialSfen, moves}` in a body of at most 32 KiB, with at most 512 moves and a 128-character idempotency key made of `[A-Za-z0-9._:-]`. `profileId` is only `free` or `precision`; movetime, Threads, Hash, MultiPV, and any other engine setting are server-side only, and benchmark condition ids or target names are never part of the public API. Every move is replayed through tsshogi before persistence: ply 0 is the initial position and ply i is the position after move i. This accepts ordinary 92- and 150-move games with wide headroom.
+
+Admission is atomic in D1: the job row and its ply-indexed position rows insert in one batch whose `INSERT ... SELECT ... WHERE` guards re-check the limits at insert time, and `UNIQUE(owner_id, idempotency_key)` protects replays. Idempotency is keyed on the canonical initial SFEN — the replayed position's `position.sfen` — so equivalent spellings (e.g. `/81/` vs `/9/`, reordered hand pieces) replay to the same job while a different move list or profile under the same key is still a conflict. Resubmitting the same key with the same canonical input returns the existing job (`idempotentReplay: true`, HTTP 200) without consuming quota or an active slot; the same key with a different input is a 409 `idempotency_conflict`. A different key creates a separate job. If the job row persists but the Queue send fails, the API returns 503 `enqueue_failed` honestly rather than reporting success; resubmitting the same key retries the enqueue.
+
+Usage limits live with the profiles in `cloud/config/job-profiles.json` and are staging defaults, not permanent product limits: Free is 5 jobs per owner per Asia/Tokyo calendar day and 5 new jobs per trailing 60 seconds, and each owner may have 1 active job (queued or running) across both profiles. Cancelled jobs still count toward the daily quota. Precision additionally requires a server-side allowlist flag on the owner row:
+
+```sh
+cd cloud
+./node_modules/.bin/wrangler d1 execute meeshogi-jobs-staging --remote \
+  --command "UPDATE owners SET precision_allowed = 1 WHERE owner_id = 'own_<24 hex>'"
+```
+
+### Queue consumer
+
+Exactly one queue `meeshogi-jobs-staging` drives execution (batch size 1, max concurrency 1, `max_retries: 3`, dead-letter `meeshogi-jobs-staging-dlq`), matching the singleton Container constraint — there is no second execution path, scheduler, or custom recovery framework. Each delivery resumes the job from the persisted `next_ply` cursor, calls `POST /session` on the profile's fixed Container app (Free → `analysis-mvp-singleton` on the standard-2 `AnalysisContainer` app — the same named instance as the synchronous `/internal/analyze` gate, so a job session and an internal analysis contend through the driver's single-request busy guard and take the transient retry path; Precision → a dedicated `analysis-jobs-standard-3` name on the standard-3 `BenchmarkStandard3Container` app; no client-visible benchmark route or condition), and streams newline-delimited results. One session covers every remaining position, so the driver reuses a single engine process per run while the Worker isolates validation per position. Each line is re-validated against the analysis contract — identity, conditions, legal PVs — and committed inside one guarded batch that requires the job to still be active and the persisted cursor to still equal that ply, so a committed cancellation guarantees no later result is written and a stale or duplicate line commits nothing.
+
+Each session position carries a `legalMoveCount` recomputed from its persisted SFEN, so the driver's effective MultiPV is `min(profile.multiPV, legalMoveCount)`; positions with fewer legal moves than the profile MultiPV produce narrower-but-valid results rather than fabricated candidates. Precision jobs share the standard-3 app with benchmark mode — a benchmark deployment must not run concurrently with precision job traffic, since the dedicated job name contends with benchmark targets through the same single-request guard and `max_instances: 1`.
+
+The consumer budget is 720,000 ms (~12 minutes) inside the Queue's 15-minute execution limit, with a 20-second tail margin so cursor commits finish before the deadline. A session that ends early (driver `deadline`) commits its progress, then the consumer sends a continuation `{v:1, jobId}` before acking — the send/ack boundary keeps at-least-once delivery without bespoke recovery state. Duplicate deliveries and terminal, cancelled, or failed jobs ack without opening a session. Driver `failure` result lines never advance the cursor and are never committed as results: a failure the Worker already proved impossible (`invalid`, `identity_mismatch`) is a permanent `contract_violation`; every other failure code, and a session `end.reason=error`, takes the transient path and retries from the failed ply with earlier progress preserved. Transient failures use standard Queue retry: `job-profiles.json`'s `consumer.maxRetries` (3) is the single source mirrored by the Wrangler `max_retries: 3`, and because Cloudflare `attempts` starts at 1 the delivery with `attempts === maxRetries` still retries while `attempts === maxRetries + 1` is final. Retry exhaustion marks the job `failed` (`retry_exhausted`), as do contract violations and driver 4xx rejections (`contract_violation`/`driver_rejected`). Marking a job failed is itself persisted before the ack: if the `failed` write fails the delivery is retried so the standard retry/DLQ path can still act — an active job is never silently stranded. Locally-determined terminal positions (checkmate/no-legal-moves at the end of a validated game) are committed without the engine.
+
+### Deploy and smoke
+
+One-time operator steps:
+
+```sh
+cd cloud
+./node_modules/.bin/wrangler d1 create meeshogi-jobs-staging   # prints the UUID for JOBS_D1_DATABASE_ID
+./node_modules/.bin/wrangler queues create meeshogi-jobs-staging
+./node_modules/.bin/wrangler queues create meeshogi-jobs-staging-dlq
+```
+
+`deploy-staging.sh` renders `JOBS_D1_DATABASE_ID` into the config and applies `cloud/migrations/` after deploy and the secret upload. The job smoke issues a throwaway credential in memory, then verifies: a Free job created and replayed idempotently (same `jobId`, `idempotentReplay`), a second concurrent job rejected with 429 `active_job_limit`, owner isolation (404), precision rejected for a non-allowlisted owner, progress advancing under GET-only polling (client-disconnect equivalence), partial results via `afterPly` observed only while the job is non-terminal with `nextPly < totalPlies` (rows from a completed job never count), per-result profile conditions/identity/`engineLaunch` evidence, and a cancellation that stays cancelled with frozen `nextPly`/result counts. A check that cannot be observed is reported as `UNVERIFIED` and exits 3 instead of 0; HTTP status is reported in a dedicated `httpStatus` key so it is never confused with a job's `status` field. The daily Free quota is not exercised: each run creates a fresh owner — to check it manually, keep one credential and POST five jobs with distinct idempotency keys; the sixth must return 429 `daily_quota_exceeded`:
+
+```sh
+export ANALYSIS_STAGING_URL='https://<deployed-worker-subdomain>.workers.dev'
+python3 cloud/scripts/smoke-jobs-staging.py            # Free profile
+python3 cloud/scripts/smoke-jobs-staging.py --precision  # two-pass allowlist flow described by the script
+```
+
+### 2026-09-26 staging verification (candidate b5f339e)
+
+Real-environment run on Worker `meeshogi-analysis-mvp-staging`, image `…meeshogi-analysis-mvp-staging@sha256:0c9543b4c8c08ff4a1a403876fc9ed7ba005b1bb9b10424f2a690f92647cdbca` (build `57faf10196b243ad86d4b25abf786a6e`, git `b5f339e`), D1 `meeshogi-jobs-staging` (`44316c2d-…`), Queue `meeshogi-jobs-staging` + DLQ. All checks below were actually observed (no UNVERIFIED items):
+
+- `smoke-staging.py` (#19 synchronous gate): PASS — readiness, non-mate startpos, synthetic middlegame, mate-in-one, checkmate terminal.
+- `smoke-jobs-staging.py` (Free): PASS — credential issuance, job creation, idempotent replay, 429 `active_job_limit`, 404 owner isolation, 403 precision gate, GET-only progress `queued→running→completed` (27/27 plies), partial results observed while non-terminal, per-result conditions/identity/`engineLaunch`, cancel froze `nextPly`/result counts.
+- `smoke-jobs-staging.py --precision` (two-pass allowlist flow): PASS — one owner allowlisted via remote D1 (`precision_allowed=1`), precision job completed 27/27 plies; result conditions show requested==actual `{threads:2, hashMb:64, moveTimeMs:5000, multiPV:3}` with 3 candidates.
+- Daily Free quota: PASS — five Free jobs (created then cancelled) for one owner, sixth POST returned 429 `daily_quota_exceeded`.
+- Engine-process reuse: PASS — both jobs show `COUNT(DISTINCT engine_launch)=1` across all 27 result rows (`engineLaunch=1`), i.e. one engine process per session served every position.
+- Instance-type evidence: Free ran on the `meeshogi-analysis-mvp-staging-analysis` app (`instance_type: standard-2`; `/internal/health` reported `expectedInstanceType: standard-2`, `osCpuCount: 1`, `memTotalBytes` ≈ 6.4 GB). Precision ran on `…-benchmark-standard-3` (platform config `vcpu: 2, memory: 8GiB`; `BenchmarkStandard3Container` sets `ANALYSIS_EXPECTED_INSTANCE_TYPE=standard-3`). No per-result runtime/CPU record exists on the job path, so precision hardware-level evidence is config-level only.
+
+**Encountered defect and remedy (staging-only):** the first Free run failed with `driver_rejected` (HTTP 404 on `/session`). `/internal/health` showed the singleton still serving the previous image (`buildId faae69bf…`, git `c6d5b52`) after the deploy's completed rollout. Observed fact: the existing sleeping DO-addressed instance resumed with its original image. Presumed cause (not independently confirmed here): rollout does not replace such instances; similar reports exist upstream (cloudflare/containers#233, workers-sdk#12988). Remedy: `wrangler containers delete <app-id>` for the three `meeshogi-analysis-mvp-staging-*` apps, then re-run `deploy-staging.sh`; the recreated apps booted the new image and `/internal/health` then reported `buildId 57faf101…` / git `b5f339e`. No code change was needed. For future image upgrades on this worker, check `/internal/health` `buildId` after deploy; if it still shows the previous build, recreate the instances (e.g. delete the three apps and redeploy) as was done here.
+
+Still unverified/not executed: the Queue→DLQ path (no exhaustion event occurred), the continuation path in production (smoke games fit in one delivery), idle-sleep resume timing for the job path, and any failure mode inside `cloud/container/**`.
+
+### Verification boundary
+
+The TypeScript tests run the public API and consumer against a real local SQLite database and a fake session stream, covering validation, canonical-SFEN idempotency, JST day and trailing-window admission, concurrent admission (`Promise.all` POSTs interleave at the API/await level while the test adapter serializes batches on one connection, matching D1's per-database write serialization — the remaining staging risk is transport/binding behavior, not the guard logic; separate adapter tests prove two concurrent batches both persist and a failing batch rolls back only itself), driver failure lines that never advance the cursor (transient vs permanent), failed-state persistence failure returning the delivery for retry, the `attempts > maxRetries` boundary (3 retries, final at 4), config/Wrangler `maxRetries` consistency, result/cursor/cancel guards, the consumer deadline applied before every buffered line and commit (injected clock; progress kept, continuation sent, cursor resume), duplicate delivery, retry exhaustion, and cancellation. They prove Worker-side behavior offline only. The 2026-09-26 run above supplies the real staging evidence; the Issue #20 benchmark numbers remain measurements of the earlier synchronous path and are not performance or cost data for this asynchronous backend. This is a staging technical gate: it is not wired into the mobile app (Issue #22) and is not production infrastructure (Issue #24).
 
 ## Remaining limits
 

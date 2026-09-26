@@ -1,0 +1,32 @@
+{
+  "schema": "meeshogi-job-config-v1",
+  "note": "Issue #21 staging initial values. Profiles were approved in Issue #20. Usage limits are adjustable staging defaults, not permanent product limits.",
+  "profiles": {
+    "free": {
+      "instanceType": "standard-2",
+      "threads": 1,
+      "hashMb": 64,
+      "moveTimeMs": 1000,
+      "multiPV": 2
+    },
+    "precision": {
+      "instanceType": "standard-3",
+      "threads": 2,
+      "hashMb": 64,
+      "moveTimeMs": 5000,
+      "multiPV": 3
+    }
+  },
+  "limits": {
+    "timeZone": "Asia/Tokyo",
+    "freeDailyJobs": 5,
+    "freeRateWindowSeconds": 60,
+    "freeRateMaxJobs": 5,
+    "maxActiveJobsPerOwner": 1
+  },
+  "consumer": {
+    "budgetMs": 720000,
+    "tailMarginMs": 20000,
+    "maxRetries": 3
+  }
+}
