@@ -14,7 +14,12 @@ import {
 } from '../domain/model';
 import { inferAttribution, sameGameOccasion, sameRecordedGame } from '../domain';
 import type { LocalRepository } from '../storage/repository';
-import { attemptBlocksDelete, type CloudAttempt } from '../cloud/contract';
+import {
+  attemptBlocksDelete,
+  cloudContractEpoch,
+  type CloudAttempt,
+  type CloudProfileId,
+} from '../cloud/contract';
 import {
   toCloudPositionResult,
   validateCloudResult,
@@ -35,6 +40,26 @@ type ImportOptions = {
   autoAnalyze?: boolean;
   manualResult?: GameResult | null;
 };
+
+/**
+ * Count stored rows that pass the CURRENT contract and are displayable
+ * (success/terminal). Persisted valid_count was computed at ingest time and
+ * can go stale when identity/conditions change or content is damaged.
+ */
+function countCurrentlyValidCloudRows(
+  rows: PersistedCloudResult[],
+  positions: string[],
+  profileId: CloudProfileId,
+): number {
+  let count = 0;
+  for (const row of rows) {
+    if (row.status === 'incomplete') continue;
+    const expected = positions[row.ply];
+    if (expected === undefined) continue;
+    if (validateCloudResult(row, expected, profileId)) count++;
+  }
+  return count;
+}
 type GamePatch = Partial<
   Pick<
     GameRecord,
@@ -61,7 +86,12 @@ export interface AppState {
   saveImport(parsed: ParsedGame, options: ImportOptions): Promise<GameRecord>;
   updateGame(id: string, patch: GamePatch): Promise<void>;
   updateOpening(id: string, side: Side, manual: Opening | null): Promise<void>;
-  deleteGame(id: string): Promise<void>;
+  /**
+   * `forgetCloud` is the explicit escape for attempts that can never be
+   * confirmed terminal again (e.g. credential lost after a POST was sent):
+   * it removes the local request record while the server job may keep running.
+   */
+  deleteGame(id: string, options?: { forgetCloud?: boolean }): Promise<void>;
   updateSettings(patch: Partial<Settings>): Promise<void>;
   setLastViewed(id: string, ply: number): Promise<void>;
   startAnalysis(id: string): Promise<void>;
@@ -193,6 +223,33 @@ export function makeAppStore(deps: Dependencies) {
               if (deps.cloud && repository.cloud) {
                 try {
                   cloudAttempts = await repository.cloud.attempts();
+                  // valid_count was computed under the contract in force at
+                  // ingest time; when the contract constants changed since the
+                  // last recount, re-validate stored rows once so completion
+                  // labels reflect the current rules.
+                  const epoch = cloudContractEpoch();
+                  const cloudRepo = repository.cloud;
+                  if (cloudRepo && (await cloudRepo.metaGet('contract_epoch')) !== epoch) {
+                    cloudAttempts = await Promise.all(
+                      cloudAttempts.map(async (attempt) => {
+                        if (attempt.receivedCount === 0) return attempt;
+                        const game = data.games.find(
+                          (g) => g.id === attempt.gameId && g.identity === attempt.gameIdentity,
+                        );
+                        if (!game) return attempt;
+                        const rows = await cloudRepo.results(attempt.attemptId);
+                        const validCount = countCurrentlyValidCloudRows(
+                          rows,
+                          game.positions,
+                          attempt.profileId,
+                        );
+                        if (validCount === attempt.validCount) return attempt;
+                        await cloudRepo.updateAttempt(attempt.attemptId, { validCount });
+                        return { ...attempt, validCount };
+                      }),
+                    );
+                    await cloudRepo.metaSet('contract_epoch', epoch);
+                  }
                 } catch {
                   // Cloud read errors must never block game loading.
                   cloudLoadError =
@@ -289,12 +346,12 @@ export function makeAppStore(deps: Dependencies) {
           await repo().save(game);
           replaceGame(game);
         }),
-      deleteGame: (id) =>
+      deleteGame: (id, options) =>
         write(async () => {
           const blocking = get().cloudAttempts.find(
             (attempt) => attempt.gameId === id && attemptBlocksDelete(attempt),
           );
-          if (blocking) {
+          if (blocking && !options?.forgetCloud) {
             throw new Error(
               'この棋譜はCloud解析を実行中または未回収です。Cloud解析を取消してから削除してください。',
             );
@@ -519,17 +576,34 @@ export function makeAppStore(deps: Dependencies) {
         if (!cloudRepo) return;
         const attempts = get().cloudAttempts.filter((attempt) => attempt.gameId === gameId);
         const game = get().games.find((g) => g.id === gameId);
-        const loaded = await write(() =>
-          Promise.all(
+        const loaded = await write(async () => {
+          const out = await Promise.all(
             attempts.map(
               async (attempt) =>
                 [attempt, await cloudRepo.results(attempt.attemptId)] as const,
             ),
-          ),
-        );
+          );
+          // Recount under the current contract: stored rows may fail validation
+          // now (identity/conditions change or damaged content) although the
+          // persisted valid_count still includes them.
+          const corrected = new Map<string, number>();
+          for (const [attempt, rows] of out) {
+            if (!game || attempt.gameIdentity !== game.identity) continue;
+            const validCount = countCurrentlyValidCloudRows(
+              rows,
+              game.positions,
+              attempt.profileId,
+            );
+            if (validCount !== attempt.validCount) {
+              await cloudRepo.updateAttempt(attempt.attemptId, { validCount });
+              corrected.set(attempt.attemptId, validCount);
+            }
+          }
+          return { out, corrected };
+        });
         set((state) => {
           const cloudResults = { ...state.cloudResults };
-          for (const [attempt, rows] of loaded) {
+          for (const [attempt, rows] of loaded.out) {
             if (!game || attempt.gameIdentity !== game.identity) continue;
             const results: CloudPositionResult[] = [];
             for (const row of rows) {
@@ -540,7 +614,14 @@ export function makeAppStore(deps: Dependencies) {
             }
             cloudResults[attempt.attemptId] = results;
           }
-          return { cloudResults };
+          const cloudAttempts = loaded.corrected.size
+            ? state.cloudAttempts.map((attempt) =>
+                loaded.corrected.has(attempt.attemptId)
+                  ? { ...attempt, validCount: loaded.corrected.get(attempt.attemptId)! }
+                  : attempt,
+              )
+            : state.cloudAttempts;
+          return { cloudResults, cloudAttempts };
         });
       },
       resumeCloudJobs: () => cloud?.resume(),

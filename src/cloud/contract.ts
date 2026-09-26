@@ -102,11 +102,43 @@ export function isActiveAttempt(status: CloudAttemptStatus): boolean {
   return CLOUD_ACTIVE_STATUSES.includes(status);
 }
 
-/** Deletion is blocked while a server job may still be live or unconfirmed. */
-export function attemptBlocksDelete(attempt: Pick<CloudAttempt, 'status' | 'jobId'>): boolean {
-  return (
-    CLOUD_ACTIVE_STATUSES.includes(attempt.status) || (attempt.status === 'error' && !!attempt.jobId)
-  );
+export const CLOUD_SERVER_TERMINAL_STATUSES: readonly CloudJobServerStatus[] = [
+  'completed',
+  'failed',
+  'cancelled',
+];
+
+/**
+ * Deletion is blocked while a server job may still be live or unconfirmed.
+ * A locally terminal status is safe; `error` stays blocked while the POST may
+ * have created a job (submitAttempted) or a jobId is known — unless the server
+ * outcome was confirmed terminal/cancelled (serverStatus), which settles it.
+ */
+export function attemptBlocksDelete(
+  attempt: Pick<CloudAttempt, 'status' | 'jobId' | 'submitAttempted' | 'serverStatus'>,
+): boolean {
+  if (CLOUD_ACTIVE_STATUSES.includes(attempt.status)) return true;
+  if (attempt.status !== 'error') return false;
+  if (attempt.serverStatus && CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)) {
+    return false;
+  }
+  return attempt.submitAttempted || attempt.jobId !== null;
+}
+
+/**
+ * Cheap fingerprint of the constants that decide whether a stored Cloud row is
+ * displayable. When it changes (identity/profile bump), persisted valid_count
+ * is recomputed once instead of trusting counts made under old rules.
+ */
+export function cloudContractEpoch(): string {
+  const text = JSON.stringify({ identity: CLOUD_EXPECTED_IDENTITY, profiles: CLOUD_PROFILES });
+  // FNV-1a 32-bit — a content fingerprint, not a security hash.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `c${(hash >>> 0).toString(16)}`;
 }
 
 export interface CloudResultCounts {
@@ -143,6 +175,17 @@ export interface CloudAttempt {
   failureCode: string | null;
   failureMessage: string | null;
   lastError: string | null;
+  /**
+   * A POST /jobs was dispatched for this attempt. When true and the response
+   * was lost, a server job may exist even though jobId is null.
+   */
+  submitAttempted: boolean;
+  /**
+   * Latest job status the server itself confirmed (job view, submit replay, or
+   * cancel response). Terminal values settle the attempt even when result
+   * draining later hit a local error.
+   */
+  serverStatus: CloudJobServerStatus | null;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;

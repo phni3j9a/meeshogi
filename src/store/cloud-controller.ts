@@ -8,6 +8,7 @@ import type {
 import {
   CLOUD_MAX_MOVES,
   CLOUD_RESULTS_PAGE_LIMIT,
+  CLOUD_SERVER_TERMINAL_STATUSES,
   isActiveAttempt,
 } from '../cloud/contract';
 import { CloudApiError, type CloudClient, type CloudCredential } from '../cloud/client';
@@ -65,9 +66,13 @@ function mapApiError(error: CloudApiError): string {
  */
 export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
   const pumps = new Map<string, number>();
-  const wakeUps = new Map<string, () => void>();
+  const wakeUps = new Map<string, { token: object; resolve: () => void }>();
   let pumpSequence = 0;
   let foreground = true;
+  // Serializes start() so a double-tap cannot create two attempts/jobs.
+  let startQueue: Promise<void> = Promise.resolve();
+  // Single in-flight credential issuance per endpoint.
+  const credentialIssuance = new Map<string, Promise<CloudCredential>>();
 
   const attemptById = (attemptId: string) =>
     ctx.getAttempts().find((attempt) => attempt.attemptId === attemptId);
@@ -165,6 +170,7 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
         : (view.status as CloudAttemptStatus);
     await persist(attempt.attemptId, {
       status: terminal,
+      serverStatus: view.status,
       serverNextPly: view.nextPly,
       resultCounts: {
         success: view.resultCounts.success ?? 0,
@@ -181,11 +187,28 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     });
   };
 
+  /**
+   * The server reaching a terminal state is a confirmed fact worth persisting
+   * immediately — even if result draining then fails — but the local lifecycle
+   * status must stay non-terminal until every produced row is committed so the
+   * pump keeps the attempt resumable.
+   */
+  const confirmServerStatus = async (attempt: CloudAttempt, view: CloudJobView) => {
+    if (CLOUD_SERVER_TERMINAL_STATUSES.includes(view.status)) {
+      await persist(attempt.attemptId, { serverStatus: view.status });
+    }
+  };
+
   const submit = async (
     attempt: CloudAttempt,
     client: CloudClient,
     credential: CloudCredential,
   ) => {
+    if (!attempt.submitAttempted) {
+      // Mark dispatch durably before the POST: if the response is lost the
+      // server may hold a job even though jobId stays null.
+      await persist(attempt.attemptId, { submitAttempted: true });
+    }
     const view = await client.createJob(credential.credential, {
       idempotencyKey: attempt.idempotencyKey,
       profileId: attempt.profileId,
@@ -197,13 +220,15 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     // freshly learned jobId overwrite a cancel-requested state.
     const now = attemptById(attempt.attemptId);
     if (!now) return;
+    const serverTerminal = CLOUD_SERVER_TERMINAL_STATUSES.includes(view.status);
     await persist(attempt.attemptId, {
       jobId: view.jobId,
+      serverStatus: view.status,
       status:
         now.status === 'cancel-requested'
           ? 'cancel-requested'
-          : TERMINAL_STATUSES.includes(view.status as CloudAttemptStatus)
-            ? (view.status as CloudAttemptStatus)
+          : serverTerminal
+            ? 'running' // server finished; results may still be undrained
             : view.status === 'queued'
               ? 'queued'
               : 'running',
@@ -222,6 +247,7 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     if (!attempt.jobId) throw new CloudContractViolationError('CloudジョブIDがありません。');
     const view = await client.getJob(credential.credential, attempt.jobId);
     checkJobView(attempt, view);
+    await confirmServerStatus(attempt, view);
     await drainResults(attempt, client, credential);
     const current = attemptById(attempt.attemptId);
     if (current) await adoptJobView(current, view);
@@ -229,13 +255,20 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
 
   const cancel = async (attempt: CloudAttempt, client: CloudClient, credential: CloudCredential) => {
     if (!attempt.jobId) {
-      // Never submitted or the POST response was lost and replay never happened:
-      // nothing reachable to cancel server-side.
-      await persist(attempt.attemptId, { status: 'cancelled', finishedAt: deps.nowIso() });
+      if (!attempt.submitAttempted) {
+        // Nothing was ever dispatched: safe to settle locally.
+        await persist(attempt.attemptId, { status: 'cancelled', finishedAt: deps.nowIso() });
+        return;
+      }
+      // A POST may have reached the server: resend under the same idempotency
+      // key to learn the jobId; the next iteration cancels it.
+      await submit(attempt, client, credential);
       return;
     }
     const view = await client.cancelJob(credential.credential, attempt.jobId);
     checkJobView(attempt, view);
+    // A confirmed cancel/terminal is durable even if draining then fails.
+    await persist(attempt.attemptId, { serverStatus: view.status });
     await drainResults(attempt, client, credential);
     const current = attemptById(attempt.attemptId);
     if (current) await adoptJobView(current, view);
@@ -278,6 +311,14 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
         // Cancelled before the POST response arrived: resend under the same
         // idempotency key to learn the jobId, then cancel it next iteration.
         await submit(attempt, client, credential);
+      } else if (
+        attempt.status === 'cancel-requested' &&
+        attempt.serverStatus !== null &&
+        CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)
+      ) {
+        // The server already finished/cancelled the job: skip the cancel POST
+        // (it would 404/409 on a finished job) and just drain + settle.
+        await poll(attempt, client, credential);
       } else if (attempt.status === 'cancel-requested') {
         await cancel(attempt, client, credential);
       } else {
@@ -321,19 +362,35 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
   };
 
   const wake = (attemptId: string) => {
-    const resolve = wakeUps.get(attemptId);
+    const entry = wakeUps.get(attemptId);
     wakeUps.delete(attemptId);
-    resolve?.();
+    entry?.resolve();
   };
 
   const sleepWakeable = async (attemptId: string, ms: number): Promise<void> => {
+    // Token-guarded: an old timer must not delete the registration of a newer
+    // sleep for the same attempt (e.g. woken once, then sleeping again).
+    const token = {};
     await new Promise<void>((resolve) => {
-      wakeUps.set(attemptId, resolve);
+      wakeUps.set(attemptId, { token, resolve });
       void deps.sleep(ms).then(() => {
-        if (wakeUps.delete(attemptId)) resolve();
+        const entry = wakeUps.get(attemptId);
+        if (entry?.token === token) wakeUps.delete(attemptId);
+        resolve();
       });
     });
   };
+
+  /**
+   * Active attempts need pumping; additionally a terminal-status attempt whose
+   * result cursor lags what the server produced still needs draining (covers
+   * rows persisted before the drain-before-terminal ordering existed).
+   */
+  const pumpEligible = (attempt: CloudAttempt): boolean =>
+    isActiveAttempt(attempt.status) ||
+    (attempt.jobId !== null &&
+      TERMINAL_STATUSES.includes(attempt.status) &&
+      attempt.receiveAfterPly < attempt.totalPlies - 1);
 
   const ensurePump = (attemptId: string) => {
     if (pumps.has(attemptId)) return;
@@ -344,12 +401,12 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       try {
         while (foreground && pumps.get(attemptId) === token) {
           const attempt = attemptById(attemptId);
-          if (!attempt || !isActiveAttempt(attempt.status)) return;
+          if (!attempt || !pumpEligible(attempt)) return;
           const outcome = await step(attempt);
           if (outcome === 'stop') return;
           delay = outcome === 'ok' ? deps.pollIntervalMs : Math.min(delay * 2, deps.maxBackoffMs);
           const still = attemptById(attemptId);
-          if (!still || !isActiveAttempt(still.status)) return;
+          if (!still || !pumpEligible(still)) return;
           await sleepWakeable(attemptId, delay);
         }
       } finally {
@@ -359,67 +416,100 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     })().catch(() => undefined);
   };
 
-  return {
-    /** Start (or reconnect to) a Cloud analysis for a game using the selected method. */
-    async start(gameId: string): Promise<void> {
-      const game = ctx.getGame(gameId);
-      if (!game) throw new Error('棋譜が見つかりません。');
-      const profileId = ctx.getCloudMethodProfile();
-      if (!profileId) throw new Error('解析方法がCloudではありません。');
-      const endpoint = deps.endpoint();
-      if (!endpoint) {
-        throw new Error('Cloud解析の接続先が設定されていません。端末内（Sekirei）をお使いください。');
-      }
-      if (game.moves.length > CLOUD_MAX_MOVES) {
-        throw new Error(
-          `Cloud解析は${CLOUD_MAX_MOVES}手までの棋譜に対応しています。この棋譜は${game.moves.length}手です。端末内（Sekirei）をお使いください。`,
-        );
-      }
-      const existing = ctx
-        .getAttempts()
-        .filter(
-          (attempt) => attempt.gameId === gameId && attempt.profileId === profileId,
-        )
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  /**
+   * Returns the latest reusable attempt for this game+profile — an active one
+   * gets its pump ensured and yields null (caller returns); a terminal one
+   * blocks a new start only until the caller re-checks.
+   */
+  const latestAttemptFor = (gameId: string, profileId: CloudProfileId) =>
+    ctx
+      .getAttempts()
+      .filter((attempt) => attempt.gameId === gameId && attempt.profileId === profileId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+
+  const doStart = async (gameId: string): Promise<void> => {
+    const profileId = ctx.getCloudMethodProfile();
+    if (!profileId) throw new Error('解析方法がCloudではありません。');
+    const endpoint = deps.endpoint();
+    if (!endpoint) {
+      throw new Error('Cloud解析の接続先が設定されていません。端末内（Sekirei）をお使いください。');
+    }
+    // Runs inside the serialized start queue: re-check the latest state at
+    // each stage so a queued second tap collapses into the first attempt.
+    const game = ctx.getGame(gameId);
+    if (!game) throw new Error('棋譜が見つかりません。');
+    if (game.moves.length > CLOUD_MAX_MOVES) {
+      throw new Error(
+        `Cloud解析は${CLOUD_MAX_MOVES}手までの棋譜に対応しています。この棋譜は${game.moves.length}手です。端末内（Sekirei）をお使いください。`,
+      );
+    }
+    const reusableActive = () => {
+      const existing = latestAttemptFor(gameId, profileId);
       if (existing && isActiveAttempt(existing.status)) {
         ensurePump(existing.attemptId);
-        return;
+        return true;
       }
+      return false;
+    };
+    const checkNoOtherActive = () => {
       if (ctx.getAttempts().some((attempt) => isActiveAttempt(attempt.status))) {
         throw new Error('別のCloud解析を実行中です。終了または取消のあとで開始してください。');
       }
-      const credential = await ensureCredential(endpoint);
-      const now = deps.nowIso();
-      const attempt: CloudAttempt = {
-        attemptId: deps.createId(),
-        gameId,
-        gameIdentity: game.identity,
-        profileId,
-        endpoint,
-        installId: credential.installId,
-        ownerId: credential.ownerId,
-        idempotencyKey: `mk.${deps.createId()}`,
-        initialSfen: game.positions[0],
-        moves: game.moves.map((move) => move.usi),
-        totalPlies: game.positions.length,
-        jobId: null,
-        status: 'requesting',
-        receiveAfterPly: -1,
-        serverNextPly: 0,
-        resultCounts: null,
-        receivedCount: 0,
-        validCount: 0,
-        failureCode: null,
-        failureMessage: null,
-        lastError: null,
-        createdAt: now,
-        updatedAt: now,
-        finishedAt: null,
-      };
-      // The idempotency record must exist before any POST can be in flight.
-      await ctx.write(() => ctx.repo().cloud.createAttempt(attempt));
-      ctx.setAttempts((attempts) => [...attempts, attempt]);
-      ensurePump(attempt.attemptId);
+    };
+    if (reusableActive()) return;
+    checkNoOtherActive();
+    const credential = await ensureCredential(endpoint);
+    // The await above may have queued behind another start: re-verify before
+    // creating the attempt so we never produce a duplicate.
+    if (ctx.getGame(gameId)?.identity !== game.identity) {
+      throw new Error('棋譜が見つかりません。');
+    }
+    if (reusableActive()) return;
+    checkNoOtherActive();
+    const now = deps.nowIso();
+    const attempt: CloudAttempt = {
+      attemptId: deps.createId(),
+      gameId,
+      gameIdentity: game.identity,
+      profileId,
+      endpoint,
+      installId: credential.installId,
+      ownerId: credential.ownerId,
+      idempotencyKey: `mk.${deps.createId()}`,
+      initialSfen: game.positions[0],
+      moves: game.moves.map((move) => move.usi),
+      totalPlies: game.positions.length,
+      jobId: null,
+      status: 'requesting',
+      receiveAfterPly: -1,
+      serverNextPly: 0,
+      resultCounts: null,
+      receivedCount: 0,
+      validCount: 0,
+      failureCode: null,
+      failureMessage: null,
+      lastError: null,
+      submitAttempted: false,
+      serverStatus: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+    };
+    // The idempotency record must exist before any POST can be in flight.
+    await ctx.write(() => ctx.repo().cloud.createAttempt(attempt));
+    ctx.setAttempts((attempts) => [...attempts, attempt]);
+    ensurePump(attempt.attemptId);
+  };
+
+  return {
+    /** Start (or reconnect to) a Cloud analysis for a game using the selected method. */
+    start(gameId: string): Promise<void> {
+      const run = startQueue.then(() => doStart(gameId));
+      startQueue = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
     },
 
     /** Explicit user cancellation — the only path that POSTs /cancel. */
@@ -432,9 +522,11 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
         ensurePump(attemptId);
         return;
       }
-      if (attempt.status === 'error' && attempt.jobId) {
+      if (attempt.status === 'error' && (attempt.jobId || attempt.submitAttempted)) {
         // A job that may still be live server-side (e.g. drained results were
-        // rejected) gets an explicit cancel attempt so it cannot linger.
+        // rejected, or a POST whose response was lost) gets an explicit cancel
+        // attempt: without a jobId the pump re-sends under the same idempotency
+        // key to learn it, then cancels.
         await persist(attemptId, { status: 'cancel-requested', lastError: null });
         wake(attemptId);
         ensurePump(attemptId);
@@ -445,7 +537,7 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     resume() {
       foreground = true;
       for (const attempt of ctx.getAttempts()) {
-        if (isActiveAttempt(attempt.status)) ensurePump(attempt.attemptId);
+        if (pumpEligible(attempt)) ensurePump(attempt.attemptId);
       }
     },
 
@@ -456,6 +548,18 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
   };
 
   async function ensureCredential(endpoint: string): Promise<CloudCredential> {
+    // Single in-flight issuance per endpoint: concurrent starts share one
+    // credential request instead of racing to overwrite SecureStore.
+    const pending = credentialIssuance.get(endpoint);
+    if (pending) return pending;
+    const promise = doEnsureCredential(endpoint).finally(() => {
+      if (credentialIssuance.get(endpoint) === promise) credentialIssuance.delete(endpoint);
+    });
+    credentialIssuance.set(endpoint, promise);
+    return promise;
+  }
+
+  async function doEnsureCredential(endpoint: string): Promise<CloudCredential> {
     const store = deps.credentialsFor(endpoint);
     const installId = await ctx.write(() => ctx.repo().cloud.installId(deps.createId));
     const existing = await store.load();

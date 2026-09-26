@@ -124,6 +124,8 @@ export interface FakeJob {
   profileId: CloudProfileId;
   initialSfen: string;
   moves: string[];
+  /** Original submit body, for same-key input comparison on replay. */
+  request?: { profileId: string; initialSfen: string; moves: string[] };
   totalPlies: number;
   /** Number of positions processed server-side (results visible below this). */
   nextPly: number;
@@ -192,8 +194,15 @@ export function fakeCloud(options: FakeCloudOptions = {}) {
       options.createJobError?.(createCalls, body);
       const existing = jobs.get(body.idempotencyKey);
       if (existing) {
-        if (existing.status === 'completed' || existing.status === 'failed' || existing.status === 'cancelled') {
-          throw new CloudApiError(409, 'idempotency_key_in_use', 'already finished');
+        // Real backend (cloud/src/jobs.ts): same key + same input replays the
+        // existing job with HTTP 200 even after it finished; only a same-key
+        // DIFFERENT input is a 409 conflict.
+        const sameInput =
+          existing.request?.profileId === body.profileId &&
+          existing.request?.initialSfen === body.initialSfen &&
+          JSON.stringify(existing.request?.moves) === JSON.stringify(body.moves);
+        if (!sameInput) {
+          throw new CloudApiError(409, 'idempotency_key_in_use', 'different request body');
         }
         return { ...view(existing), idempotentReplay: true };
       }
@@ -207,6 +216,11 @@ export function fakeCloud(options: FakeCloudOptions = {}) {
         totalPlies: positions.length,
         nextPly: 0,
         status: 'queued',
+        request: {
+          profileId: body.profileId,
+          initialSfen: body.initialSfen,
+          moves: [...body.moves],
+        },
         results: positions.map((sfen, ply) => ({
           ply,
           sfen,

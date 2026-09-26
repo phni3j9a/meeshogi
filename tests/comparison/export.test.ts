@@ -148,6 +148,8 @@ function makeAttempt(
     validCount: game.positions.length,
     failureCode: null,
     failureMessage: null,
+    submitAttempted: false,
+    serverStatus: null,
     lastError: null,
     createdAt: '2026-09-30T00:00:00.000Z',
     updatedAt: '2026-09-30T00:05:00.000Z',

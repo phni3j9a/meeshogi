@@ -127,6 +127,7 @@ export default function GameScreen() {
   const [flipped, setFlipped] = useState(settings.boardFlip);
   const [focusedAnalysis, setFocusedAnalysis] = useState<PositionAnalysis | null>(null);
   const [focusBusy, setFocusBusy] = useState(false);
+  const [cloudStarting, setCloudStarting] = useState(false);
   const [error, setError] = useState('');
   const [rootHeight, setRootHeight] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -1050,6 +1051,7 @@ export default function GameScreen() {
                               : 'Cloud解析を開始'
                         }
                         disabled={
+                          cloudStarting ||
                           fullyAnalyzed ||
                           !cloudEndpoint() ||
                           game.moves.length > CLOUD_MAX_MOVES ||
@@ -1057,9 +1059,14 @@ export default function GameScreen() {
                           !!otherProfileActive
                         }
                         testID="cloud-start"
-                        onPress={() =>
-                          void startCloudAnalysis(id).catch((e) => setError(errorMessage(e)))
-                        }
+                        onPress={() => {
+                          // Block double-taps while the async start prepares
+                          // (credential issuance + attempt write).
+                          setCloudStarting(true);
+                          void startCloudAnalysis(id)
+                            .catch((e) => setError(errorMessage(e)))
+                            .finally(() => setCloudStarting(false));
+                        }}
                         icon={fullyAnalyzed ? 'check' : 'play'}
                       />
                       {attempt?.status === 'error' && attempt.jobId ? (

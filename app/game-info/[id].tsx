@@ -14,6 +14,7 @@ import {
 } from '@/domain/model';
 import { useAppStore } from '@/store/app-store';
 import { shareKif } from '@/platform/kif-files';
+import { attemptBlocksDelete, isActiveAttempt } from '@/cloud/contract';
 import {
   AppText,
   EmptyState,
@@ -34,8 +35,40 @@ export default function GameInfoScreen() {
   const updateGame = useAppStore((state) => state.updateGame);
   const updateOpening = useAppStore((state) => state.updateOpening);
   const deleteGame = useAppStore((state) => state.deleteGame);
+  const cloudAttempts = useAppStore((state) => state.cloudAttempts);
   const [error, setError] = useState('');
   const choose = useChoice();
+  const runDelete = (forgetCloud = false) =>
+    deleteGame(id, { forgetCloud })
+      .then(() => router.dismissTo('/'))
+      .catch((e) => {
+        // Deletion blocked by an unconfirmable Cloud request gets one explicit
+        // escape: forget the request locally while the server job may keep
+        // running. Only offered when nothing is actively pumping.
+        const blockers = cloudAttempts.filter(
+          (attempt) => attempt.gameId === id && attemptBlocksDelete(attempt),
+        );
+        if (
+          !forgetCloud &&
+          blockers.length > 0 &&
+          blockers.every((attempt) => !isActiveAttempt(attempt.status))
+        ) {
+          Alert.alert(
+            'Cloud解析の要求が残っています',
+            '接続先サーバーでは解析が継続している可能性があります。端末の棋譜とCloud要求の記録だけを削除します。サーバー側のジョブは取り消されません。',
+            [
+              { text: 'キャンセル', style: 'cancel' },
+              {
+                text: 'ローカルだけ削除',
+                style: 'destructive',
+                onPress: () => runDelete(true),
+              },
+            ],
+          );
+          return;
+        }
+        setError(errorMessage(e));
+      });
   if (!game)
     return <EmptyState title="棋譜が見つかりません" message="棋譜一覧から開き直してください。" />;
   const selectOpening = async (side: Side) => {
@@ -161,10 +194,7 @@ export default function GameInfoScreen() {
               {
                 text: '削除',
                 style: 'destructive',
-                onPress: () =>
-                  void deleteGame(id)
-                    .then(() => router.dismissTo('/'))
-                    .catch((e) => setError(errorMessage(e))),
+                onPress: () => void runDelete(),
               },
             ],
           )

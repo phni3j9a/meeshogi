@@ -37,6 +37,8 @@ type AttemptColumns = {
   failureCode: 'failure_code';
   failureMessage: 'failure_message';
   lastError: 'last_error';
+  submitAttempted: 'submit_attempted';
+  serverStatus: 'server_status';
   updatedAt: 'updated_at';
   finishedAt: 'finished_at';
 };
@@ -52,6 +54,8 @@ const ATTEMPT_COLUMNS: AttemptColumns = {
   failureCode: 'failure_code',
   failureMessage: 'failure_message',
   lastError: 'last_error',
+  submitAttempted: 'submit_attempted',
+  serverStatus: 'server_status',
   updatedAt: 'updated_at',
   finishedAt: 'finished_at',
 };
@@ -59,6 +63,7 @@ const ATTEMPT_COLUMNS: AttemptColumns = {
 function columnValue(field: keyof AttemptColumns, value: unknown): string | number | null {
   if (value === undefined || value === null) return null;
   if (field === 'resultCounts') return JSON.stringify(value);
+  if (field === 'submitAttempted') return value === true ? 1 : value === false ? 0 : fail(`${field} の値が不正です`);
   if (typeof value === 'string' || typeof value === 'number') return value;
   return fail(`${field} の値が不正です`);
 }
@@ -84,6 +89,12 @@ function decodeAttempt(row: Record<string, unknown>): CloudAttempt {
     typeof row.server_next_ply !== 'number' ||
     typeof row.received_count !== 'number' ||
     typeof row.valid_count !== 'number' ||
+    !(row.submit_attempted === 0 || row.submit_attempted === 1) ||
+    !(
+      row.server_status === null ||
+      (typeof row.server_status === 'string' &&
+        ['queued', 'running', 'completed', 'failed', 'cancelled'].includes(row.server_status))
+    ) ||
     typeof row.created_at !== 'string' ||
     typeof row.updated_at !== 'string'
   ) {
@@ -123,6 +134,11 @@ function decodeAttempt(row: Record<string, unknown>): CloudAttempt {
     failureCode: typeof row.failure_code === 'string' ? row.failure_code : null,
     failureMessage: typeof row.failure_message === 'string' ? row.failure_message : null,
     lastError: typeof row.last_error === 'string' ? row.last_error : null,
+    submitAttempted: row.submit_attempted === 1,
+    serverStatus:
+      typeof row.server_status === 'string'
+        ? (row.server_status as CloudAttempt['serverStatus'])
+        : null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     finishedAt: typeof row.finished_at === 'string' ? row.finished_at : null,
@@ -173,6 +189,8 @@ export class CloudRepository {
         failure_code TEXT,
         failure_message TEXT,
         last_error TEXT,
+        submit_attempted INTEGER NOT NULL DEFAULT 0,
+        server_status TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         finished_at TEXT
@@ -189,6 +207,19 @@ export class CloudRepository {
         result TEXT NOT NULL,
         PRIMARY KEY (attempt_id, ply)
       );`);
+    // Databases created before these columns existed get a guarded ALTER.
+    const columns = await this.db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(cloud_attempts)',
+    );
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has('submit_attempted')) {
+      await this.db.execAsync(
+        'ALTER TABLE cloud_attempts ADD COLUMN submit_attempted INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+    if (!names.has('server_status')) {
+      await this.db.execAsync('ALTER TABLE cloud_attempts ADD COLUMN server_status TEXT');
+    }
   }
 
   async metaGet(key: string): Promise<string | null> {
@@ -222,8 +253,9 @@ export class CloudRepository {
         attempt_id, game_id, game_identity, profile_id, endpoint, install_id, owner_id,
         idempotency_key, initial_sfen, moves_json, total_plies, job_id, status,
         receive_after_ply, server_next_ply, result_counts, received_count, valid_count,
-        failure_code, failure_message, last_error, created_at, updated_at, finished_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        failure_code, failure_message, last_error, submit_attempted, server_status,
+        created_at, updated_at, finished_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       attempt.attemptId,
       attempt.gameId,
       attempt.gameIdentity,
@@ -245,6 +277,8 @@ export class CloudRepository {
       attempt.failureCode,
       attempt.failureMessage,
       attempt.lastError,
+      (attempt.submitAttempted ?? false) ? 1 : 0,
+      attempt.serverStatus ?? null,
       attempt.createdAt,
       attempt.updatedAt,
       attempt.finishedAt,

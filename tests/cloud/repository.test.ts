@@ -32,6 +32,8 @@ function attempt(overrides: Partial<CloudAttempt> = {}): CloudAttempt {
     failureCode: null,
     failureMessage: null,
     lastError: null,
+    submitAttempted: false,
+    serverStatus: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     finishedAt: null,
