@@ -319,6 +319,103 @@ describe('計測の分類と provenance', () => {
 
 type CloudMethodExportForTest = { timing: { createdAt: string | null; finishedAt: string | null; completion: string } };
 
+describe('review fixes FP-007/008/009', () => {
+  it('FP-007: 局面ごとの比較行を summary の plyRows に残す', () => {
+    const data = makeExport(2, (ply, sfen) => ({
+      sekirei: completeResult(sfen, cp(123 + ply), [cand('7g7f', cp(123 + ply))]),
+      'cloud-precision': completeResult(sfen, cp(100), [cand('7g7f', cp(100))]),
+    }));
+    const s = pair(data, 'sekirei');
+    expect(s.plyRows).toHaveLength(2);
+    expect(s.plyRows[0]).toEqual({
+      ply: 0,
+      sfen: 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1',
+      compared: {
+        status: 'complete',
+        sfen: 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1',
+        evaluation: { kind: 'cp', value: 123 },
+      },
+      reference: {
+        status: 'complete',
+        sfen: 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1',
+        evaluation: { kind: 'cp', value: 100 },
+      },
+      cpDiff: 23,
+      cpAbsDiff: 23,
+      exclusion: null,
+    });
+    expect(s.plyRows[1].cpDiff).toBe(24);
+
+    // missing・incomplete・SFEN不一致・absent も理由付きで行を残す
+    const mixed = makeExport(4, (ply, sfen) => ({
+      ...(ply === 3 ? {} : { sekirei: completeResult(sfen, cp(10), [cand('7g7f', cp(10))]) }),
+      'cloud-precision':
+        ply === 0
+          ? { status: 'missing' }
+          : ply === 1
+            ? { status: 'incomplete', sfen }
+            : completeResult(sfen, cp(0), [cand('7g7f', cp(0))]),
+    }));
+    // ply2 の比較側 sfen を別局面へ
+    const row = mixed.plies[2].results.sekirei;
+    if (row) row.sfen = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 99';
+    const rows = pair(mixed, 'sekirei').plyRows;
+    expect(rows.map((r) => r.exclusion)).toEqual([
+      'missing-reference',
+      'incomplete-reference',
+      'sfen-mismatch',
+      'missing-compared',
+    ]);
+    expect(rows[3].compared.status).toBe('absent');
+    expect(rows[3].cpDiff).toBeNull();
+    // 合算 summary には plyRows を付けない（別棋譜の ply が衝突するため）
+    const pooled = aggregateAll([
+      { source: 'a.json', data },
+      { source: 'b.json', data: structuredClone(data) },
+    ]);
+    expect(pooled.overall.comparisons.find((c) => c.method === 'sekirei')!.plyRows).toEqual([]);
+  });
+
+  it('FP-008: SFEN不一致の行を表示値系列でも欠測にして件数を残す', () => {
+    const data = makeExport(2, (ply, sfen) => ({
+      sekirei: completeResult(sfen, cp(ply * 100), [cand('7g7f', cp(ply * 100))]),
+      'cloud-precision': completeResult(sfen, cp(0), [cand('7g7f', cp(0))]),
+    }));
+    const row = data.plies[1].results.sekirei;
+    if (row) row.sfen = data.plies[0].sfen; // ply1 の結果が ply0 の局面を報告
+    const summary = summaryOf(data);
+    const v = summary.volatility.find((x) => x.method === 'sekirei')!;
+    // 旧実装は不一致行を有効値として使い validPlies=2・隣接差1件だった
+    expect(v.sfenMismatchRows).toBe(1);
+    expect(v.validPlies).toBe(1);
+    expect(v.adjacentAbsDiff.count).toBe(0);
+    // pair 比較側はこれまでどおり除外として数える
+    expect(summary.comparisons[0].coverage.sfenMismatch).toBe(1);
+    // 合算側でも同じ規則
+    const pooled = aggregateAll([
+      { source: 'a.json', data },
+      { source: 'b.json', data: structuredClone(data) },
+    ]).overall;
+    const pv = pooled.volatility.find((x) => x.method === 'sekirei')!;
+    expect(pv.sfenMismatchRows).toBe(2);
+    expect(pv.adjacentAbsDiff.count).toBe(0);
+  });
+
+  it('FP-009: 結果行なしを missing（内訳 absent）に数え、方式表の合計を局面数にする', () => {
+    const data = makeExport(3, (ply, sfen) => ({
+      'cloud-precision': completeResult(sfen, cp(0), [cand('7g7f', cp(0))]),
+      ...(ply === 0 ? { sekirei: completeResult(sfen, cp(5), [cand('7g7f', cp(5))]) } : {}),
+      ...(ply === 1 ? { sekirei: { status: 'missing' as const } } : {}),
+    }));
+    const counts = summaryOf(data).methods.sekirei.statusCounts;
+    // 旧実装は行なしを捨てて missing=1、合計が局面数に届かなかった
+    expect(counts.complete).toBe(1);
+    expect(counts.missing).toBe(2); // 明示missing 1 + 行なし 1
+    expect(counts.absent).toBe(1); // 「行なし」の内訳を区別できる
+    expect(counts.complete + counts.incomplete + counts.terminal + counts.missing).toBe(3);
+  });
+});
+
 describe('複数 export の合算', () => {
   it('pair を export 間で pool し、reference 不在の export は比較しない', () => {
     const a = makeExport(3, (ply, sfen) => ({

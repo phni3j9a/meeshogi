@@ -5,6 +5,9 @@ import {
   type ExportSummary,
   type MethodTimingSummary,
   type PairwiseSummary,
+  type PlyComparisonRow,
+  type PlyExclusion,
+  type PlySideView,
   type Ratio,
   type Stats,
 } from './aggregate.ts';
@@ -94,6 +97,64 @@ function runKindLabel(t: MethodTimingSummary): string {
   }
 }
 
+const EXCLUSION_LABELS: Record<PlyExclusion, string> = {
+  'missing-both': '双方欠測',
+  'missing-compared': '比較側欠測',
+  'missing-reference': 'reference欠測',
+  'incomplete-both': '双方incomplete',
+  'incomplete-compared': '比較側incomplete',
+  'incomplete-reference': 'reference incomplete',
+  'sfen-mismatch': 'SFEN不一致',
+  'terminal-mismatch': '片側のみ終局',
+};
+
+/** 1方式側の生評価を短く表示する（mate/terminal を cp に換算しない）。 */
+function fmtSideEval(side: PlySideView): string {
+  if (side.status === 'absent') return '行なし';
+  if (side.status === 'missing') return 'missing';
+  if (side.status === 'incomplete') return 'incomplete';
+  if (side.status === 'terminal') {
+    if (side.terminal?.kind === 'checkmate') {
+      return `詰み終局・${side.terminal.winner === 'black' ? '先手' : '後手'}`;
+    }
+    return '合法手なし終局';
+  }
+  const evaluation = side.evaluation;
+  if (!evaluation) return '?';
+  if (evaluation.kind === 'cp') return `${evaluation.value > 0 ? '+' : ''}${evaluation.value}`;
+  if (evaluation.winner === 'unknown') return 'mate(不明)';
+  return `${evaluation.value > 0 ? '+' : '-'}M${Math.abs(evaluation.value)}`;
+}
+
+/** ply 別の行を出す（完全な SFEN は JSON に残し、表では盤面フィールドを短いキーにする）。 */
+function renderPlyRows(rows: PlyComparisonRow[]): string[] {
+  if (rows.length === 0) return [];
+  const lines: string[] = [];
+  lines.push(
+    '##### ply 別の評価値（生値は先手視点。Δ は両側が有効な cp のときだけ、それ以外は除外/欠測理由）',
+    '',
+    '| ply | 局面 | 比較側 | reference | Δ | \\|Δ\\| | 状態 |',
+    '|---:|---|---|---|---:|---:|---|',
+  );
+  for (const row of rows) {
+    const sfenKey = `\`${row.sfen.split(' ')[0]}\``;
+    const reason =
+      row.exclusion !== null
+        ? EXCLUSION_LABELS[row.exclusion]
+        : row.compared.evaluation && row.reference.evaluation &&
+            row.compared.evaluation.kind !== row.reference.evaluation.kind
+          ? '種別不一致（cp×mate）'
+          : '—';
+    lines.push(
+      `| ${row.ply} | ${sfenKey} | ${fmtSideEval(row.compared)} | ${fmtSideEval(row.reference)} | ` +
+        `${row.cpDiff !== null ? (row.cpDiff > 0 ? `+${row.cpDiff}` : String(row.cpDiff)) : '—'} | ` +
+        `${row.cpAbsDiff ?? '—'} | ${reason} |`,
+    );
+  }
+  lines.push('');
+  return lines;
+}
+
 function renderPairwise(heading: string, c: PairwiseSummary): string[] {
   const cov = c.coverage;
   const lines: string[] = [];
@@ -139,6 +200,7 @@ function renderPairwise(heading: string, c: PairwiseSummary): string[] {
     );
   }
   lines.push('');
+  lines.push(...renderPlyRows(c.plyRows));
   return lines;
 }
 
@@ -183,10 +245,24 @@ function renderExportSection(e: ExportSummary, index: number): string[] {
       lines.push(`| ${METHOD_LABELS[method]} | 未実行 | – | – | – | – | — | — |`);
       continue;
     }
+    const missingCell =
+      counts.statusCounts.absent > 0
+        ? `${counts.statusCounts.missing}（行なし ${counts.statusCounts.absent}）`
+        : `${counts.statusCounts.missing}`;
     lines.push(
       `| ${METHOD_LABELS[method]} | \`${counts.attemptId ?? '?'}\` | ${counts.statusCounts.complete} | ` +
-        `${counts.statusCounts.incomplete} | ${counts.statusCounts.terminal} | ${counts.statusCounts.missing} | ` +
+        `${counts.statusCounts.incomplete} | ${counts.statusCounts.terminal} | ${missingCell} | ` +
         `${counts.detail ? methodConditions(counts.detail) : '—'} | ${counts.detail ? methodIdentity(counts.detail) : '—'} |`,
+    );
+  }
+  if (
+    COMPARISON_METHODS.some(
+      (method) => e.methods[method].present && e.methods[method].statusCounts.absent > 0,
+    )
+  ) {
+    lines.push(
+      '',
+      '- missing は明示 missing 行と結果行なし（行なし N）の合計。方式ごとの合計は局面数に一致する。',
     );
   }
   lines.push('');
@@ -198,9 +274,19 @@ function renderExportSection(e: ExportSummary, index: number): string[] {
     lines.push(...renderPairwise(METHOD_LABELS[c.method], c));
   }
 
+  const anySfenMismatch = e.volatility.some((v) => v.sfenMismatchRows > 0);
   lines.push(
     '#### グラフ変動（アプリの表示値・±1500 clip と mate/terminal 写像を適用。正しさではなく画面の見え方の変動量）',
     '',
+    ...(anySfenMismatch
+      ? [
+          `結果側 SFEN が行と異なり欠測として扱った行: ${e.volatility
+            .filter((v) => v.sfenMismatchRows > 0)
+            .map((v) => `${METHOD_LABELS[v.method]} ${v.sfenMismatchRows}`)
+            .join('・')}`,
+          '',
+        ]
+      : []),
     ...renderVolatilityTable(e.volatility),
     '',
   );

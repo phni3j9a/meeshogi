@@ -1,4 +1,4 @@
-import { displayChartSeries } from './chart-value.ts';
+import { toDisplayChartValue } from './chart-value.ts';
 import {
   COMPARISON_METHODS,
   COMPARED_METHODS,
@@ -6,8 +6,11 @@ import {
   type CloudMethodExport,
   type ComparisonExport,
   type ComparisonMethod,
+  type ExportScore,
+  type ExportTerminal,
   type MethodExport,
   type PlyResult,
+  type PlyStatus,
   type SekireiMethodExport,
 } from './schema.ts';
 
@@ -94,6 +97,19 @@ interface PairObs {
   ply: number;
   phase: PhaseId;
   kind: PairKind;
+  /** 行（棋譜）側の局面 SFEN。 */
+  rowSfen: string;
+  /** 'absent' = 結果行自体が無い（宣言済み方式の欠落）。'missing' と区別する。 */
+  cmpStatus: PlyStatus | 'absent';
+  refStatus: PlyStatus | 'absent';
+  /** 結果ソースが報告した sfen（不一致検出の証跡用）。 */
+  cmpSfen?: string;
+  refSfen?: string;
+  /** status==='complete' の生評価（先手視点）。 */
+  cmpEvaluation?: ExportScore;
+  refEvaluation?: ExportScore;
+  cmpTerminal?: ExportTerminal;
+  refTerminal?: ExportTerminal;
   /** kind==='missing' のときの欠測側。 */
   missingSide?: 'both' | 'compared' | 'reference';
   /** kind==='incomplete' のときの欠測側。 */
@@ -130,12 +146,24 @@ function collectPair(
   rowSfen: string,
 ): PairObs {
   const phase = phaseOfPly(ply);
+  const base = {
+    ply,
+    phase,
+    rowSfen,
+    cmpStatus: cmp?.status ?? ('absent' as const),
+    refStatus: ref?.status ?? ('absent' as const),
+    cmpSfen: cmp?.sfen,
+    refSfen: ref?.sfen,
+    cmpEvaluation: cmp?.status === 'complete' ? cmp.evaluation : undefined,
+    refEvaluation: ref?.status === 'complete' ? ref.evaluation : undefined,
+    cmpTerminal: cmp?.status === 'terminal' ? cmp.terminal : undefined,
+    refTerminal: ref?.status === 'terminal' ? ref.terminal : undefined,
+  };
   const cmpMissing = !cmp || cmp.status === 'missing';
   const refMissing = !ref || ref.status === 'missing';
   if (cmpMissing || refMissing) {
     return {
-      ply,
-      phase,
+      ...base,
       kind: 'missing',
       missingSide: cmpMissing && refMissing ? 'both' : cmpMissing ? 'compared' : 'reference',
     };
@@ -145,12 +173,11 @@ function collectPair(
     (cmp.sfen !== undefined && cmp.sfen !== rowSfen) ||
     (ref.sfen !== undefined && ref.sfen !== rowSfen)
   ) {
-    return { ply, phase, kind: 'sfen-mismatch' };
+    return { ...base, kind: 'sfen-mismatch' };
   }
   if (cmp.status === 'incomplete' || ref.status === 'incomplete') {
     return {
-      ply,
-      phase,
+      ...base,
       kind: 'incomplete',
       comparedIncomplete: cmp.status === 'incomplete',
       referenceIncomplete: ref.status === 'incomplete',
@@ -159,17 +186,16 @@ function collectPair(
   if (cmp.status === 'terminal' || ref.status === 'terminal') {
     if (cmp.status === 'terminal' && ref.status === 'terminal') {
       return {
-        ply,
-        phase,
+        ...base,
         kind: 'terminal-terminal',
         terminalKindAgree: cmp.terminal?.kind === ref.terminal?.kind,
         terminalWinnerAgree: cmp.terminal?.winner === ref.terminal?.winner,
       };
     }
-    return { ply, phase, kind: 'terminal-mismatch' };
+    return { ...base, kind: 'terminal-mismatch' };
   }
   // complete × complete
-  const obs: PairObs = { ply, phase, kind: 'complete-complete' };
+  const obs: PairObs = { ...base, kind: 'complete-complete' };
   if (isComplete(cmp) && isComplete(ref)) {
     const cmpTop = cmp.candidates?.[0];
     const refTop = ref.candidates?.[0];
@@ -218,6 +244,93 @@ export interface PhaseMetrics {
   bestMoveInclusion: Ratio;
 }
 
+/** ply 行が品質分母から外れた理由。null = 比較可能（complete×complete / terminal×terminal）。 */
+export type PlyExclusion =
+  | 'missing-both'
+  | 'missing-compared'
+  | 'missing-reference'
+  | 'incomplete-both'
+  | 'incomplete-compared'
+  | 'incomplete-reference'
+  | 'sfen-mismatch'
+  | 'terminal-mismatch';
+
+/** 1方式側の生の見え方。'absent' は結果行自体が無い（missing と区別する内訳）。 */
+export interface PlySideView {
+  status: PlyStatus | 'absent';
+  /** 結果ソースが報告した sfen（行 sfen と異なる場合の証跡）。 */
+  sfen?: string;
+  /** status==='complete' の生評価（先手視点。cp または mate{value,winner}）。 */
+  evaluation?: ExportScore;
+  /** status==='terminal' の終局情報。 */
+  terminal?: ExportTerminal;
+}
+
+/**
+ * 局面ごとの比較行（Plan §5「局面ごとの先手視点CP差と絶対差」）。
+ * mate/terminal を cp に換算しない。両側が有効な cp のときだけ cpDiff/cpAbsDiff を持つ。
+ */
+export interface PlyComparisonRow {
+  ply: number;
+  /** 行（棋譜）側の局面 SFEN（完全な文字列）。 */
+  sfen: string;
+  compared: PlySideView;
+  reference: PlySideView;
+  cpDiff: number | null;
+  cpAbsDiff: number | null;
+  exclusion: PlyExclusion | null;
+}
+
+function exclusionOf(obs: PairObs): PlyExclusion | null {
+  switch (obs.kind) {
+    case 'missing':
+      return obs.missingSide === 'both'
+        ? 'missing-both'
+        : obs.missingSide === 'compared'
+          ? 'missing-compared'
+          : 'missing-reference';
+    case 'incomplete':
+      return obs.comparedIncomplete && obs.referenceIncomplete
+        ? 'incomplete-both'
+        : obs.comparedIncomplete
+          ? 'incomplete-compared'
+          : 'incomplete-reference';
+    case 'sfen-mismatch':
+      return 'sfen-mismatch';
+    case 'terminal-mismatch':
+      return 'terminal-mismatch';
+    default:
+      return null;
+  }
+}
+
+function sideView(
+  status: PlyStatus | 'absent',
+  sfen: string | undefined,
+  evaluation: ExportScore | undefined,
+  terminal: ExportTerminal | undefined,
+): PlySideView {
+  return {
+    status,
+    ...(sfen !== undefined ? { sfen } : {}),
+    ...(evaluation !== undefined ? { evaluation } : {}),
+    ...(terminal !== undefined ? { terminal } : {}),
+  };
+}
+
+/** PairObs → 局面別の比較行。 ply 順は入力の plies 順（validator が ply===index を保証）。 */
+function pairToPlyRow(obs: PairObs): PlyComparisonRow {
+  return {
+    ply: obs.ply,
+    sfen: obs.rowSfen,
+    compared: sideView(obs.cmpStatus, obs.cmpSfen, obs.cmpEvaluation, obs.cmpTerminal),
+    reference: sideView(obs.refStatus, obs.refSfen, obs.refEvaluation, obs.refTerminal),
+    cpDiff: obs.cpDiff ?? null,
+    cpAbsDiff: obs.cpDiff !== undefined ? Math.abs(obs.cpDiff) : null,
+    exclusion: exclusionOf(obs),
+  };
+}
+
 export interface PairwiseSummary {
   /** 比較される側の方式（reference は常に cloud-precision）。 */
   method: ComparisonMethod;
@@ -248,6 +361,11 @@ export interface PairwiseSummary {
     oneSidedPairs: number;
   };
   byPhase: Record<PhaseId, PhaseMetrics>;
+  /**
+   * 局面ごとの比較行（ply 昇順・決定的）。export 単位の summary にのみ付ける。
+   * 複数 export の合算では別棋譜の ply が衝突するため空配列。
+   */
+  plyRows: PlyComparisonRow[];
 }
 
 function summarizePairs(
@@ -255,6 +373,7 @@ function summarizePairs(
   pairs: PairObs[],
   plies: number,
   requestedCandidates: number | null,
+  includePlyRows: boolean,
 ): PairwiseSummary {
   const complete = pairs.filter((p) => p.kind === 'complete-complete' && p.top1Equal !== undefined);
   const cpPairs = complete.filter((p) => p.cpDiff !== undefined);
@@ -338,6 +457,7 @@ function summarizePairs(
       oneSidedPairs: pairs.filter((p) => p.kind === 'terminal-mismatch').length,
     },
     byPhase,
+    plyRows: includePlyRows ? pairs.map(pairToPlyRow) : [],
   };
 }
 
@@ -351,17 +471,39 @@ export interface VolatilitySummary {
   method: ComparisonMethod;
   /** 表示値が有効な ply 数。 */
   validPlies: number;
+  /** 結果側 sfen が行 sfen と異なり null 化した行数（pair 比較と同じ除外規則）。 */
+  sfenMismatchRows: number;
   /** 両端が有効な隣接 ply 対の |Δ表示値|（±1500 clip 済みの表示値）。欠測区間は橋接しない。 */
   adjacentAbsDiff: Stats;
   /** 隣接対は先頭 ply の区分に入れる。 */
   byPhase: Record<PhaseId, { pairs: number; adjacentAbsDiff: Stats }>;
 }
 
+/**
+ * 方式別の表示値系列。結果側 sfen が行 sfen と異なる行は、アプリがその結果を
+ * 表示対象から外すのと同じ規則で null にする（別局面の評価を隣接差に使わない）。
+ */
+function methodDisplaySeries(
+  data: ComparisonExport,
+  method: ComparisonMethod,
+): { series: (number | null)[]; sfenMismatchRows: number } {
+  let sfenMismatchRows = 0;
+  const series = data.plies.map((row) => {
+    const result = row.results[method];
+    if (result !== undefined && result.sfen !== undefined && result.sfen !== row.sfen) {
+      sfenMismatchRows += 1;
+      return null;
+    }
+    return toDisplayChartValue(result);
+  });
+  return { series, sfenMismatchRows };
+}
+
 function summarizeVolatility(
   method: ComparisonMethod,
   series: (number | null)[],
   plies: number[],
-): VolatilitySummary {
+): Omit<VolatilitySummary, 'sfenMismatchRows'> {
   const diffs: { ply: number; diff: number }[] = [];
   for (let i = 0; i + 1 < series.length; i++) {
     const a = series[i];
@@ -505,7 +647,18 @@ function summarizeTiming(
 export interface MethodStatusCounts {
   present: boolean;
   attemptId: string | null;
-  statusCounts: { complete: number; incomplete: number; terminal: number; missing: number };
+  /**
+   * 宣言済み方式の全 ply 走査カウント。合計は必ず棋譜の局面数（plies.length）になる。
+   * `missing` は明示 'missing' 行と結果行なし（absent）の合算、`absent` はその内訳。
+   */
+  statusCounts: {
+    complete: number;
+    incomplete: number;
+    terminal: number;
+    missing: number;
+    /** missing のうち結果行自体が無い ply 数（明示 missing と区別する）。 */
+    absent: number;
+  };
   /** 方式レベルの export 記録（条件・identity・timing 入力）。未実行なら null。 */
   detail: MethodExport | null;
 }
@@ -558,18 +711,19 @@ export function aggregateExport(
 ): ExportSummary {
   const methods = {} as Record<ComparisonMethod, MethodStatusCounts>;
   for (const method of COMPARISON_METHODS) {
-    const rows = data.plies
-      .map((row) => row.results[method])
-      .filter((r): r is PlyResult => r !== undefined);
+    // 宣言済み方式は全 ply を走査し、結果行なし（undefined）も missing に数える。
+    const rows = data.plies.map((row) => row.results[method]);
+    const absent = rows.filter((r) => r === undefined).length;
     methods[method] = {
       present: data.methods[method] !== undefined,
       attemptId: data.methods[method]?.attemptId ?? null,
       detail: data.methods[method] ?? null,
       statusCounts: {
-        complete: rows.filter((r) => r.status === 'complete').length,
-        incomplete: rows.filter((r) => r.status === 'incomplete').length,
-        terminal: rows.filter((r) => r.status === 'terminal').length,
-        missing: rows.filter((r) => r.status === 'missing').length,
+        complete: rows.filter((r) => r?.status === 'complete').length,
+        incomplete: rows.filter((r) => r?.status === 'incomplete').length,
+        terminal: rows.filter((r) => r?.status === 'terminal').length,
+        missing: rows.filter((r) => r === undefined || r.status === 'missing').length,
+        absent,
       },
     };
   }
@@ -584,6 +738,7 @@ export function aggregateExport(
           collectCoveragePairs(data, method),
           data.plies.length,
           requestedCandidateCount(data, method),
+          true,
         ),
       );
     }
@@ -592,14 +747,15 @@ export function aggregateExport(
   const volatility: VolatilitySummary[] = [];
   for (const method of COMPARISON_METHODS) {
     if (data.methods[method] === undefined) continue;
-    const series = displayChartSeries(data.plies.map((row) => row.results[method] ?? null));
-    volatility.push(
-      summarizeVolatility(
+    const { series, sfenMismatchRows } = methodDisplaySeries(data, method);
+    volatility.push({
+      ...summarizeVolatility(
         method,
         series,
         data.plies.map((row) => row.ply),
       ),
-    );
+      sfenMismatchRows,
+    });
   }
 
   const timing = COMPARISON_METHODS.map((method) => summarizeTiming(data, method)).filter(
@@ -633,7 +789,10 @@ export function aggregateAll(
   );
 
   const pooledPairs = new Map<ComparisonMethod, PairObs[]>();
-  const pooledVolatility = new Map<ComparisonMethod, { ply: number; diff: number }[]>();
+  const pooledVolatility = new Map<
+    ComparisonMethod,
+    { diffs: { ply: number; diff: number }[]; sfenMismatchRows: number }
+  >();
   let exportsWithReference = 0;
 
   for (const input of inputs) {
@@ -641,7 +800,8 @@ export function aggregateAll(
     if (data.methods[REFERENCE_METHOD] !== undefined) exportsWithReference += 1;
     for (const method of COMPARISON_METHODS) {
       if (data.methods[method] === undefined) continue;
-      const series = displayChartSeries(data.plies.map((row) => row.results[method] ?? null));
+      // per-export と同じ規則で SFEN 不一致行を null 化してから隣接差を取る。
+      const { series, sfenMismatchRows } = methodDisplaySeries(data, method);
       const diffs: { ply: number; diff: number }[] = [];
       for (let i = 0; i + 1 < series.length; i++) {
         if (series[i] === null || series[i + 1] === null) continue;
@@ -650,9 +810,10 @@ export function aggregateAll(
           diff: Math.abs((series[i + 1] as number) - (series[i] as number)),
         });
       }
-      const list = pooledVolatility.get(method) ?? [];
-      list.push(...diffs);
-      pooledVolatility.set(method, list);
+      const entry = pooledVolatility.get(method) ?? { diffs: [], sfenMismatchRows: 0 };
+      entry.diffs.push(...diffs);
+      entry.sfenMismatchRows += sfenMismatchRows;
+      pooledVolatility.set(method, entry);
     }
     if (data.methods[REFERENCE_METHOD] === undefined) continue;
     for (const method of COMPARED_METHODS) {
@@ -668,13 +829,15 @@ export function aggregateAll(
     const pairs = pooledPairs.get(method);
     if (!pairs || pairs.length === 0) continue;
     // requested は export ごとに異なり得るため全体集計では null（export 単位の表を参照）。
-    comparisons.push(summarizePairs(method, pairs, pairs.length, null));
+    // 局面別行も export 単位でのみ意味を持つため合算では作らない。
+    comparisons.push(summarizePairs(method, pairs, pairs.length, null, false));
   }
 
   const volatility: VolatilitySummary[] = [];
   for (const method of COMPARISON_METHODS) {
-    const diffs = pooledVolatility.get(method);
-    if (!diffs) continue;
+    const pooled = pooledVolatility.get(method);
+    if (!pooled) continue;
+    const diffs = pooled.diffs;
     const validPlies = exports.reduce(
       (sum, e) => sum + (e.volatility.find((v) => v.method === method)?.validPlies ?? 0),
       0,
@@ -690,6 +853,7 @@ export function aggregateAll(
     volatility.push({
       method,
       validPlies,
+      sfenMismatchRows: pooled.sfenMismatchRows,
       adjacentAbsDiff: stats(diffs.map((d) => d.diff)),
       byPhase,
     });
