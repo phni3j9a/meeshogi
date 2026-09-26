@@ -36,24 +36,36 @@ env:
     commands:
       # Route the share through the CI helper so the JSON bytes also land in
       # /sdcard/Download/meeshogi-comparison.json (Release builds have no
-      # run-as access to the app cache).
+      # run-as access to the app cache). The collapsed sharesheet truncates
+      # long labels, so match a prefix; expansion can need several swipes with
+      # a settle between each (a single fling can overshoot the row).
       - repeat:
-          times: 4
+          times: 8
           while:
-            notVisible: Meeshogi Export Test
+            notVisible: 'Meeshogi Export.*'
           commands:
             - swipe:
                 start: 50%, 90%
-                end: 50%, 65%
+                end: 50%, 55%
+            - waitForAnimationToEnd
       - runFlow:
           when:
-            visible: Meeshogi Export Test
+            visible: 'Meeshogi Export.*'
           commands:
-            - tapOn: Meeshogi Export Test
+            - tapOn: 'Meeshogi Export.*'
             - extendedWaitUntil:
                 visible:
                   id: game-screen
                 timeout: 30000
+      - runFlow:
+          when:
+            notVisible: 'Meeshogi Export.*'
+          commands:
+            # The helper target never appeared — capture the sheet state for
+            # diagnosis, dismiss it, and fail loudly on the next assert.
+            - takeScreenshot: c71b-export-share-target-missing
+            - pressKey: back
+            - assertVisible: 'Meeshogi Export Test target was visible'
 - runFlow:
     when:
       platform: iOS

@@ -175,45 +175,57 @@ run_flow background-review .maestro/background-review.yaml
 # --- Issue #22 cloud acceptance (opt-in; see flow_requested above) ---------
 # Requires a Release APK bundled with EXPO_PUBLIC_CLOUD_ENDPOINT=<staging>
 # and EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1. Runs against staging with real
-# Free/Precision quota.
+# Free/Precision quota. Unlike the deterministic local flows, cloud flows hit
+# live staging quota — a transient server busy (retry_exhausted) must not
+# fail-fast the rest of the block, so each failure is recorded and the run
+# continues; junit + cloud/failures.txt carry the per-flow outcome and the
+# script still exits nonzero at the end if any cloud flow failed.
 mkdir -p "$run_dir/cloud"
+cloud_failed=()
+cloud_run() {
+  local name=$1 flow=$2
+  if ! run_flow "$name" "$flow"; then
+    cloud_failed+=("$name")
+    echo "flow.failed $name" | tee -a "$run_dir/cloud/failures.txt"
+  fi
+}
 if flow_requested cloud-method-picker; then
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/picker-before.txt" || true
-  run_flow cloud-method-picker .maestro/cloud-method-picker.yaml
+  cloud_run cloud-method-picker .maestro/cloud-method-picker.yaml
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/picker-after.txt" || true
 fi
 # cloud-cancel runs FIRST: it starts attempt #1 and cancels it while the job
 # is live (a completed Free job would make cloud-start disabled), then
 # cloud-free-start creates attempt #2 ('再試行') which interruptions exercise.
 if flow_requested cloud-cancel; then
-  run_flow cloud-cancel .maestro/cloud-cancel.yaml
+  cloud_run cloud-cancel .maestro/cloud-cancel.yaml
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/cancel-after.txt" || true
 fi
 if flow_requested cloud-free-start; then
-  run_flow cloud-free-start .maestro/cloud-free-start.yaml
+  cloud_run cloud-free-start .maestro/cloud-free-start.yaml
 fi
 if flow_requested cloud-interruptions; then
   bash scripts/ci/cloud-interruption.sh android "$run_dir" \
     || echo 'cloud-interruption.sh reported failures — see cloud/summary.txt' >&2
 fi
 if flow_requested cloud-free-verify; then
-  run_flow cloud-free-verify .maestro/cloud-free-verify.yaml
+  cloud_run cloud-free-verify .maestro/cloud-free-verify.yaml
 fi
 if flow_requested cloud-branch-local; then
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/branch-before.txt" || true
-  run_flow cloud-branch-local .maestro/cloud-branch-local.yaml
+  cloud_run cloud-branch-local .maestro/cloud-branch-local.yaml
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/branch-after.txt" || true
 fi
 if flow_requested cloud-precision-denied; then
-  run_flow cloud-precision-denied .maestro/cloud-precision-denied.yaml
+  cloud_run cloud-precision-denied .maestro/cloud-precision-denied.yaml
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/precision-denied.txt" || true
 fi
 if flow_requested cloud-precision-run; then
-  run_flow cloud-precision-run .maestro/cloud-precision-run.yaml
+  cloud_run cloud-precision-run .maestro/cloud-precision-run.yaml
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/precision-run.txt" || true
 fi
 if flow_requested cloud-export; then
-  run_flow cloud-export .maestro/cloud-export.yaml
+  cloud_run cloud-export .maestro/cloud-export.yaml
   adb pull /sdcard/Download/meeshogi-comparison.json "$run_dir/comparison-export.json" \
     || echo 'comparison export not in /sdcard/Download (helper share step did not run?)' >&2
 fi
@@ -247,5 +259,9 @@ if (( grep_status == 0 )); then
 fi
 if (( grep_status > 1 )); then
   echo "grep failed while checking $fatal_logcat (status $grep_status)" >&2
+  exit 1
+fi
+if ((${#cloud_failed[@]})); then
+  printf 'cloud flows failed: %s (see cloud/failures.txt and junit)\n' "${cloud_failed[*]}" >&2
   exit 1
 fi
