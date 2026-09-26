@@ -2,7 +2,7 @@
 
 2026-09-25〜26に、Issue #19のstaging Cloudflare Worker + Containerで、同じYaneuraOu + Suisho11 Plus（private image、build `faae69bfa42245ea9820cdf0b3420d95`、git `c6d5b52`）を使い、探索条件ごとの品質・時間・推定コストを実測した。**このレポートは判断材料であり、製品profileはまだ決めていない。** ユーザーが承認した値だけを後続Issue（#21以降）へ渡す。
 
-全条件の集計表は[`cloud/bench/results/issue-20/aggregate.md`](../cloud/bench/results/issue-20/aggregate.md)、機械可読版は同じディレクトリの`aggregate.json.xz`に置いた。測定手順と再実行コマンドは[`cloud/README.md`](../cloud/README.md#issue-20-benchmark-mode)にある。
+全条件の集計表は[`cloud/bench/results/issue-20/aggregate.md`](../cloud/bench/results/issue-20/aggregate.md)、機械可読版は同じディレクトリの`aggregate.json.xz`に置いた。この2つの元になった測定rawも、公開用に置き換えたうえで`raw-issue20.jsonl.xz`として同じ場所に置いている。測定手順と再実行コマンドは[`cloud/README.md`](../cloud/README.md#issue-20-benchmark-mode)にある。
 
 ## 結論（判断用の要約）
 
@@ -202,13 +202,17 @@ Cloudflareの公開料率（2026-09-25確認）から計算したgross額で、�
 - idle状態からの復帰時間と、engineを常駐させた場合の時間は測っていない。
 - Hashは64 MiBの1条件だけ。MultiPV 1、Threads 3以上、standard-4は比較していない。
 - 測定はstaging環境での値である。production、アプリへの組み込み、課金画面はこのIssueの範囲外である。
-- 測定のraw JSONLは、staging Workerのホスト名が改ざん検知用のfingerprintに含まれているため、公開リポジトリには入れていない。ローカルに保管している。`aggregate.md`と`aggregate.json.xz`はこのrawから作った集計である。
+- 公開した`raw-issue20.jsonl.xz`は、元のrawのうちrun開始時のfingerprintにある`endpoint`（stagingのホスト名）と`imageRef`（Cloudflareのaccount IDを含む）だけを固定の値に置き換えたものである。
+  - 置き換えた値はそれぞれ`https://staging.invalid`と`registry.invalid/meeshogi-analysis@sha256:<image digest>`で、image digestはそのまま残している。
+  - 置き換えに合わせてfingerprintのhashを計算し直した（`cloud/bench/sanitize_raw.py`）。それ以外の行と測定値は変えていない。
+  - `aggregate.md`と`aggregate.json.xz`は、この公開rawから作った集計である。元のrawから作った集計と比べて、fingerprintのhashを除けば同一である。
+  - 置き換える前の元のrawはローカルに保管している。
 
 ## Issue #20の完了条件との対応
 
 | 完了条件 | 状態 |
 |---|---|
-| 固定した50〜100局面以上で比較結果を再現できる | 60局面・hash固定のdatasetと、run manifest・build ID・identity digestを記録している。集計はrawからofflineで作り直せる。 |
+| 固定した50〜100局面以上で比較結果を再現できる | 60局面・hash固定のdatasetと、run manifest・build ID・identity digestを記録している。公開rawから`aggregate.py`で集計を作り直すと、コミット済みの`aggregate.md`・`aggregate.json.xz`と完全に一致する。これは`cloud/bench/test/test_issue20_results.py`で確認している。 |
 | Free候補と精密解析候補について、品質・時間・推定コストが並んでいる | 上の「結論」と「候補ごとの詳細」の表。 |
 | 深い基準解析に対する品質差が定量化されている | 10秒の基準解析3回に対して、Top-1、Top-2/3包含、CP差、詰みの一致を集計した。 |
 | Free → 精密解析で何が改善するか、改善が小さければその事実も明記されている | Top-1は変わらず、CP差のp90が440から116に下がる、と明記した。 |
