@@ -27,10 +27,12 @@ export const CLOUD_PROFILE_LABELS: Record<CloudProfileId, string> = {
 /** Compact list-row label for one attempt. */
 export function cloudAttemptLabel(attempt: {
   status: CloudAttemptStatus;
+  serverStatus: CloudJobServerStatus | null;
   serverNextPly: number;
   totalPlies: number;
   validCount: number;
 }): string {
+  const validSuffix = `・有効 ${attempt.validCount}/${attempt.totalPlies}`;
   switch (attempt.status) {
     case 'requesting':
       return '開始中';
@@ -43,12 +45,17 @@ export function cloudAttemptLabel(attempt: {
     case 'completed':
       return attempt.validCount >= attempt.totalPlies
         ? '解析済み'
-        : `処理終了・有効 ${attempt.validCount}/${attempt.totalPlies}`;
+        : `処理終了${validSuffix}`;
     case 'failed':
       return '解析失敗';
     case 'cancelled':
       return '取消済み';
     case 'error':
+      // A confirmed server outcome takes precedence over the local fetch/
+      // validation error; the saved-valid count stays visible alongside.
+      if (attempt.serverStatus === 'cancelled') return `取消済み${validSuffix}`;
+      if (attempt.serverStatus === 'failed') return `解析失敗${validSuffix}`;
+      if (attempt.serverStatus === 'completed') return `処理終了${validSuffix}`;
       return '再開できます';
   }
 }
@@ -186,6 +193,13 @@ export interface CloudAttempt {
    * draining later hit a local error.
    */
   serverStatus: CloudJobServerStatus | null;
+  /**
+   * Server-reported job timestamps from job views (create/replay/GET/cancel
+   * response). Never filled from the local clock; null until observed.
+   */
+  serverCreatedAt: string | null;
+  serverFinishedAt: string | null;
+  /** Local request/terminal bookkeeping timestamps (device clock). */
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;

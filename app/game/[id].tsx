@@ -75,8 +75,16 @@ function cloudStatusLabel(attempt: CloudAttempt): string {
       return 'Cloud解析が失敗しました';
     case 'cancelled':
       return 'Cloud解析を取消しました';
-    case 'error':
+    case 'error': {
+      // A confirmed server outcome is shown together with the local
+      // fetch/validation error and the count of saved valid results.
+      const suffix = `・有効 ${attempt.validCount}/${attempt.totalPlies}局面`;
+      if (attempt.serverStatus === 'cancelled') return `Cloud解析は取消済みです${suffix}`;
+      if (attempt.serverStatus === 'failed') return `Cloud解析はサーバーで失敗しました${suffix}`;
+      if (attempt.serverStatus === 'completed')
+        return `Cloud解析はサーバーで終了しました${suffix}`;
       return 'Cloud解析を再開できます';
+    }
   }
 }
 
@@ -1069,7 +1077,8 @@ export default function GameScreen() {
                         }}
                         icon={fullyAnalyzed ? 'check' : 'play'}
                       />
-                      {attempt?.status === 'error' && attempt.jobId ? (
+                      {attempt?.status === 'error' &&
+                      (attempt.jobId || attempt.submitAttempted) ? (
                         <TextButton
                           label="中断した解析を取消"
                           testID="cloud-cancel-error"

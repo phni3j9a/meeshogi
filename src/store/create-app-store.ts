@@ -133,6 +133,9 @@ export function makeAppStore(deps: Dependencies) {
   let generation = 0;
   let focusGeneration = 0;
   let focusResumeId: string | undefined;
+  // The newest whole-game analysis run started per game. A stale run's
+  // finally may only persist its record while it still owns this slot.
+  const latestRunByGame = new Map<string, string>();
   const write = <T>(operation: () => Promise<T>) => {
     const pending = writes.then(operation);
     writes = pending.then(
@@ -427,6 +430,12 @@ export function makeAppStore(deps: Dependencies) {
         // JS-measured run record for the comparison export. Persisted even on
         // interruption so a partial run is distinguishable from a fresh pass.
         const runId = `sek-${deps.createId()}`;
+        latestRunByGame.set(id, runId);
+        // `resumed` means this run continues an unfinished earlier run of the
+        // same game — the previous record ended partial/interrupted and its
+        // saved rows are being reused. A completed-then-rerun pass that only
+        // reuses cache is not a resume.
+        const previousRun = game.analysisRun;
         const startedAt = Date.now();
         let cacheReuseCount = 0;
         let coveredAll = false;
@@ -507,33 +516,41 @@ export function makeAppStore(deps: Dependencies) {
               ),
             });
         } finally {
-          try {
-            await write(async () => {
-              const latest = get().games.find((g) => g.id === id);
-              if (!latest) return;
-              const next = {
-                ...latest,
-                analysisRun: {
-                  runId,
-                  conditions,
-                  wholeGameWallMs: Date.now() - startedAt,
-                  cacheReuseCount,
-                  interrupted: !coveredAll,
-                  resumed: cacheReuseCount > 0,
-                  completion: coveredAll
-                    ? budgetShortfallPlies.length
-                      ? ('partial' as const)
-                      : ('completed' as const)
-                    : ('interrupted' as const),
-                },
-              };
-              await repo().save(next);
-              replaceGame(next);
-            });
-          } catch (error) {
-            // Timing is bookkeeping; its persistence failure must not lose
-            // analysis results. Surface it like other store errors.
-            report(error);
+          // Only the game's latest run may record its timing: a stale run
+          // (e.g. invalidated by a settings change or a newer start) must not
+          // overwrite the newer run's record when it unwinds late.
+          if (latestRunByGame.get(id) === runId) {
+            try {
+              await write(async () => {
+                const latest = get().games.find((g) => g.id === id);
+                if (!latest) return;
+                const next = {
+                  ...latest,
+                  analysisRun: {
+                    runId,
+                    conditions,
+                    wholeGameWallMs: Date.now() - startedAt,
+                    cacheReuseCount,
+                    interrupted: !coveredAll,
+                    resumed:
+                      cacheReuseCount > 0 &&
+                      !!previousRun &&
+                      previousRun.completion !== 'completed',
+                    completion: coveredAll
+                      ? budgetShortfallPlies.length
+                        ? ('partial' as const)
+                        : ('completed' as const)
+                      : ('interrupted' as const),
+                  },
+                };
+                await repo().save(next);
+                replaceGame(next);
+              });
+            } catch (error) {
+              // Timing is bookkeeping; its persistence failure must not lose
+              // analysis results. Surface it like other store errors.
+              report(error);
+            }
           }
         }
       },

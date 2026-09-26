@@ -80,7 +80,12 @@ function toExportCandidates(candidates: AnalysisCandidate[]) {
 
 type CloudJobStatus = NonNullable<CloudMethodExport['timing']['completion']>;
 
-function cloudCompletion(status: CloudAttempt['status']): CloudJobStatus {
+function cloudCompletion(attempt: CloudAttempt): CloudJobStatus {
+  // The server-confirmed status (job view / replay / cancel response) is the
+  // source of truth. Local 'error' only fetches/validation bookkeeping and
+  // must not override a confirmed server outcome; without any server view it
+  // stays 'unknown' rather than a claimed failure.
+  const status = attempt.serverStatus ?? attempt.status;
   switch (status) {
     case 'requesting':
     case 'queued':
@@ -94,8 +99,6 @@ function cloudCompletion(status: CloudAttempt['status']): CloudJobStatus {
       return 'failed';
     case 'cancelled':
       return 'cancelled';
-    // 'error' is a client-side terminal state; the server job's real outcome
-    // is not known, so it exports as unknown rather than a claimed failure.
     case 'error':
       return 'unknown';
   }
@@ -315,9 +318,11 @@ export async function buildComparisonExport(
       identity: cloudIdentity(stored, game, profileId),
       conditions: { requested: { ...CLOUD_PROFILES[profileId] } },
       timing: {
-        createdAt: attempt.createdAt,
-        finishedAt: attempt.finishedAt,
-        completion: cloudCompletion(attempt.status),
+        // Server-measured window only: createdAt/finishedAt come from job
+        // views, never from local request or error timestamps.
+        createdAt: attempt.serverCreatedAt,
+        finishedAt: attempt.serverFinishedAt,
+        completion: cloudCompletion(attempt),
       },
     } satisfies CloudMethodExport;
     for (const row of plies) {

@@ -1,13 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { makeAppStore } from '../../src/store/create-app-store';
-import { type ParsedGame } from '../../src/domain/model';
-import { parseKif } from '../../src/domain';
+import {
+  type AnalysisConditions,
+  type ParsedGame,
+  type PositionAnalysis,
+} from '../../src/domain/model';
+import { legalMoves, parseKif } from '../../src/domain';
+import { CURRENT_ANALYSIS_IDENTITY } from '../../src/analysis/identity';
 import { LocalRepository } from '../../src/storage/repository';
 import { CloudApiError } from '../../src/cloud/client';
-import { attemptBlocksDelete, cloudAttemptLabel } from '../../src/cloud/contract';
+import {
+  attemptBlocksDelete,
+  cloudAttemptLabel,
+  type CloudAttempt,
+} from '../../src/cloud/contract';
 import { memoryCredentialStore, type CredentialStore } from '../../src/cloud/credentials';
 import type { CloudCredential } from '../../src/cloud/client';
+import { buildComparisonExport } from '../../src/comparison/export';
+import type { CloudMethodExport } from '../../src/comparison/schema';
 import type { CloudDeps } from '../../src/store/cloud-controller';
 import { ENDPOINT, makeCloudDeps, fakeCloud, sqliteDb, type FakeCloudOptions } from './helpers';
 
@@ -25,7 +36,35 @@ function smallParsed(): ParsedGame {
 
 type Store = ReturnType<typeof makeAppStore>;
 
-async function setup(options: FakeCloudOptions = {}, depsOverrides: Partial<CloudDeps> = {}) {
+function sekireiResult(sfen: string, conditions: AnalysisConditions): PositionAnalysis {
+  const legal = legalMoves(sfen);
+  return {
+    sfen,
+    ...CURRENT_ANALYSIS_IDENTITY,
+    status: 'complete',
+    meta: {
+      requestedNodes: conditions.nodes,
+      nodes: conditions.nodes,
+      completedDepth: 5,
+      fallback: false,
+      budgetReached: true,
+    },
+    conditions,
+    candidates: legal
+      .slice(0, Math.min(conditions.multiPV, legal.length))
+      .map((usi) => ({ usi, pv: [usi], depth: 5, scoreCp: 10, mate: null })),
+    mateProof: null,
+    completedAt: '2026-01-02T00:00:00.000Z',
+  };
+}
+
+async function setup(
+  options: FakeCloudOptions = {},
+  depsOverrides: Partial<CloudDeps> = {},
+  analyze: (sfen: string, conditions: AnalysisConditions) => Promise<PositionAnalysis> = async () => {
+    throw new Error('unused');
+  },
+) {
   const { db, adapter } = sqliteDb();
   const repository = new LocalRepository(adapter);
   await repository.initialize();
@@ -34,9 +73,7 @@ async function setup(options: FakeCloudOptions = {}, depsOverrides: Partial<Clou
   let idSeq = 0;
   const store = makeAppStore({
     openRepository: async () => repository,
-    analyze: async () => {
-      throw new Error('unused');
-    },
+    analyze,
     cancel: () => {},
     createId: () => `id-${++idSeq}`,
     cloud: makeCloudDeps(fake.client, credentials, depsOverrides),
@@ -277,5 +314,230 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     await vi.waitFor(() => expect(attempt(store).validCount).toBe(0));
     expect(cloudAttemptLabel(attempt(store))).not.toBe('解析済み');
     store.getState().pauseCloudJobs();
+  });
+
+  it('FP-010: 途中取消のjobは生成済み結果を回収し終えたらpollを止める', async () => {
+    const wakes: (() => void)[] = [];
+    const { store, fake, game } = await setup(
+      {},
+      { sleep: () => new Promise((resolve) => wakes.push(resolve)) },
+    );
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).jobId).toBe('job_1'));
+    // Server processed only ply 0 when the cancel lands.
+    const job = fake.jobList()[0];
+    job.advance(1);
+    await store.getState().cancelCloudAnalysis(attempt(store).attemptId);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('cancelled'), { timeout: 3000 });
+    // Every server-produced row (ply 0) is committed; no reason to poll again.
+    expect(attempt(store).receiveAfterPly).toBe(0);
+    expect(attempt(store).serverNextPly).toBe(1);
+    const getJobs = fake.counts.getJob;
+    while (wakes.length) {
+      wakes.splice(0).forEach((resolve) => resolve());
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    store.getState().resumeCloudJobs();
+    await flush();
+    expect(fake.counts.getJob).toBe(getJobs);
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-011: serverの時刻はattemptへ保存され、exportはlocal時刻を使わない', async () => {
+    const { store, game } = await setup({ perPollAdvance: 3 });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('completed'), { timeout: 3000 });
+    // Fake server clock: 00:00:00 → 00:01:00. Local deps.nowIso is 2026-01-02.
+    expect(attempt(store).serverCreatedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(attempt(store).serverFinishedAt).toBe('2026-01-01T00:01:00.000Z');
+    expect(attempt(store).createdAt).toBe('2026-01-02T00:00:00.000Z');
+    const doc = await buildComparisonExport(
+      {
+        game,
+        attempts: store.getState().cloudAttempts,
+        results: {},
+        generator: {
+          platform: 'unknown',
+          osVersion: null,
+          deviceModel: null,
+          appVersion: null,
+          buildId: null,
+        },
+        exportedAt: '2026-01-03T00:00:00.000Z',
+      },
+      async () => 'hash',
+    );
+    const method = doc.methods['cloud-free'] as CloudMethodExport;
+    // Export carries only server times → 60000ms, never local-clock deltas.
+    expect(method.timing.createdAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(method.timing.finishedAt).toBe('2026-01-01T00:01:00.000Z');
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-011b: server viewを一度も得ていないerror attemptのserver時刻はnull・unknown', async () => {
+    // createJob rejects before the server sees the request: no server view is
+    // ever received, so no server timestamps exist to export.
+    const { store, game } = await setup({
+      createJobError: () => {
+        throw new CloudApiError(400, 'bad_request', 'broken');
+      },
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).serverCreatedAt).toBeNull();
+    expect(attempt(store).serverFinishedAt).toBeNull();
+    const doc = await buildComparisonExport(
+      {
+        game,
+        attempts: store.getState().cloudAttempts,
+        results: {},
+        generator: {
+          platform: 'unknown',
+          osVersion: null,
+          deviceModel: null,
+          appVersion: null,
+          buildId: null,
+        },
+        exportedAt: '2026-01-03T00:00:00.000Z',
+      },
+      async () => 'hash',
+    );
+    const method = doc.methods['cloud-free'] as CloudMethodExport;
+    // Local error time must never fill the server window.
+    expect(method.timing.createdAt).toBeNull();
+    expect(method.timing.finishedAt).toBeNull();
+    expect(method.timing.completion).toBe('unknown');
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-005: serverStatus確定値がlabelとexport completionに使われる', async () => {
+    const { store, fake, game } = await setup();
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).jobId).toBe('job_1'));
+    const job = fake.jobList()[0];
+    job.advance(1);
+    await store.getState().cancelCloudAnalysis(attempt(store).attemptId);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('cancelled'), { timeout: 3000 });
+    expect(attempt(store).validCount).toBe(1);
+    // A cancelled attempt with a saved row must not read 再開できます.
+    const label = cloudAttemptLabel({
+      ...attempt(store),
+      status: 'error',
+    });
+    expect(label).toBe('取消済み・有効 1/3');
+    const doc = await buildComparisonExport(
+      {
+        game,
+        attempts: [{ ...attempt(store), status: 'error' }],
+        results: {},
+        generator: {
+          platform: 'unknown',
+          osVersion: null,
+          deviceModel: null,
+          appVersion: null,
+          buildId: null,
+        },
+        exportedAt: '2026-01-03T00:00:00.000Z',
+      },
+      async () => 'hash',
+    );
+    const method = doc.methods['cloud-free'] as CloudMethodExport;
+    // serverStatus='cancelled' wins over local 'error' → not 'unknown'.
+    expect(method.timing.completion).toBe('cancelled');
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-012: 完了済み再実行のcache再利用はresumedにならない', async () => {
+    const { store, game } = await setup(
+      {},
+      {},
+      async (sfen, conditions) => sekireiResult(sfen, conditions),
+    );
+    await store.getState().updateSettings({ analysisMethod: 'sekirei' });
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
+    const first = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
+    expect(first?.completion).toBe('completed');
+    expect(first?.cacheReuseCount).toBe(0);
+    // Immediate rerun over the same conditions reuses all three rows.
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
+    const second = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
+    expect(second?.completion).toBe('completed');
+    expect(second?.cacheReuseCount).toBe(3);
+    expect(second?.resumed).toBe(false);
+  });
+
+  it('FP-012b: 中断runの続きとしてcacheを再利用した場合のみresumed=true', async () => {
+    const blocked: { release?: () => void } = {};
+    let call = 0;
+    const analyze = async (sfen: string, conditions: AnalysisConditions) => {
+      call += 1;
+      if (call === 2) {
+        await new Promise<void>((resolve) => {
+          blocked.release = resolve;
+        });
+      }
+      return sekireiResult(sfen, conditions);
+    };
+    const { store, game } = await setup({}, {}, analyze);
+    await store.getState().updateSettings({ analysisMethod: 'sekirei' });
+    void store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(call).toBe(2), { timeout: 3000 });
+    // Interrupt mid-run (one row already saved), then let the stale call end.
+    store.getState().stopAnalysis();
+    blocked.release?.();
+    await vi.waitFor(
+      () =>
+        expect(store.getState().games.find((g) => g.id === game.id)?.analysisRun?.completion).toBe(
+          'interrupted',
+        ),
+      { timeout: 3000 },
+    );
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
+    const run = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
+    expect(run?.completion).toBe('completed');
+    expect(run?.cacheReuseCount).toBe(1);
+    expect(run?.resumed).toBe(true);
+  });
+
+  it('FP-013: 古いrunのfinallyが新しいrunのanalysisRunを上書きしない', async () => {
+    const blocked: { release?: () => void } = {};
+    const analyze = async (sfen: string, conditions: AnalysisConditions) => {
+      if (conditions.nodes === 20000) {
+        await new Promise<void>((resolve) => {
+          blocked.release = resolve;
+        });
+      }
+      return sekireiResult(sfen, conditions);
+    };
+    const { store, game } = await setup({}, {}, analyze);
+    await store.getState().updateSettings({ analysisMethod: 'sekirei' });
+    // First pass at 10000 nodes completes and saves all three rows.
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
+    // Second pass at 20000 nodes: the native call stays pending.
+    await store.getState().updateSettings({ analysisNodes: 20000 });
+    void store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(blocked.release).not.toBeUndefined(), { timeout: 3000 });
+    // Back to 10000: a new all-cache run completes before the old call returns.
+    await store.getState().updateSettings({ analysisNodes: 10000 });
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
+    const newer = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
+    expect(newer?.completion).toBe('completed');
+    expect(newer?.conditions.nodes).toBe(10000);
+    // The stale 20000 response arrives late: its record must not replace the
+    // newer run's record, and the saved rows keep their own run linkage.
+    blocked.release?.();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const after = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
+    expect(after?.completion).toBe('completed');
+    expect(after?.conditions.nodes).toBe(10000);
+    expect(
+      Object.values(store.getState().games.find((g) => g.id === game.id)?.analysis ?? {}),
+    ).toHaveLength(3);
   });
 });

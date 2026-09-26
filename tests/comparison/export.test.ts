@@ -150,6 +150,8 @@ function makeAttempt(
     failureMessage: null,
     submitAttempted: false,
     serverStatus: null,
+    serverCreatedAt: null,
+    serverFinishedAt: null,
     lastError: null,
     createdAt: '2026-09-30T00:00:00.000Z',
     updatedAt: '2026-09-30T00:05:00.000Z',

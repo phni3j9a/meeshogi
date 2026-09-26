@@ -171,6 +171,8 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     await persist(attempt.attemptId, {
       status: terminal,
       serverStatus: view.status,
+      serverCreatedAt: view.createdAt,
+      serverFinishedAt: view.finishedAt ?? null,
       serverNextPly: view.nextPly,
       resultCounts: {
         success: view.resultCounts.success ?? 0,
@@ -224,6 +226,8 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     await persist(attempt.attemptId, {
       jobId: view.jobId,
       serverStatus: view.status,
+      serverCreatedAt: view.createdAt,
+      serverFinishedAt: view.finishedAt ?? null,
       status:
         now.status === 'cancel-requested'
           ? 'cancel-requested'
@@ -268,7 +272,11 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     const view = await client.cancelJob(credential.credential, attempt.jobId);
     checkJobView(attempt, view);
     // A confirmed cancel/terminal is durable even if draining then fails.
-    await persist(attempt.attemptId, { serverStatus: view.status });
+    await persist(attempt.attemptId, {
+      serverStatus: view.status,
+      serverCreatedAt: view.createdAt,
+      serverFinishedAt: view.finishedAt ?? null,
+    });
     await drainResults(attempt, client, credential);
     const current = attemptById(attempt.attemptId);
     if (current) await adoptJobView(current, view);
@@ -383,14 +391,18 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
 
   /**
    * Active attempts need pumping; additionally a terminal-status attempt whose
-   * result cursor lags what the server produced still needs draining (covers
-   * rows persisted before the drain-before-terminal ordering existed).
+   * result cursor lags what the server produced still needs draining. The
+   * drain bound is the server's confirmed processed cursor (serverNextPly),
+   * not totalPlies: a cancelled/failed job stops producing mid-game, so once
+   * every produced row is committed the pump must stop instead of polling a
+   * finished job forever.
    */
-  const pumpEligible = (attempt: CloudAttempt): boolean =>
-    isActiveAttempt(attempt.status) ||
-    (attempt.jobId !== null &&
-      TERMINAL_STATUSES.includes(attempt.status) &&
-      attempt.receiveAfterPly < attempt.totalPlies - 1);
+  const pumpEligible = (attempt: CloudAttempt): boolean => {
+    if (isActiveAttempt(attempt.status)) return true;
+    if (attempt.jobId === null || !TERMINAL_STATUSES.includes(attempt.status)) return false;
+    const produced = Math.min(attempt.serverNextPly, attempt.totalPlies);
+    return attempt.receiveAfterPly < produced - 1;
+  };
 
   const ensurePump = (attemptId: string) => {
     if (pumps.has(attemptId)) return;
@@ -491,6 +503,8 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       lastError: null,
       submitAttempted: false,
       serverStatus: null,
+      serverCreatedAt: null,
+      serverFinishedAt: null,
       createdAt: now,
       updatedAt: now,
       finishedAt: null,

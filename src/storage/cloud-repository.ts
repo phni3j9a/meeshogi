@@ -39,6 +39,8 @@ type AttemptColumns = {
   lastError: 'last_error';
   submitAttempted: 'submit_attempted';
   serverStatus: 'server_status';
+  serverCreatedAt: 'server_created_at';
+  serverFinishedAt: 'server_finished_at';
   updatedAt: 'updated_at';
   finishedAt: 'finished_at';
 };
@@ -56,6 +58,8 @@ const ATTEMPT_COLUMNS: AttemptColumns = {
   lastError: 'last_error',
   submitAttempted: 'submit_attempted',
   serverStatus: 'server_status',
+  serverCreatedAt: 'server_created_at',
+  serverFinishedAt: 'server_finished_at',
   updatedAt: 'updated_at',
   finishedAt: 'finished_at',
 };
@@ -139,6 +143,10 @@ function decodeAttempt(row: Record<string, unknown>): CloudAttempt {
       typeof row.server_status === 'string'
         ? (row.server_status as CloudAttempt['serverStatus'])
         : null,
+    serverCreatedAt:
+      typeof row.server_created_at === 'string' ? row.server_created_at : null,
+    serverFinishedAt:
+      typeof row.server_finished_at === 'string' ? row.server_finished_at : null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     finishedAt: typeof row.finished_at === 'string' ? row.finished_at : null,
@@ -191,6 +199,8 @@ export class CloudRepository {
         last_error TEXT,
         submit_attempted INTEGER NOT NULL DEFAULT 0,
         server_status TEXT,
+        server_created_at TEXT,
+        server_finished_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         finished_at TEXT
@@ -219,6 +229,12 @@ export class CloudRepository {
     }
     if (!names.has('server_status')) {
       await this.db.execAsync('ALTER TABLE cloud_attempts ADD COLUMN server_status TEXT');
+    }
+    if (!names.has('server_created_at')) {
+      await this.db.execAsync('ALTER TABLE cloud_attempts ADD COLUMN server_created_at TEXT');
+    }
+    if (!names.has('server_finished_at')) {
+      await this.db.execAsync('ALTER TABLE cloud_attempts ADD COLUMN server_finished_at TEXT');
     }
   }
 
@@ -254,8 +270,8 @@ export class CloudRepository {
         idempotency_key, initial_sfen, moves_json, total_plies, job_id, status,
         receive_after_ply, server_next_ply, result_counts, received_count, valid_count,
         failure_code, failure_message, last_error, submit_attempted, server_status,
-        created_at, updated_at, finished_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        server_created_at, server_finished_at, created_at, updated_at, finished_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       attempt.attemptId,
       attempt.gameId,
       attempt.gameIdentity,
@@ -279,6 +295,8 @@ export class CloudRepository {
       attempt.lastError,
       (attempt.submitAttempted ?? false) ? 1 : 0,
       attempt.serverStatus ?? null,
+      attempt.serverCreatedAt ?? null,
+      attempt.serverFinishedAt ?? null,
       attempt.createdAt,
       attempt.updatedAt,
       attempt.finishedAt,
