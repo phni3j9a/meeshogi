@@ -1,0 +1,90 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: while a Cloud method is selected, branch analysis and the
+# per-position deep analysis must stay on the local Sekirei engine — the UI
+# labels must say so. The acceptance script snapshots cloud_attempts before
+# and after this flow to prove no new Cloud job was created.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+# Precondition: method stays 'Cloud・無料' (persisted from cloud-free-start).
+# Assert instead of tapping — the sheet item label duplicates the method
+# row's own value text, so tapping 'Cloud・無料' resolves ambiguously.
+- assertVisible:
+    id: analysis-method
+- assertVisible: 'Cloud・無料'
+# Enter a branch from ply 0. Board square taps raced whenever analysis rows
+# were still populating (board remount eats the touches), so use the designed
+# affordance instead: a candidate row tap ("タップして分岐を検討") opens the
+# branch directly via previewCandidate.
+# Cloud results sync back slowly on a cold start — wait for the candidate
+# rows to exist before tapping.
+- extendedWaitUntil:
+    visible: 第一候補
+    timeout: 240000
+- scrollUntilVisible:
+    element:
+      id: candidate-0
+    direction: DOWN
+- tapOn:
+    id: candidate-0
+- extendedWaitUntil:
+    visible: 分岐検討
+    timeout: 10000
+- assertVisible: '0手目から分岐'
+# Branch analysis label must carry the local-Sekirei marker under Cloud.
+# Wait for the completed label only — '分岐を解析中' would match too early.
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- extendedWaitUntil:
+    visible: '分岐の解析結果（ローカル・Sekirei）'
+    timeout: 180000
+- takeScreenshot: c30-branch-local-label
+# The evaluation caption sits above the analysis section; scroll it back.
+- scrollUntilVisible:
+    element:
+      text: '分岐の評価・ローカル'
+    direction: UP
+- assertVisible: '分岐の評価・ローカル'
+- takeScreenshot: c30b-branch-eval-local
+# Deep-analysis button label must carry the local-Sekirei marker too.
+- scrollUntilVisible:
+    element:
+      id: analysis-focus
+    direction: DOWN
+- assertVisible: 'この局面を深く解析（ローカル・Sekirei）'
+- tapOn:
+    id: analysis-focus
+# In branch mode the deep-analysis result feeds the candidate list; the
+# 'focused-analysis-ready' banner only renders on the mainline view
+# ({!branch && ...} in app/game/[id].tsx). Completion is observable as the
+# button's busy label ('追加解析中…') clearing back to the local label.
+- extendedWaitUntil:
+    visible: 'この局面を深く解析（ローカル・Sekirei）'
+    timeout: 180000
+- assertVisible: 第一候補
+- takeScreenshot: c31-focus-local-label
+- scrollUntilVisible:
+    element:
+      text: 本譜に戻る
+    direction: UP
+- tapOn: 本譜に戻る
+- assertVisible: '0 / 80手'

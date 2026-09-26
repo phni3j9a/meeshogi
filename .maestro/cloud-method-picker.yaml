@@ -1,0 +1,74 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: the analysis-method picker exists in settings and on the review
+# screen; Sekirei is the default; picking a Cloud method only changes which
+# stored result set is displayed — it must not start a Cloud job by itself.
+# Requires the shogiwars fixture game to be saved already (import-review).
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+# --- settings picker ---
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- assertVisible:
+    id: analysis-method
+- takeScreenshot: c01-settings-method-row
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- assertVisible: 端末内（Sekirei）
+- assertVisible: Cloud・無料
+- assertVisible: Cloud・精密
+- takeScreenshot: c02-settings-method-options
+- tapOn: Cloud・無料
+- waitForAnimationToEnd
+# The settings caption explains the Cloud coexistence model once selected.
+- assertVisible: '.*サーバーの解析エンジンで1局をまとめて解析.*'
+- assertVisible: '.*分岐検討と「この局面を深く解析」は常に端末内（Sekirei）.*'
+- takeScreenshot: c03-settings-cloud-free
+# --- review screen picker ---
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- takeScreenshot: c04-game-cloud-free
+# Fresh install: 'この棋譜はCloud未解析です'. Re-run after a finished job: the
+# stored terminal label instead. Either way, no active-state label may appear
+# just because the method was selected (DB snapshot proves attempt count).
+- assertVisible: 'この棋譜はCloud未解析です|Cloud解析が完了しました|.*Cloud解析が終了しました.*|Cloud解析を取消しました'
+- assertVisible:
+    id: cloud-start
+- assertNotVisible: '.*Cloud解析を開始しています.*'
+- assertNotVisible: '.*Cloud解析の順番を待っています.*'
+- assertNotVisible: '.*Cloud解析中・処理.*'
+- takeScreenshot: c05-game-cloud-unanalyzed
+# Switch back to Sekirei on the review screen; its stored status must return.
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- assertVisible: 端末内（Sekirei）
+- tapOn: 端末内（Sekirei）
+- waitForAnimationToEnd
+- assertVisible: '.*解析方式.*'
+- takeScreenshot: c06-game-back-sekirei
