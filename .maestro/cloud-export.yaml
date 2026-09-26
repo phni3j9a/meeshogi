@@ -63,13 +63,16 @@ env:
                 timeout: 30000
       - runFlow:
           when:
-            notVisible: 'Meeshogi Export.*'
+            notVisible: '.*書き出しました.*'
           commands:
-            # The helper target never appeared — capture the sheet state for
-            # diagnosis, dismiss it, and fail loudly on the next assert.
-            - takeScreenshot: c71b-export-share-target-missing
-            - pressKey: back
-            - assertVisible: 'Meeshogi Export Test target was visible'
+            # Only reachable when the helper target was never tapped (the
+            # tapped branch already waited on the alert) — either the target
+            # stayed missing with the sheet open, or the write alert is
+            # genuinely absent. Record the sheet state, settle, then let the
+            # real alert assert decide (it may still be animating in).
+            - takeScreenshot: c71b-export-share-state
+            - waitForAnimationToEnd
+            - assertVisible: '.*書き出しました.*'
 - runFlow:
     when:
       platform: iOS
