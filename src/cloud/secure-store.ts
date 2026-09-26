@@ -10,7 +10,10 @@ function keyFor(endpoint: string): string {
 export function secureStoreCredentials(endpoint: string): CredentialStore {
   const key = keyFor(endpoint);
   const decode = (raw: string | null): CredentialProbe => {
-    if (!raw) return { state: 'absent' };
+    // Absent means the key itself is missing — SecureStore returned null.
+    // A stored empty string or any unreadable value is `unusable`: the entry
+    // exists, so loss cannot be concluded (Plan §3 limited exception).
+    if (raw === null) return { state: 'absent' };
     try {
       const value = JSON.parse(raw) as unknown;
       if (

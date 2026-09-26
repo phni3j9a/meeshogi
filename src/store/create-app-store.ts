@@ -503,12 +503,15 @@ export function makeAppStore(deps: Dependencies) {
         const runId = `sek-${deps.createId()}`;
         latestRunByGame.set(id, runId);
         // `resumed` means this run continues an unfinished earlier run of the
-        // same game — the previous record ended partial/interrupted and its
-        // saved rows are being reused. A completed-then-rerun pass that only
-        // reuses cache is not a resume.
+        // same game — the previous record ended partial/interrupted AND rows
+        // it produced (identified by runId) are being reused under compatible
+        // conditions. Cache rows from a different run (e.g. an older completed
+        // pass after an intervening run under other conditions) are just
+        // reuse, not a resume.
         const previousRun = game.analysisRun;
         const startedAt = Date.now();
         let cacheReuseCount = 0;
+        let reusedPreviousRun = false;
         let coveredAll = false;
         const makeJob = (status: AnalysisJob['status'], error?: string): AnalysisJob => ({
           gameId: id,
@@ -535,6 +538,12 @@ export function makeAppStore(deps: Dependencies) {
             if (!current) return;
             if (reusable(current.analysis[ply], sfen)) {
               cacheReuseCount++;
+              if (
+                previousRun &&
+                current.analysis[ply]?.runId === previousRun.runId
+              ) {
+                reusedPreviousRun = true;
+              }
               continue;
             }
             let result: PositionAnalysis;
@@ -604,7 +613,7 @@ export function makeAppStore(deps: Dependencies) {
                     cacheReuseCount,
                     interrupted: !coveredAll,
                     resumed:
-                      cacheReuseCount > 0 &&
+                      reusedPreviousRun &&
                       !!previousRun &&
                       previousRun.completion !== 'completed',
                     completion: coveredAll

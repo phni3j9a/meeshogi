@@ -25,6 +25,7 @@ import {
 import {
   CLOUD_PROFILE_LABELS,
   CLOUD_MAX_MOVES,
+  CLOUD_SERVER_TERMINAL_STATUSES,
   isActiveAttempt,
   type CloudAttempt,
 } from '@/cloud/contract';
@@ -83,9 +84,34 @@ function cloudStatusLabel(attempt: CloudAttempt): string {
       if (attempt.serverStatus === 'failed') return `Cloud解析はサーバーで失敗しました${suffix}`;
       if (attempt.serverStatus === 'completed')
         return `Cloud解析はサーバーで終了しました${suffix}`;
+      if (unrecoverableCloudAttempt(attempt))
+        return 'このCloud解析には復帰できません';
       return 'Cloud解析を再開できます';
     }
   }
+}
+
+/** Credential-loss failure codes: the request can never be reconnected or
+ *  cancelled from this device (Plan §3). */
+const CLOUD_CREDENTIAL_FAILURE_CODES = new Set([
+  'credential_absent',
+  'credential_rejected',
+  'credential_owner_mismatch',
+  'credential_unusable',
+]);
+
+/**
+ * An error attempt whose server job is unconfirmed AND whose recorded
+ * credential can no longer be used from this device — retry and cancel are
+ * both impossible, so the UI must not offer either.
+ */
+function unrecoverableCloudAttempt(attempt: CloudAttempt): boolean {
+  return (
+    attempt.status === 'error' &&
+    (attempt.submitAttempted || attempt.jobId !== null) &&
+    !(attempt.serverStatus && CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)) &&
+    CLOUD_CREDENTIAL_FAILURE_CODES.has(attempt.failureCode ?? '')
+  );
 }
 
 type Branch = { origin: number; positions: string[]; moves: string[]; cursor: number };
@@ -1048,6 +1074,14 @@ export default function GameScreen() {
                       }
                       icon="pause"
                     />
+                  ) : attempt && unrecoverableCloudAttempt(attempt) ? (
+                    // The credential that owns this request is gone or was
+                    // rejected: no reconnect or cancel is possible from this
+                    // device. The only remaining path is the local-forget
+                    // exception in the game-delete flow.
+                    <AppText variant="caption" tone="secondary" testID="cloud-unrecoverable">
+                      認証情報が失われたため、この解析には復帰できません。棋譜の削除時に「ローカルだけ削除」を選べます。
+                    </AppText>
                   ) : (
                     <>
                       <TextButton

@@ -16,11 +16,23 @@ import {
   type CloudAttempt,
 } from '../../src/cloud/contract';
 import { memoryCredentialStore, type CredentialStore } from '../../src/cloud/credentials';
+import { secureStoreCredentials } from '../../src/cloud/secure-store';
 import type { CloudCredential } from '../../src/cloud/client';
 import { buildComparisonExport } from '../../src/comparison/export';
 import type { CloudMethodExport } from '../../src/comparison/schema';
 import type { CloudDeps } from '../../src/store/cloud-controller';
 import { ENDPOINT, makeCloudDeps, fakeCloud, sqliteDb, type FakeCloudOptions } from './helpers';
+
+// expo-secure-store is a native module: the whole module is mocked and the
+// raw key/value backing is driven by the test to simulate absent / empty /
+// corrupt records.
+const secureValues = vi.hoisted(() => new Map<string, string>());
+vi.mock('expo-secure-store', () => ({
+  getItemAsync: async (key: string) => secureValues.get(key) ?? null,
+  setItemAsync: async (key: string, value: string) => {
+    secureValues.set(key, value);
+  },
+}));
 
 const fixture = () => parseKif(readFileSync('fixtures/kif/shogiwars.kif', 'utf8'));
 
@@ -89,6 +101,15 @@ async function setup(
 const attempt = (store: Store) => store.getState().cloudAttempts[0];
 const flush = async (turns = 50) => {
   for (let i = 0; i < turns; i += 1) await Promise.resolve();
+};
+/** Resolve pump sleeps until `done` holds; fails via waitFor if none arrive. */
+const drainWakes = async (wakes: (() => void)[], done: () => boolean) => {
+  for (let i = 0; i < 200 && !done(); i += 1) {
+    await vi.waitFor(() => expect(wakes.length).toBeGreaterThan(0), { timeout: 3000 });
+    wakes.splice(0).forEach((resolve) => resolve());
+    await flush();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
 };
 /** memoryCredentialStore exposes a mutable test seam behind a readonly type. */
 const setCredential = (store: CredentialStore, next: CloudCredential | null) => {
@@ -452,26 +473,28 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     const wakes: (() => void)[] = [];
     const { store, credentials, game } = await setup(
       {
-        createJobFailAfterCreate: 1,
-        // Second createJob (the precision attempt) fails generically.
+        // Attempt 1 fails generically while the credential is still valid.
         createJobError: (call) => {
-          if (call === 2) throw new CloudApiError(400, 'bad_request', 'broken');
+          if (call === 1) throw new CloudApiError(400, 'bad_request', 'broken');
         },
+        // Attempt 2's POST reaches the server (job exists) but the response
+        // is lost; the credential then disappears → credential_absent.
+        createJobFailAfterCreate: 2,
       },
       { sleep: () => new Promise((resolve) => wakes.push(resolve)) },
     );
     await store.getState().startCloudAnalysis(game.id);
-    await vi.waitFor(() => expect(wakes.length).toBe(1));
-    setCredential(credentials, null);
-    wakes[0]();
-    await vi.waitFor(() => expect(attempt(store).failureCode).toBe('credential_absent'), {
+    await vi.waitFor(() => expect(attempt(store).failureCode).toBe('bad_request'), {
       timeout: 3000,
     });
-    // Second attempt (precision) fails with a non-auth server error → not
-    // credential-related → the game as a whole stays unforgettabble.
+    // Second attempt (precision) fails with confirmed credential absence →
+    // eligible alone, but blocker 1 is not → the game stays unforgettabble.
     await store.getState().updateSettings({ analysisMethod: 'cloud-precision' });
     await store.getState().startCloudAnalysis(game.id);
     await vi.waitFor(() => expect(store.getState().cloudAttempts).toHaveLength(2));
+    await vi.waitFor(() => expect(wakes.length).toBe(1), { timeout: 3000 });
+    setCredential(credentials, null);
+    wakes.splice(0).forEach((resolve) => resolve());
     await vi.waitFor(
       () =>
         expect(
@@ -481,7 +504,7 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     );
     expect(
       store.getState().cloudAttempts.find((a) => a.profileId === 'precision')?.failureCode,
-    ).toBe('bad_request');
+    ).toBe('credential_absent');
     await expect(store.getState().canForgetCloudGame(game.id)).resolves.toBe(false);
     await expect(
       store.getState().deleteGame(game.id, { forgetCloud: true }),
@@ -712,5 +735,220 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     expect(
       Object.values(store.getState().games.find((g) => g.id === game.id)?.analysis ?? {}),
     ).toHaveLength(3);
+  });
+
+  it('FP-004g: 存在する空文字/破損credentialキーはabsentでなくunusable', async () => {
+    // keyFor is private; replicate its sanitization for ENDPOINT.
+    const key = `cloudCredential.${ENDPOINT.replace(/[^A-Za-z0-9.\-_]/gu, '_').slice(0, 96)}`;
+    const secure = secureStoreCredentials(ENDPOINT);
+    secureValues.clear();
+    expect((await secure.probe()).state).toBe('absent'); // null: key missing
+    for (const raw of ['', '{', '{}']) {
+      secureValues.set(key, raw);
+      expect((await secure.probe()).state).toBe('unusable'); // present but unreadable
+    }
+    // Delete path: a present-but-empty credential record must not qualify for
+    // the local-forget exception — loss was never confirmed.
+    secureValues.delete(key);
+    const wakes: (() => void)[] = [];
+    const { store, game } = await setup(
+      { createJobFailAfterCreate: 1 },
+      {
+        credentialsFor: () => secure,
+        sleep: () => new Promise((resolve) => wakes.push(resolve)),
+      },
+    );
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(wakes.length).toBe(1));
+    secureValues.set(key, ''); // corrupted record: key present, value invalid
+    wakes[0]();
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).failureCode).toBe('credential_unusable');
+    await expect(store.getState().canForgetCloudGame(game.id)).resolves.toBe(false);
+    await expect(
+      store.getState().deleteGame(game.id, { forgetCloud: true }),
+    ).rejects.toThrow(/Cloud/u);
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-011c: GETで観測したserver終了時刻はdrain失敗でも保持されexportされる', async () => {
+    const { store, fake, game } = await setup({});
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).jobId).toBe('job_1'));
+    // Server completes the whole game; the first fetched row then violates
+    // the contract so the drain throws after the terminal view arrived.
+    const job = fake.jobList()[0];
+    job.advance(3);
+    (job.results[0].result as { identity: { engineName: string } }).identity.engineName =
+      'unexpected-version';
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    // The observed server clock is durable independently of the failed drain.
+    expect(attempt(store).serverStatus).toBe('completed');
+    expect(attempt(store).serverCreatedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(attempt(store).serverFinishedAt).toBe('2026-01-01T00:01:00.000Z');
+    const doc = await buildComparisonExport(
+      {
+        game,
+        attempts: store.getState().cloudAttempts,
+        results: {},
+        generator: {
+          platform: 'unknown',
+          osVersion: null,
+          deviceModel: null,
+          appVersion: null,
+          buildId: null,
+        },
+        exportedAt: '2026-01-03T00:00:00.000Z',
+      },
+      async () => 'hash',
+    );
+    const method = doc.methods['cloud-free'] as CloudMethodExport;
+    expect(method.timing.createdAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(method.timing.finishedAt).toBe('2026-01-01T00:01:00.000Z');
+    expect(method.timing.completion).toBe('completed');
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-012c: 異なる条件で中断した履歴はcache再利用をresumedにしない', async () => {
+    const analyze = async (sfen: string, conditions: AnalysisConditions) => {
+      if (conditions.nodes === 20000) throw new Error('engine failed');
+      return sekireiResult(sfen, conditions);
+    };
+    const { store, game } = await setup({}, {}, analyze);
+    await store.getState().updateSettings({ analysisMethod: 'sekirei' });
+    // 10000 nodes: full pass completes (all 3 rows written by run A).
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
+    expect(
+      store.getState().games.find((g) => g.id === game.id)?.analysisRun?.completion,
+    ).toBe('completed');
+    // 20000 nodes: the first call fails → run B interrupted with 0 saved rows.
+    await store.getState().updateSettings({ analysisNodes: 20000 });
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(
+      () =>
+        expect(store.getState().games.find((g) => g.id === game.id)?.analysisRun?.completion).toBe(
+          'interrupted',
+        ),
+      { timeout: 3000 },
+    );
+    // Back to 10000: every reused row belongs to run A, not to the
+    // interrupted run B → this is completed-with-cache-reuse, not a resume.
+    await store.getState().updateSettings({ analysisNodes: 10000 });
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
+    const run = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
+    expect(run?.completion).toBe('completed');
+    expect(run?.cacheReuseCount).toBe(3);
+    expect(run?.resumed).toBe(false);
+  });
+
+  it('FP-014: 未確認errorへの再試行は同一key・同一ownerで復帰し新発行しない', async () => {
+    const wakes: (() => void)[] = [];
+    const { store, fake, credentials, game } = await setup(
+      { createJobFailAfterCreate: 1, perPollAdvance: 3 },
+      { sleep: () => new Promise((resolve) => wakes.push(resolve)) },
+    );
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(wakes.length).toBe(1));
+    const key = attempt(store).idempotencyKey;
+    // POST reached the server (job exists) but the response was lost, then
+    // the credential key disappeared → error with an unconfirmed job.
+    setCredential(credentials, null);
+    wakes[0]();
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).failureCode).toBe('credential_absent');
+    expect(attempt(store).jobId).toBeNull();
+    // The SAME owner's credential is back: retry re-activates the original
+    // attempt — same key, same input — and the server replays the job.
+    setCredential(credentials, {
+      credential: 'cred-1',
+      ownerId: attempt(store).ownerId,
+      installId: 'install-1',
+      endpoint: ENDPOINT,
+      issuedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await drainWakes(wakes, () => attempt(store).status === 'completed');
+    expect(store.getState().cloudAttempts).toHaveLength(1);
+    expect(attempt(store).idempotencyKey).toBe(key);
+    expect(attempt(store).jobId).toBe('job_1');
+    expect(fake.jobList()).toHaveLength(1); // server job count stayed 1
+    expect(fake.counts.createJob).toBe(2); // original POST + same-key replay
+    expect(fake.calls.filter((c) => c.method === 'createCredential')).toHaveLength(1);
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-014b: credential喪失のままの再試行・新規開始は発行を拒否する', async () => {
+    const wakes: (() => void)[] = [];
+    const { store, fake, credentials, game } = await setup(
+      { createJobFailAfterCreate: 1 },
+      { sleep: () => new Promise((resolve) => wakes.push(resolve)) },
+    );
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(wakes.length).toBe(1));
+    const key = attempt(store).idempotencyKey;
+    setCredential(credentials, null);
+    wakes[0]();
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).failureCode).toBe('credential_absent');
+    // Retry on the same game: 復帰できません — no new attempt, key, or owner.
+    await expect(store.getState().startCloudAnalysis(game.id)).rejects.toThrow(
+      /復帰できません/u,
+    );
+    expect(store.getState().cloudAttempts).toHaveLength(1);
+    expect(attempt(store).idempotencyKey).toBe(key);
+    expect(attempt(store).status).toBe('error');
+    // A DIFFERENT game's fresh start must not silently issue a replacement
+    // credential either while an unconfirmed request references the old owner.
+    const parsed = fixture();
+    const game2 = await store.getState().saveImport(
+      {
+        ...parsed,
+        moves: parsed.moves.slice(0, 1),
+        positions: parsed.positions.slice(0, 2),
+        blackName: '別の先手',
+        whiteName: '別の後手',
+        startedAt: '2026-01-05T00:00:00.000Z',
+        identity: `${parsed.identity}|other`,
+      },
+      { service: 'shogiwars', autoAnalyze: false },
+    );
+    await expect(store.getState().startCloudAnalysis(game2.id)).rejects.toThrow(
+      /認証情報が失われ/u,
+    );
+    expect(store.getState().cloudAttempts).toHaveLength(1);
+    expect(fake.calls.filter((c) => c.method === 'createCredential')).toHaveLength(1);
+    expect(fake.jobList()).toHaveLength(1);
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-014c: server終端が確認済みのerror attemptには新規解析を許可する', async () => {
+    const wakes: (() => void)[] = [];
+    const { store, fake, game } = await setup(
+      { perPollAdvance: 3 },
+      { sleep: () => new Promise((resolve) => wakes.push(resolve)) },
+    );
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).jobId).toBe('job_1'));
+    // One row produced, then cancel lands; the drain hits a contract
+    // violation → local error but serverStatus='cancelled' is confirmed.
+    const job = fake.jobList()[0];
+    job.advance(1);
+    (job.results[0].result as { identity: { engineName: string } }).identity.engineName =
+      'unexpected-version';
+    await store.getState().cancelCloudAnalysis(attempt(store).attemptId);
+    await drainWakes(wakes, () => attempt(store).status === 'error');
+    expect(attempt(store).serverStatus).toBe('cancelled');
+    const firstKey = attempt(store).idempotencyKey;
+    // Explicit re-analysis after a server-confirmed terminal state creates a
+    // new attempt with a new key.
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().cloudAttempts).toHaveLength(2));
+    const second = () => store.getState().cloudAttempts[1];
+    expect(second().idempotencyKey).not.toBe(firstKey);
+    await drainWakes(wakes, () => second().status === 'completed');
+    expect(fake.jobList()).toHaveLength(2);
+    store.getState().pauseCloudJobs();
   });
 });

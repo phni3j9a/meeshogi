@@ -190,15 +190,19 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
   };
 
   /**
-   * The server reaching a terminal state is a confirmed fact worth persisting
-   * immediately — even if result draining then fails — but the local lifecycle
-   * status must stay non-terminal until every produced row is committed so the
-   * pump keeps the attempt resumable.
+   * A validated GET view carries server-observed facts — status and the
+   * server's own created/finished timestamps. Persist them immediately and
+   * independently of the result drain: a later drain failure (e.g. a contract
+   * violation on one row) must never drop a server clock we already learned.
+   * The local lifecycle status stays untouched here so the pump keeps the
+   * attempt resumable until every produced row is committed.
    */
   const confirmServerStatus = async (attempt: CloudAttempt, view: CloudJobView) => {
-    if (CLOUD_SERVER_TERMINAL_STATUSES.includes(view.status)) {
-      await persist(attempt.attemptId, { serverStatus: view.status });
-    }
+    await persist(attempt.attemptId, {
+      serverStatus: view.status,
+      serverCreatedAt: view.createdAt,
+      serverFinishedAt: view.finishedAt ?? null,
+    });
   };
 
   const submit = async (
@@ -455,6 +459,20 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       .filter((attempt) => attempt.gameId === gameId && attempt.profileId === profileId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 
+  /**
+   * An error attempt whose server-side job was never confirmed terminal:
+   * a POST may have been in flight (submitAttempted) or a jobId was learned,
+   * but no terminal serverStatus was ever observed. Such attempts must be
+   * recovered under the same key — a fresh attempt would strand the job.
+   */
+  const unconfirmedError = (attempt: CloudAttempt): boolean =>
+    attempt.status === 'error' &&
+    (attempt.submitAttempted || attempt.jobId !== null) &&
+    !(
+      attempt.serverStatus !== null &&
+      CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)
+    );
+
   const doStart = async (gameId: string): Promise<void> => {
     const profileId = ctx.getCloudMethodProfile();
     if (!profileId) throw new Error('解析方法がCloudではありません。');
@@ -486,6 +504,45 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     };
     if (reusableActive()) return;
     checkNoOtherActive();
+    const previous = latestAttemptFor(gameId, profileId);
+    if (previous && unconfirmedError(previous)) {
+      // FP-014 / Plan §3: the server may still hold this job, so the only
+      // permitted path is same-key recovery — never a new attempt, a new
+      // idempotency key, or a replacement credential under another owner.
+      if (previous.gameIdentity !== game.identity) {
+        throw new Error(
+          'Cloud解析要求と棋譜の対応を確認できないため、復帰できません。',
+        );
+      }
+      let stored: CloudCredential | null;
+      try {
+        stored =
+          previous.failureCode === 'credential_rejected'
+            ? null // backend already rejected this credential: do not reuse
+            : await deps.credentialsFor(previous.endpoint).load();
+      } catch {
+        throw new Error('Cloudの認証情報を読み込めませんでした。時間をおいて再試行してください。');
+      }
+      if (!stored || stored.endpoint !== previous.endpoint || stored.ownerId !== previous.ownerId) {
+        throw new Error(
+          'このCloud解析の認証情報が失われたため復帰できません。サーバー上のジョブは継続している可能性があり、この端末から再接続・取消できません。',
+        );
+      }
+      // Re-activate the same attempt: the pump re-POSTs under the same
+      // idempotency key + same input, and the server replays the original job.
+      const now = attemptById(previous.attemptId);
+      if (now && unconfirmedError(now)) {
+        await persist(previous.attemptId, {
+          status: 'requesting',
+          failureCode: null,
+          failureMessage: null,
+          lastError: null,
+          finishedAt: null,
+        });
+        ensurePump(previous.attemptId);
+      }
+      return;
+    }
     const credential = await ensureCredential(endpoint);
     // The await above may have queued behind another start: re-verify before
     // creating the attempt so we never produce a duplicate.
@@ -602,6 +659,27 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
         return rebound;
       }
       return existing;
+    }
+    // FP-014 / Plan §3: the stored credential is absent or unusable. Issuing a
+    // replacement creates a NEW owner, which can never reconnect to jobs that
+    // unconfirmed attempts already submitted under the old owner — so while
+    // any such attempt exists on this endpoint, issuance is refused entirely.
+    const stranded = ctx
+      .getAttempts()
+      .some(
+        (attempt) =>
+          attempt.endpoint === endpoint &&
+          !!attempt.ownerId &&
+          (attempt.submitAttempted || attempt.jobId !== null) &&
+          !(
+            attempt.serverStatus !== null &&
+            CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)
+          ),
+      );
+    if (stranded) {
+      throw new Error(
+        'Cloudの認証情報が失われているため、新しいCloud解析を開始できません。既存の解析要求がサーバー上に残っている可能性があります。',
+      );
     }
     const issued = await deps.clientFor(endpoint).createCredential();
     const credential: CloudCredential = {
