@@ -1,4 +1,5 @@
 import { type GameRecord, type Settings } from '../domain/model';
+import { CloudRepository } from './cloud-repository';
 import { decodeGame, decodeSettings } from './validation';
 
 export interface Database {
@@ -7,7 +8,11 @@ export interface Database {
   getAllAsync<T>(sql: string, ...params: (string | number | null)[]): Promise<T[]>;
 }
 export class LocalRepository {
-  constructor(private readonly db: Database) {}
+  /** Cloud attempts/results share this Database so game deletion cascades. */
+  readonly cloud: CloudRepository;
+  constructor(private readonly db: Database) {
+    this.cloud = new CloudRepository(db);
+  }
   private validateForWrite(game: GameRecord) {
     // Keep invalid/incomplete current-identity analyses out of SQLite. Old
     // identities remain readable through decodeGame's migration-free path.
@@ -24,6 +29,7 @@ export class LocalRepository {
       );
       CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id = 1), payload TEXT NOT NULL);
       PRAGMA user_version = 1;`);
+    await this.cloud.initialize();
   }
   async load(): Promise<{ games: GameRecord[]; settings: Settings }> {
     const games: GameRecord[] = [];

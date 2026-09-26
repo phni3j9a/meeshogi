@@ -1,4 +1,14 @@
 export type Side = 'black' | 'white';
+export type AnalysisMethod = 'sekirei' | 'cloud-free' | 'cloud-precision';
+export const ANALYSIS_METHODS = ['sekirei', 'cloud-free', 'cloud-precision'] as const;
+export const ANALYSIS_METHOD_LABELS: Record<AnalysisMethod, string> = {
+  sekirei: '端末内（Sekirei）',
+  'cloud-free': 'Cloud・無料',
+  'cloud-precision': 'Cloud・精密',
+};
+export function cloudProfileOf(method: AnalysisMethod): 'free' | 'precision' | null {
+  return method === 'cloud-free' ? 'free' : method === 'cloud-precision' ? 'precision' : null;
+}
 export const PIECE_SET_IDS = ['tsuge', 'shiraki', 'sakura', 'seiji'] as const;
 export type PieceSetId = (typeof PIECE_SET_IDS)[number];
 export type Service = 'shogiwars' | 'kiou' | 'unknown';
@@ -87,6 +97,7 @@ export interface GameRecord extends ParsedGame {
 export interface Settings {
   playerNames: Record<Service, string[]>;
   autoAnalyze: boolean;
+  analysisMethod: AnalysisMethod;
   analysisNodes: number;
   multiPV: number;
   theme: 'system' | 'light' | 'dark';
@@ -99,6 +110,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   playerNames: { shogiwars: [], kiou: [], unknown: [] },
   autoAnalyze: true,
+  analysisMethod: 'sekirei',
   analysisNodes: 10000,
   multiPV: 2,
   theme: 'system',

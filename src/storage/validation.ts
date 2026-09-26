@@ -215,7 +215,8 @@ export function decodeSettings(value: unknown): Settings {
   requireValid(
     integer(settings.analysisNodes, 1000, 1_000_000) &&
       integer(settings.multiPV, 1, 3) &&
-      member(settings.theme, ['system', 'light', 'dark']),
+      member(settings.theme, ['system', 'light', 'dark']) &&
+      member(settings.analysisMethod, ['sekirei', 'cloud-free', 'cloud-precision']),
   );
   requireValid(
     ['autoAnalyze', 'boardFlip', 'showArrows', 'showMateBadges', 'haptics'].every(
