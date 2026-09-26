@@ -21,15 +21,21 @@ env:
     visible:
       id: game-screen
     timeout: 30000
-# The menu-open tap can be eaten while a big result batch is re-rendering the
-# screen (seen right after a completed cloud sync). Retry until the item shows.
-- repeat:
-    times: 5
-    while:
-      notVisible: '比較レポートを書き出す（開発用）'
-    commands:
-      - tapOn: 棋譜の操作
-      - waitForAnimationToEnd
+# Let the library->game transition finish before touching the header: the
+# game-screen id appears before the header buttons accept touches, so a tap
+# fired right after it can land in the dying transition frame and is eaten.
+- waitForAnimationToEnd
+# Tap by point: on this header Pressable an accessibility-node tap reports
+# success but never fires onPress (ActionSheet never opens; verified vs. a raw
+# coordinate tap at the same bounds which opens it). Point is inside the
+# header '...' button on the 1080x2400 acceptance AVD.
+- tapOn:
+    point: 91%,9%
+# The Modal sheet can mount noticeably late when the app just finished a big
+# cloud result sync (observed: sheet appears only after the run ends).
+- extendedWaitUntil:
+    visible: '比較レポートを書き出す（開発用）'
+    timeout: 120000
 - takeScreenshot: c70-game-menu
 # The item must exist in this build; if it does not the release bundle lacks
 # EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1 and that is the failure to report.
