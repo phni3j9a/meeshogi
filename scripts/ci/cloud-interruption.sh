@@ -205,8 +205,12 @@ sleep "$SETTLE_WAIT"
 dump_db s11-foregrounded || true
 screenshot s11-foregrounded
 fg=$(latest_job s11-foregrounded); IFS='|' read -r job1 st1 _ _ n1 <<< "$fg"
-[[ "$job1" == "$job0" ]] && note "bg->fg: SAME job_id ($job1)" || note "bg->fg: JOB_ID_CHANGED $job0 -> $job1"
-[[ "$n1" == "$n0" ]] && note "bg->fg: attempt count unchanged ($n1)" || note "bg->fg: ATTEMPT_COUNT_CHANGED $n0 -> $n1"
+if [[ -z $job1 ]]; then
+  note "bg->fg: snapshot unavailable — no DB verdict"
+else
+  [[ "$job1" == "$job0" ]] && note "bg->fg: SAME job_id ($job1)" || note "bg->fg: JOB_ID_CHANGED $job0 -> $job1"
+  [[ "$n1" == "$n0" ]] && note "bg->fg: attempt count unchanged ($n1)" || note "bg->fg: ATTEMPT_COUNT_CHANGED $n0 -> $n1"
+fi
 
 note "--- step: kill + relaunch ---"
 app_kill || true
@@ -216,13 +220,17 @@ sleep "$KILL_WAIT"
 dump_db s20-relaunched || true
 screenshot s20-relaunched
 rl=$(latest_job s20-relaunched); IFS='|' read -r job2 st2 snp2 rc2 n2 <<< "$rl"
-[[ "$job2" == "$job0" ]] && note "kill->relaunch: SAME job_id ($job2)" || note "kill->relaunch: JOB_ID_CHANGED $job0 -> $job2"
-if [[ "$rc2" =~ ^[0-9]+$ && "$rc0" =~ ^[0-9]+$ && "$rc2" -ge "$rc0" ]]; then
-  note "kill->relaunch: saved results kept (received $rc0 -> $rc2)"
+if [[ -z $job2 ]]; then
+  note "kill->relaunch: snapshot unavailable — no DB verdict"
 else
-  note "kill->relaunch: received_count check inconclusive ($rc0 -> $rc2)"
+  [[ "$job2" == "$job0" ]] && note "kill->relaunch: SAME job_id ($job2)" || note "kill->relaunch: JOB_ID_CHANGED $job0 -> $job2"
+  if [[ "$rc2" =~ ^[0-9]+$ && "$rc0" =~ ^[0-9]+$ && "$rc2" -ge "$rc0" ]]; then
+    note "kill->relaunch: saved results kept (received $rc0 -> $rc2)"
+  else
+    note "kill->relaunch: received_count check inconclusive ($rc0 -> $rc2)"
+  fi
+  [[ "$n2" == "$n0" ]] && note "kill->relaunch: attempt count unchanged ($n2)" || note "kill->relaunch: ATTEMPT_COUNT_CHANGED $n0 -> $n2"
 fi
-[[ "$n2" == "$n0" ]] && note "kill->relaunch: attempt count unchanged ($n2)" || note "kill->relaunch: ATTEMPT_COUNT_CHANGED $n0 -> $n2"
 
 note "--- step: network cut ($NET_WAIT s) ---"
 if net_cut; then
@@ -236,12 +244,16 @@ if net_cut; then
   dump_db s31-restored || true
   screenshot s31-restored
   nr=$(latest_job s31-restored); IFS='|' read -r job3 st3 snp3 rc3 n3 <<< "$nr"
-  [[ "$job3" == "$job0" ]] && note "netcut->restore: SAME job_id ($job3)" || note "netcut->restore: JOB_ID_CHANGED $job0 -> $job3"
-  [[ "$n3" == "$n0" ]] && note "netcut->restore: attempt count unchanged ($n3)" || note "netcut->restore: ATTEMPT_COUNT_CHANGED $n0 -> $n3"
-  if [[ "$snp3" =~ ^[0-9]+$ && "$snp0" =~ ^[0-9]+$ && "$snp3" -gt "$snp0" ]]; then
-    note "netcut->restore: server_next_ply advanced $snp0 -> $snp3 (server kept working while client offline)"
+  if [[ -z $job3 ]]; then
+    note "netcut->restore: snapshot unavailable — no DB verdict"
   else
-    note "netcut->restore: server_next_ply $snp0 -> $snp3"
+    [[ "$job3" == "$job0" ]] && note "netcut->restore: SAME job_id ($job3)" || note "netcut->restore: JOB_ID_CHANGED $job0 -> $job3"
+    [[ "$n3" == "$n0" ]] && note "netcut->restore: attempt count unchanged ($n3)" || note "netcut->restore: ATTEMPT_COUNT_CHANGED $n0 -> $n3"
+    if [[ "$snp3" =~ ^[0-9]+$ && "$snp0" =~ ^[0-9]+$ && "$snp3" -gt "$snp0" ]]; then
+      note "netcut->restore: server_next_ply advanced $snp0 -> $snp3 (server kept working while client offline)"
+    else
+      note "netcut->restore: server_next_ply $snp0 -> $snp3"
+    fi
   fi
 else
   note "netcut: step skipped (see reason above); leaving network untouched"
