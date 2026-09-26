@@ -43,5 +43,30 @@
       "max_instances": 1,
       "instance_type": "standard-3"
     }
-  ]
+  ],
+  "d1_databases": [
+    {
+      "binding": "JOBS_DB",
+      "database_name": "meeshogi-jobs-staging",
+      "database_id": "__D1_DATABASE_ID__",
+      "migrations_table": "d1_migrations_jobs",
+      "preview_database_id": "__D1_DATABASE_ID__"
+    }
+  ],
+  "queues": {
+    "producers": [
+      { "queue": "meeshogi-jobs-staging", "binding": "JOBS_QUEUE" }
+    ],
+    "consumers": [
+      {
+        "queue": "meeshogi-jobs-staging",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 3,
+        "dead_letter_queue": "meeshogi-jobs-staging-dlq",
+        "max_concurrency": 1,
+        "visibility_timeout_ms": 900000
+      }
+    ]
+  }
 }

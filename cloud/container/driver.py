@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -27,9 +28,14 @@ CONDITIONS_MANIFEST_PATH = Path(os.environ.get(
     "CONDITIONS_MANIFEST_PATH",
     str(Path(__file__).resolve().parents[1] / "bench" / "conditions.json"),
 ))
+JOB_PROFILES_PATH = Path(os.environ.get(
+    "JOB_PROFILES_PATH",
+    str(Path(__file__).resolve().parents[1] / "config" / "job-profiles.json"),
+))
 BUILD_INFO_PATH = Path(os.environ.get("BUILD_INFO_PATH", "/opt/app/build-info.json"))
 
 MAX_BODY_BYTES = 1024
+MAX_SESSION_BODY_BYTES = 128 * 1024
 MAX_SFEN_BYTES = 256
 MAX_MOVES = 256
 MAX_MULTIPV = 3
@@ -42,6 +48,11 @@ TERM_GRACE_SECONDS = 1.0
 KILL_GRACE_SECONDS = 1.0
 HANDSHAKE_TIMEOUT_SECONDS = 20.0
 READY_TIMEOUT_SECONDS = 45.0
+SESSION_CONTRACT = "analysis-session-v1"
+MAX_SESSION_POSITIONS = 512
+MAX_SESSION_PLY = 8192
+MAX_SESSION_DEADLINE_MS = 3_600_000
+SESSION_DRAIN_MS = 50
 MOVE_RE = re.compile(r"^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$")
 SFEN_RE = re.compile(r"^[0-9KkLlNnSsGgBbRrPp/+ bw-]+$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -227,6 +238,34 @@ def load_benchmark_conditions(path: Path) -> dict[str, dict[str, Any]]:
     if not conditions:
         raise DriverError("engine_error", "Benchmark conditions manifest is empty.")
     return conditions
+
+
+def load_job_profiles(path: Path) -> dict[str, dict[str, Any]]:
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            raise ValueError("job profiles root is not an object")
+        rows = config["profiles"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        raise DriverError("engine_error", "Job profiles config is unavailable.") from error
+    if config.get("schema") != "meeshogi-job-config-v1" or not isinstance(rows, dict):
+        raise DriverError("engine_error", "Job profiles config is invalid.")
+    profiles: dict[str, dict[str, Any]] = {}
+    for profile_id, row in rows.items():
+        if (
+            not isinstance(profile_id, str) or not re.fullmatch(r"[a-z0-9-]{1,40}", profile_id)
+            or not isinstance(row, dict)
+            or row.get("instanceType") not in {"standard-2", "standard-3"}
+            or type(row.get("threads")) is not int or not 1 <= row["threads"] <= 32
+            or type(row.get("hashMb")) is not int or not 1 <= row["hashMb"] <= 262144
+            or type(row.get("moveTimeMs")) is not int or not 1 <= row["moveTimeMs"] <= 600000
+            or type(row.get("multiPV")) is not int or not 1 <= row["multiPV"] <= MAX_MULTIPV
+        ):
+            raise DriverError("engine_error", "Job profiles config is invalid.")
+        profiles[profile_id] = dict(row)
+    if not profiles:
+        raise DriverError("engine_error", "Job profiles config is empty.")
+    return profiles
 
 
 def _read_text(path: Path) -> str | None:
@@ -619,6 +658,18 @@ class EngineSession:
                     raise DriverError("engine_error", "Engine returned a malformed bestmove.")
                 return move
 
+    def drain_stale_lines(self, quiet_seconds: float) -> None:
+        # Drop engine output left over from a finished search so a reused process
+        # cannot attribute stale info lines to the next position. Each observed
+        # straggler restarts one bounded quiet window; the drain always ends.
+        spent = 0.0
+        while spent < quiet_seconds * 10:
+            try:
+                self.lines.get(timeout=quiet_seconds)
+            except queue.Empty:
+                return
+            spent += quiet_seconds
+
     def stop_and_reap(self) -> dict[str, Any] | None:
         if self.process is None:
             return None
@@ -755,6 +806,61 @@ def _base_result(sfen: str, identity: dict[str, str], effective_multi_pv: int) -
     }
 
 
+def _session_base_result(sfen: str, identity: dict[str, str], profile: dict[str, Any], effective_multi_pv: int) -> dict[str, Any]:
+    return {
+        "schemaVersion": 1,
+        "sfen": sfen,
+        "perspective": "sente",
+        "identity": identity,
+        "conditions": {
+            "requested": {
+                "threads": profile["threads"],
+                "hashMb": profile["hashMb"],
+                "moveTimeMs": profile["moveTimeMs"],
+                "multiPV": profile["multiPV"],
+            },
+            "actual": {
+                "threads": profile["threads"],
+                "hashMb": profile["hashMb"],
+                "moveTimeMs": profile["moveTimeMs"],
+                "multiPV": effective_multi_pv,
+            },
+        },
+    }
+
+
+class SessionStream:
+    """Owns the busy guard for one analysis-session-v1 response.
+
+    The handler iterates the NDJSON line generator and always calls close();
+    close() stops the generator (reaping the engine through its finally block)
+    and releases the single-request busy guard, even if the body was never
+    started or the client went away mid-stream.
+    """
+
+    def __init__(self, release: Callable[[], None], lines: Iterator[dict[str, Any]]):
+        self._release = release
+        self._lines = lines
+        self._closed = False
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        return self._lines
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            close = getattr(self._lines, "close", None)
+            if close is not None:
+                close()
+        finally:
+            self._release()
+
+    def __del__(self) -> None:
+        self.close()
+
+
 class AnalysisService:
     def __init__(
         self,
@@ -766,12 +872,15 @@ class AnalysisService:
         conditions_manifest_path: Path = CONDITIONS_MANIFEST_PATH,
         settings: dict[str, Any] | None = None,
         build_info: dict[str, str] | None = None,
+        job_profiles_path: Path = JOB_PROFILES_PATH,
+        monotonic: Callable[[], float] | None = None,
     ):
         self.engine_path = engine_path
         self.weight_path = weight_path
         self.options_path = options_path
         self.manifest_path = manifest_path
         self.conditions_manifest_path = conditions_manifest_path
+        self.job_profiles_path = job_profiles_path
         self.manifest = expected_manifest if expected_manifest is not None else verify_identity(
             engine_path, weight_path, options_path, manifest_path
         )
@@ -785,9 +894,12 @@ class AnalysisService:
             "killGraceSeconds": KILL_GRACE_SECONDS,
             "handshakeTimeoutSeconds": HANDSHAKE_TIMEOUT_SECONDS,
             "readyTimeoutSeconds": READY_TIMEOUT_SECONDS,
+            "sessionDrainMs": SESSION_DRAIN_MS,
         }
         if settings:
             self.settings.update(settings)
+        self._job_profiles: dict[str, dict[str, Any]] | None = None
+        self._monotonic = monotonic if monotonic is not None else time.monotonic
         self.busy = threading.Lock()
         self.verify_stop_engine_once_enabled = os.environ.get("ANALYSIS_VERIFY_STOP_ENGINE_ONCE") == "1"
         self.verify_stop_engine_once_pending = self.verify_stop_engine_once_enabled
@@ -1077,8 +1189,8 @@ class AnalysisService:
             }
 
         elapsed_ms = max(1, round((time.monotonic() - started) * 1000))
-        block = collector.best_block
         if timed_out:
+            block = collector.best_block
             result.update({
                 "status": "failure",
                 "failure": {"code": "timeout", "message": "The engine exceeded the fixed search deadline."},
@@ -1090,6 +1202,22 @@ class AnalysisService:
             })
             return 504, result
 
+        return self._finished_position_result(result, collector, engine_outcome, elapsed_ms)
+
+    def _finished_position_result(
+        self,
+        result: dict[str, Any],
+        collector: MultiPvCollector,
+        engine_outcome: str,
+        elapsed_ms: int,
+    ) -> tuple[int, dict[str, Any]]:
+        """Map a completed search outcome onto an analysis-json-v1 result object.
+
+        Shared by /analyze and the analysis-session-v1 position loop; the HTTP
+        status is returned alongside so the single-position endpoint can use it
+        directly while the session stream only keeps the result object.
+        """
+        block = collector.best_block
         if engine_outcome == "resign":
             result.update({
                 "status": "incomplete",
@@ -1136,6 +1264,229 @@ class AnalysisService:
             return 502, result
         return 200, result
 
+    def _profiles(self) -> dict[str, dict[str, Any]]:
+        if self._job_profiles is None:
+            self._job_profiles = load_job_profiles(self.job_profiles_path)
+        return self._job_profiles
+
+    def _session_failure(self, code: str, message: str, **extra: Any) -> dict[str, Any]:
+        return {
+            "schemaVersion": 1,
+            "sfen": None,
+            "perspective": "sente",
+            "status": "failure",
+            "failure": {"code": code, "message": message},
+            "identity": self.identity,
+            **extra,
+        }
+
+    def session_response(self, payload: Any) -> tuple[int, Any]:
+        """Validate one analysis-session-v1 request and open its NDJSON stream.
+
+        Returns ``(status, failure_object)`` for rejections, or ``(200,
+        SessionStream)``; the caller must iterate the stream and close it.
+        """
+        def invalid(message: str) -> tuple[int, dict[str, Any]]:
+            return 400, self._session_failure("invalid", message)
+
+        if not isinstance(payload, dict) or set(payload) != {"contract", "profileId", "conditions", "positions", "deadlineMs"}:
+            return invalid("Expected an analysis-session-v1 session request.")
+        if payload["contract"] != SESSION_CONTRACT:
+            return invalid("Unsupported session contract.")
+        profile_id = payload["profileId"]
+        conditions = payload["conditions"]
+        positions = payload["positions"]
+        deadline_ms = payload["deadlineMs"]
+        if not isinstance(profile_id, str):
+            return invalid("Unknown session profile.")
+        try:
+            profiles = self._profiles()
+        except DriverError as error:
+            return 502, self._session_failure(error.code, error.message)
+        profile = profiles.get(profile_id)
+        if profile is None:
+            return invalid("Unknown session profile.")
+        if (
+            not isinstance(conditions, dict)
+            or set(conditions) != {"threads", "hashMb", "moveTimeMs", "multiPV"}
+            or any(type(conditions[key]) is not int for key in ("threads", "hashMb", "moveTimeMs", "multiPV"))
+            or any(conditions[key] != profile[key] for key in ("threads", "hashMb", "moveTimeMs", "multiPV"))
+        ):
+            return invalid("Session conditions do not match the requested profile.")
+        if not isinstance(positions, list) or not 1 <= len(positions) <= MAX_SESSION_POSITIONS:
+            return invalid("Session positions are missing or exceed the bounded count.")
+        previous_ply = -1
+        for position in positions:
+            if (
+                not isinstance(position, dict)
+                or not {"ply", "sfen"}.issubset(position)
+                or not set(position) <= {"ply", "sfen", "legalMoveCount"}
+            ):
+                return invalid("Session positions must contain ply and sfen fields.")
+            ply = position["ply"]
+            legal_move_count = position.get("legalMoveCount")
+            if (
+                type(ply) is not int or not 0 <= ply <= MAX_SESSION_PLY or ply <= previous_ply
+                or not is_valid_sfen(position["sfen"])
+                or (
+                    legal_move_count is not None
+                    and (type(legal_move_count) is not int or not 1 <= legal_move_count <= 600)
+                )
+            ):
+                return invalid("Session positions are malformed.")
+            previous_ply = ply
+        if type(deadline_ms) is not int or not 1 <= deadline_ms <= MAX_SESSION_DEADLINE_MS:
+            return invalid("Session deadline is missing or out of range.")
+        if profile["instanceType"] != self.expected_instance_type:
+            return 409, self._session_failure(
+                "instance_mismatch",
+                "Container runtime evidence does not match the session profile.",
+                runtimeMismatch="profile_instance_type_mismatch",
+            )
+        runtime = runtime_facts(self.expected_instance_type)
+        mismatch = benchmark_runtime_mismatch(runtime, self.expected_instance_type)
+        if mismatch:
+            return 409, self._session_failure(
+                "instance_mismatch",
+                "Container runtime evidence does not match the session profile.",
+                runtimeMismatch=mismatch,
+            )
+        if not self.busy.acquire(blocking=False):
+            return 409, self._session_failure("busy", "An analysis is already running.")
+        try:
+            stream = SessionStream(
+                self.busy.release,
+                self._session_lines(profile_id, conditions, profile, positions, deadline_ms, self._monotonic()),
+            )
+        except Exception:
+            self.busy.release()
+            raise
+        return 200, stream
+
+    def _session_lines(
+        self,
+        profile_id: str,
+        conditions: dict[str, Any],
+        profile: dict[str, Any],
+        positions: list[dict[str, Any]],
+        deadline_ms: int,
+        received: float,
+    ) -> Iterator[dict[str, Any]]:
+        margin_ms = (
+            self.settings["searchGraceMs"]
+            + self.settings["sessionDrainMs"]
+            + 1000
+            * (
+                self.settings["stopResponseGraceSeconds"]
+                + 2 * self.settings["termGraceSeconds"]
+                + self.settings["killGraceSeconds"]
+            )
+        )
+        required_ms = profile["moveTimeMs"] + margin_ms
+        session = EngineSession(
+            self.engine_path,
+            self.manifest,
+            {
+                **self.settings,
+                "threads": profile["threads"],
+                "hashMb": profile["hashMb"],
+                "moveTimeMs": profile["moveTimeMs"],
+                "effectiveMultiPV": profile["multiPV"],
+            },
+        )
+        engine_launches = 0
+        analyzed = 0
+        clean_end = False
+        try:
+            yield {
+                "type": "session",
+                "contract": SESSION_CONTRACT,
+                "profileId": profile_id,
+                "conditions": dict(conditions),
+                "identity": self.identity,
+                "driverBootId": DRIVER_BOOT_ID,
+                "engineLaunch": 1,
+            }
+            try:
+                session.start()
+            except (DriverError, TimeoutError) as error:
+                engine_launches = 1 if session.process is not None else 0
+                message = error.message if isinstance(error, DriverError) else "Engine handshake timed out."
+                yield {
+                    "type": "end",
+                    "analyzed": analyzed,
+                    "reason": "error",
+                    "engineLaunches": engine_launches,
+                    "code": error.code if isinstance(error, DriverError) else "engine_error",
+                    "message": message,
+                }
+                return
+            engine_launches = 1
+            reason = "complete"
+            for position in positions:
+                remaining_ms = deadline_ms - (self._monotonic() - received) * 1000
+                if remaining_ms < required_ms:
+                    reason = "deadline"
+                    break
+                sfen = position["sfen"]
+                legal_move_count = position.get("legalMoveCount")
+                effective = (
+                    profile["multiPV"]
+                    if legal_move_count is None
+                    else min(profile["multiPV"], legal_move_count)
+                )
+                collector = MultiPvCollector(effective, side_to_move=sfen.split(" ")[1])
+                result = _session_base_result(sfen, self.identity, profile, effective)
+                started = time.monotonic()
+                engine_outcome = ""
+                failure: dict[str, Any] | None = None
+                try:
+                    engine_outcome = session.search(sfen, collector)
+                    session.drain_stale_lines(self.settings["sessionDrainMs"] / 1000)
+                except SearchTimeout:
+                    block = collector.best_block
+                    result.update({
+                        "status": "failure",
+                        "failure": {"code": "timeout", "message": "The engine exceeded the fixed search deadline."},
+                        "meta": {
+                            "nodes": collector.nodes if collector.nodes and collector.nodes > 0 else None,
+                            "completedDepth": block[0] if block else None,
+                            "elapsedMs": max(1, round((time.monotonic() - started) * 1000)),
+                        },
+                    })
+                    failure = result["failure"]
+                except IdentityMismatch as error:
+                    result.update({"status": "failure", "failure": {"code": "identity_mismatch", "message": error.message}})
+                    failure = result["failure"]
+                except (DriverError, TimeoutError) as error:
+                    message = error.message if isinstance(error, DriverError) else "Engine handshake timed out."
+                    result.update({"status": "failure", "failure": {"code": "engine_error", "message": message}})
+                    failure = result["failure"]
+                if failure is not None:
+                    yield {"type": "result", "ply": position["ply"], "engineLaunch": engine_launches, "result": result}
+                    analyzed += 1
+                    yield {
+                        "type": "end",
+                        "analyzed": analyzed,
+                        "reason": "error",
+                        "engineLaunches": engine_launches,
+                        "code": failure["code"],
+                        "message": failure["message"],
+                    }
+                    return
+                elapsed_ms = max(1, round((time.monotonic() - started) * 1000))
+                _, result = self._finished_position_result(result, collector, engine_outcome, elapsed_ms)
+                yield {"type": "result", "ply": position["ply"], "engineLaunch": engine_launches, "result": result}
+                analyzed += 1
+            clean_end = True
+            yield {"type": "end", "analyzed": analyzed, "reason": reason, "engineLaunches": engine_launches}
+        finally:
+            if session.process is not None:
+                if clean_end:
+                    session.close_after_search()
+                else:
+                    session.stop_and_reap()
+
 
 def driver_get_response(service: AnalysisService, path: str) -> tuple[int, dict[str, Any]]:
     if path == "/health":
@@ -1154,7 +1505,7 @@ def create_handler(service: AnalysisService) -> type[BaseHTTPRequestHandler]:
             self._write(status, response)
 
         def do_POST(self) -> None:
-            if self.path not in {"/analyze", "/benchmark"}:
+            if self.path not in {"/analyze", "/benchmark", "/session"}:
                 self._write(404, {"schemaVersion": 1, "sfen": None, "status": "failure", "failure": {"code": "invalid", "message": "Unknown route."}})
                 return
             if self.path == "/benchmark" and not service.benchmark_enabled:
@@ -1168,7 +1519,8 @@ def create_handler(service: AnalysisService) -> type[BaseHTTPRequestHandler]:
                 length = int(self.headers.get("content-length", "-1"))
             except ValueError:
                 length = -1
-            if length < 0 or length > MAX_BODY_BYTES:
+            limit = MAX_SESSION_BODY_BYTES if self.path == "/session" else MAX_BODY_BYTES
+            if length < 0 or length > limit:
                 self._write(413, {"schemaVersion": 1, "sfen": None, "status": "failure", "failure": {"code": "invalid", "message": "Request body exceeds the limit."}})
                 return
             try:
@@ -1176,8 +1528,34 @@ def create_handler(service: AnalysisService) -> type[BaseHTTPRequestHandler]:
             except (UnicodeDecodeError, json.JSONDecodeError):
                 self._write(400, {"schemaVersion": 1, "sfen": None, "status": "failure", "failure": {"code": "invalid", "message": "Request body is not valid JSON."}})
                 return
+            if self.path == "/session":
+                self._write_session(*service.session_response(payload))
+                return
             status, response = service.benchmark_response(payload) if self.path == "/benchmark" else service.response(payload)
             self._write(status, response)
+
+        def _write_session(self, status: int, outcome: Any) -> None:
+            if status != 200:
+                self._write(status, outcome)
+                return
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                for line in outcome:
+                    chunk = json.dumps(line, separators=(",", ":")).encode("utf-8") + b"\n"
+                    self.wfile.write(f"{len(chunk):x}\r\n".encode("ascii") + chunk + b"\r\n")
+                    self.wfile.flush()
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+            except OSError:
+                # The client went away mid-stream; closing the stream reaps the
+                # engine and frees the busy guard for the next request.
+                pass
+            finally:
+                outcome.close()
 
         def _write(self, status: int, value: dict[str, Any]) -> None:
             encoded = json.dumps(value, separators=(",", ":")).encode("utf-8")

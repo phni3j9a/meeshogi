@@ -17,7 +17,17 @@ function hasBenchmarkIdentityDigests(value: unknown): boolean {
     && BENCHMARK_IDENTITY_DIGEST_KEYS.every((key) => typeof digests[key] === 'string' && /^[0-9a-f]{64}$/u.test(digests[key] as string));
 }
 
-export const SEARCH_CONDITIONS = Object.freeze({
+export type SearchConditions = {
+  threads: number;
+  hashMb: number;
+  moveTimeMs: number;
+  multiPV: number;
+};
+
+/** Instance name of the normal standard-2 Container — shared by the synchronous /internal routes and Free job sessions. */
+export const SINGLETON_TARGET_ID = 'analysis-mvp-singleton';
+
+export const SEARCH_CONDITIONS: SearchConditions = Object.freeze({
   threads: 1,
   hashMb: 64,
   moveTimeMs: 1500,
@@ -184,6 +194,10 @@ function hasExactIdentity(value: unknown): boolean {
   return Object.entries(EXPECTED_IDENTITY).every(([key, expected]) => identity[key] === expected);
 }
 
+export function hasExpectedIdentity(value: unknown): boolean {
+  return hasExactIdentity(value);
+}
+
 export type DriverFailure = {
   schemaVersion: 1;
   sfen: string;
@@ -210,6 +224,7 @@ export function validateDriverResult(
   value: unknown,
   sfen: string,
   rootLegalMoves: string[],
+  expectedConditions: SearchConditions = SEARCH_CONDITIONS,
 ): AnalysisResult | DriverFailure | null {
   if (typeof value !== 'object' || value === null) return null;
   const result = value as Record<string, unknown>;
@@ -236,19 +251,19 @@ export function validateDriverResult(
   if (
     typeof requested !== 'object' ||
     requested === null ||
-    Object.entries(SEARCH_CONDITIONS).some(
+    Object.entries(expectedConditions).some(
       ([key, expected]) => (requested as Record<string, unknown>)[key] !== expected,
     )
   ) {
     return null;
   }
-  const expectedMultiPV = Math.min(SEARCH_CONDITIONS.multiPV, rootLegalMoves.length);
+  const expectedMultiPV = Math.min(expectedConditions.multiPV, rootLegalMoves.length);
   if (typeof actual !== 'object' || actual === null) return null;
   const actualRecord = actual as Record<string, unknown>;
   if (
-    actualRecord.threads !== SEARCH_CONDITIONS.threads ||
-    actualRecord.hashMb !== SEARCH_CONDITIONS.hashMb ||
-    actualRecord.moveTimeMs !== SEARCH_CONDITIONS.moveTimeMs ||
+    actualRecord.threads !== expectedConditions.threads ||
+    actualRecord.hashMb !== expectedConditions.hashMb ||
+    actualRecord.moveTimeMs !== expectedConditions.moveTimeMs ||
     actualRecord.multiPV !== expectedMultiPV
   ) {
     return null;

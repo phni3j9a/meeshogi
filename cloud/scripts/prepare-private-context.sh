@@ -105,6 +105,8 @@ install -m 0400 -- "$options_path" "$CONTEXT/engine_options.txt"
 install -m 0440 -- "$CLOUD_DIR/container/driver.py" "$CONTEXT/driver.py"
 install -m 0440 -- "$CLOUD_DIR/container/artifact-manifest.json" "$CONTEXT/artifact-manifest.json"
 install -m 0440 -- "$CLOUD_DIR/bench/conditions.json" "$CONTEXT/conditions.json"
+python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$CLOUD_DIR/config/job-profiles.json"
+install -m 0440 -- "$CLOUD_DIR/config/job-profiles.json" "$CONTEXT/job-profiles.json"
 install -m 0440 -- "$CLOUD_DIR/container/Dockerfile" "$CONTEXT/Dockerfile"
 install -m 0440 -- "$CLOUD_DIR/container/.dockerignore" "$CONTEXT/.dockerignore"
 
