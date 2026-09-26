@@ -52,11 +52,11 @@ env:
           when:
             visible: 'Meeshogi Export.*'
           commands:
+            # After the tap the sheet dismisses and the app shows the
+            # '書き出しました' Alert, which covers id: game-screen — so the
+            # completion signal is the alert text waited on below, not the
+            # game screen.
             - tapOn: 'Meeshogi Export.*'
-            - extendedWaitUntil:
-                visible:
-                  id: game-screen
-                timeout: 30000
       - runFlow:
           when:
             notVisible: 'Meeshogi Export.*'
