@@ -4,7 +4,7 @@
 #
 #   Usage: cloud-db-snapshot.sh <android|ios> <out_file>
 #
-# Android: pulls /data/data/com.meeshogi.app/databases/meeshogi.db (needs
+# Android: pulls /data/data/com.meeshogi.app/files/SQLite/meeshogi.db (needs
 # adbd-as-root — works on google_apis/userdebug emulator images; otherwise
 # prints DB_UNAVAILABLE and returns 1).
 # iOS: copies meeshogi.db out of the app container on the booted/selected
@@ -30,13 +30,13 @@ case "$platform" in
     if adb "${adb_args[@]}" root >/dev/null 2>&1; then
       adb "${adb_args[@]}" wait-for-device >/dev/null 2>&1
     fi
-    if ! adb "${adb_args[@]}" exec-out cat /data/data/com.meeshogi.app/databases/meeshogi.db > "$tmp" 2>/dev/null \
+    if ! adb "${adb_args[@]}" exec-out cat /data/data/com.meeshogi.app/files/SQLite/meeshogi.db > "$tmp" 2>/dev/null \
        || [[ ! -s $tmp ]]; then
       echo "DB_UNAVAILABLE: cannot read meeshogi.db (adbd root required)" > "$out_file"
       exit 1
     fi
-    adb "${adb_args[@]}" exec-out cat /data/data/com.meeshogi.app/databases/meeshogi.db-wal > "$tmp-wal" 2>/dev/null || true
-    adb "${adb_args[@]}" exec-out cat /data/data/com.meeshogi.app/databases/meeshogi.db-shm > "$tmp-shm" 2>/dev/null || true
+    adb "${adb_args[@]}" exec-out cat /data/data/com.meeshogi.app/files/SQLite/meeshogi.db-wal > "$tmp-wal" 2>/dev/null || true
+    adb "${adb_args[@]}" exec-out cat /data/data/com.meeshogi.app/files/SQLite/meeshogi.db-shm > "$tmp-shm" 2>/dev/null || true
     ;;
   ios)
     container=$(xcrun simctl get_app_container "$sim_udid" com.meeshogi.app data 2>/dev/null) || {
