@@ -14,7 +14,7 @@ Issue #7の修正では、公開fixtureを使うA/B/C/Dのhost診断に加え、
 
 Issue #19では、モバイル製品から独立した認証付きCloudflare staging解析ゲートを構築し、private image build・4 fixture smoke・timeout/recoveryを実環境で検証済みです。初期版アプリは引き続き端末内で解析し、このWorkerへの接続やログインを利用条件にしません。このゲートはproduction serviceではありません。検証結果と手順は[cloud README](cloud/README.md)を参照してください。
 
-Issue #20では、このstagingゲートで同じengine/modelの探索条件48種を実戦由来60局面で比較し、Free / 精密解析の初期候補と代替候補を[profile比較レポート](docs/CLOUD-PROFILE-BENCHMARK.md)にまとめました。製品profileの値はユーザー判断待ちで、アプリにはまだ組み込んでいません。
+Issue #20では、このstagingゲートで同じengine/modelの探索条件48種を実戦由来60局面で比較し、Free / 精密解析の初期候補と代替候補を[profile比較レポート](docs/CLOUD-PROFILE-BENCHMARK.md)にまとめました。2026-09-26に初期候補が承認されました。承認済みのprofileは、Freeがstandard-2 / Threads 1 / 1000ms / MultiPV 2、精密解析がstandard-3 / Threads 2 / 5000ms / MultiPV 3です（Hashはどちらも64 MiB）。アプリへの組み込みは、#21以降で行います。
 
 全局解析では、native境界で検証済みの初回反復の予算不足だけをその局面の欠測として扱い、後続局面の解析を続けます。処理が最後まで走っても不足が残る場合は解析済み件数と探索量不足の件数を分けて表示し、全局面の有効結果が揃った場合だけ全局解析完了と表示します。不完全な候補は保存せず、再起動後は保存済み結果と欠測だけを表示します。
 

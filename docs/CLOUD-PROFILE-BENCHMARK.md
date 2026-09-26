@@ -1,6 +1,11 @@
 # Cloud解析 Free / 精密解析 profile比較（Issue #20）
 
-2026-09-25〜26に、Issue #19のstaging Cloudflare Worker + Containerで、同じYaneuraOu + Suisho11 Plus（private image、build `faae69bfa42245ea9820cdf0b3420d95`、git `c6d5b52`）を使い、探索条件ごとの品質・時間・推定コストを実測した。**このレポートは判断材料であり、製品profileはまだ決めていない。** ユーザーが承認した値だけを後続Issue（#21以降）へ渡す。
+2026-09-25〜26に、Issue #19のstaging Cloudflare Worker + Containerで、同じYaneuraOu + Suisho11 Plus（private image、build `faae69bfa42245ea9820cdf0b3420d95`、git `c6d5b52`）を使い、探索条件ごとの品質・時間・推定コストを実測した。**2026-09-26にユーザーが初期候補を承認し、次の値を製品profileに採用した。** 後続Issue（#21以降）には、この承認済みの値だけを渡す。代替候補は採用していない。
+
+| profile | 承認した条件 |
+|---|---|
+| Free | standard-2（1 vCPU）/ Threads 1 / Hash 64 MiB / 1000ms / MultiPV 2 |
+| 精密解析 | standard-3（2 vCPU）/ Threads 2 / Hash 64 MiB / 5000ms / MultiPV 3 |
 
 全条件の集計表は[`cloud/bench/results/issue-20/aggregate.md`](../cloud/bench/results/issue-20/aggregate.md)、機械可読版は同じディレクトリの`aggregate.json.xz`に置いた。この2つの元になった測定rawも、公開用に置き換えたうえで`raw-issue20.jsonl.xz`として同じ場所に置いている。測定手順と再実行コマンドは[`cloud/README.md`](../cloud/README.md#issue-20-benchmark-mode)にある。
 
@@ -217,4 +222,4 @@ Cloudflareの公開料率（2026-09-25確認）から計算したgross額で、�
 | 深い基準解析に対する品質差が定量化されている | 10秒の基準解析3回に対して、Top-1、Top-2/3包含、CP差、詰みの一致を集計した。 |
 | Free → 精密解析で何が改善するか、改善が小さければその事実も明記されている | Top-1は変わらず、CP差のp90が440から116に下がる、と明記した。 |
 | 初期profile候補と代替候補を短いレポートにまとめる | このレポート。 |
-| ユーザー判断を待ち、承認された値だけを後続Issueへ渡す | **判断待ち**。 |
+| ユーザー判断を待ち、承認された値だけを後続Issueへ渡す | 2026-09-26にユーザーが初期候補を承認した。承認済みの値は冒頭の表のとおりで、#21へはこの値だけを渡す。 |
