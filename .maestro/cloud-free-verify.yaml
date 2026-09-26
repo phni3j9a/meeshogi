@@ -75,7 +75,19 @@ env:
 - tapOn:
     id: move-prev
     repeat: 29
-    delay: 500
+    delay: 800
+- runFlow:
+    when:
+      visible: '52 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
+- runFlow:
+    when:
+      visible: '50 / 80手'
+    commands:
+      - tapOn:
+          id: move-next
 - assertVisible: '51 / 80手'
 - assertNotVisible: '後手・1手詰め ›'
 - assertNotVisible: '.*手詰め ›'
