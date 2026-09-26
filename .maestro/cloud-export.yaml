@@ -58,11 +58,18 @@ env:
     when:
       platform: iOS
     commands:
-      # The file is already in the app container's Library/Caches; dismiss the
-      # system share sheet without picking an activity (Files RemoteUI does
-      # not present under automation anyway).
+      # Same idiom as export-review-ios: 'Save to Files' completes the
+      # activity and dismisses the sheet (the Files browser never mounts
+      # under automation — that is fine, the file is already in the app
+      # container's Library/Caches for the script to pull).
+      - scrollUntilVisible:
+          element:
+            text: 'Save to Files|ファイルに保存'
+          direction: DOWN
+          timeout: 20000
+          optional: true
       - tapOn:
-          point: '50%,10%'
+          text: 'Save to Files|ファイルに保存'
           optional: true
       - tapOn:
           text: '閉じる|Close|完了|Done'
