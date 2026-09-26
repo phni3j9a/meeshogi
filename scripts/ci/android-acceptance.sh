@@ -182,6 +182,13 @@ if flow_requested cloud-method-picker; then
   run_flow cloud-method-picker .maestro/cloud-method-picker.yaml
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/picker-after.txt" || true
 fi
+# cloud-cancel runs FIRST: it starts attempt #1 and cancels it while the job
+# is live (a completed Free job would make cloud-start disabled), then
+# cloud-free-start creates attempt #2 ('再試行') which interruptions exercise.
+if flow_requested cloud-cancel; then
+  run_flow cloud-cancel .maestro/cloud-cancel.yaml
+  bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/cancel-after.txt" || true
+fi
 if flow_requested cloud-free-start; then
   run_flow cloud-free-start .maestro/cloud-free-start.yaml
 fi
@@ -196,10 +203,6 @@ if flow_requested cloud-branch-local; then
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/branch-before.txt" || true
   run_flow cloud-branch-local .maestro/cloud-branch-local.yaml
   bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/branch-after.txt" || true
-fi
-if flow_requested cloud-cancel; then
-  run_flow cloud-cancel .maestro/cloud-cancel.yaml
-  bash scripts/ci/cloud-db-snapshot.sh android "$run_dir/cloud/cancel-after.txt" || true
 fi
 if flow_requested cloud-precision-denied; then
   run_flow cloud-precision-denied .maestro/cloud-precision-denied.yaml

@@ -2,10 +2,12 @@ appId: com.meeshogi.app
 env:
   INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
 ---
-# Issue #22: explicit cancel is the only path that posts /cancel. A second
-# Free attempt is started and cancelled immediately; the server-confirmed
-# 'cancelled' state must appear. (If the job raced to completion first the
-# completed label is also terminal evidence; the DB snapshot distinguishes.)
+# Issue #22: explicit cancel is the only path that posts /cancel. This flow
+# starts the FIRST Free attempt on the fixture game and cancels it as soon as
+# the server has created the job ('順番を待っています'/'Cloud解析中' mean a
+# jobId exists server-side), so the '取消しました' label is server-confirmed,
+# not a local pre-POST abort. cloud-free-start then creates a fresh attempt
+# ('再試行') for the interruption/verify runs.
 - launchApp
 - extendedWaitUntil:
     visible:
@@ -28,14 +30,14 @@ env:
 - waitForAnimationToEnd
 - tapOn: Cloud・無料
 - waitForAnimationToEnd
-# The completed attempt exists -> the button reads 'Cloud解析を再試行'.
 - tapOn:
     id: cloud-start
     waitToSettleTimeoutMs: 500
+# Wait for queued/running specifically — '開始しています' is still pre-POST.
 - extendedWaitUntil:
-    visible: '.*Cloud解析を開始しています.*|.*Cloud解析の順番を待っています.*|.*Cloud解析中・処理.*|Cloud解析が完了しました|.*Cloud解析が終了しました.*'
+    visible: '.*Cloud解析の順番を待っています.*|.*Cloud解析中・処理.*|Cloud解析が完了しました|.*Cloud解析が終了しました.*'
     timeout: 120000
-- takeScreenshot: c40-second-job-running
+- takeScreenshot: c40-job-live
 - runFlow:
     when:
       visible:
