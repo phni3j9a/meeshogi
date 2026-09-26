@@ -43,21 +43,27 @@ export class SqliteStatement {
 }
 
 export class SqliteD1 {
+  private batchCounter = 0;
+
   constructor(private readonly db: DatabaseSync) {}
 
   prepare(sql: string): SqliteStatement {
     return new SqliteStatement(this.db, sql);
   }
 
+  // Savepoints let concurrent batches interleave their statements on the one
+  // connection — the same interleaving a conditional INSERT must survive.
   async batch(statements: SqliteStatement[]): Promise<{ success: true; meta: { changes: number } }[]> {
-    this.db.exec('BEGIN');
+    const name = `batch_${this.batchCounter++}`;
+    this.db.exec(`SAVEPOINT "${name}"`);
     try {
       const results = [] as { success: true; meta: { changes: number } }[];
       for (const statement of statements) results.push(await statement.run());
-      this.db.exec('COMMIT');
+      this.db.exec(`RELEASE "${name}"`);
       return results;
     } catch (error) {
-      this.db.exec('ROLLBACK');
+      this.db.exec(`ROLLBACK TO "${name}"`);
+      this.db.exec(`RELEASE "${name}"`);
       throw error;
     }
   }

@@ -220,8 +220,11 @@ async function handleCreateJob(request: Request, env: Env, now: () => number): P
   if (!replay.positions) return invalid(replay.error ?? 'Illegal game input.');
   const positions = replay.positions;
 
+  // Hash the canonical replayed initial position, not the raw request string:
+  // equivalent SFEN spellings and hand-piece order normalize to the same job.
+  const canonicalInitialSfen = positions[0].sfen;
   const inputHash = await sha256Hex(JSON.stringify({
-    initialSfen: record.initialSfen,
+    initialSfen: canonicalInitialSfen,
     moves,
     profileId,
   }));
@@ -235,7 +238,7 @@ async function handleCreateJob(request: Request, env: Env, now: () => number): P
       idempotencyKey: record.idempotencyKey,
       inputHash,
       profileId,
-      initialSfen: record.initialSfen as string,
+      initialSfen: canonicalInitialSfen,
       movesJson: JSON.stringify(moves),
       totalPlies: positions.length,
       createdMs: nowMs,
@@ -323,6 +326,7 @@ async function handleGetJobResults(request: Request, env: Env, jobId: string): P
   const results = rows.map((row) => ({
     ply: row.ply,
     sfen: row.sfen,
+    engineLaunch: row.engine_launch,
     result: JSON.parse(row.result_json) as unknown,
   }));
   const lastPly = results.length > 0 ? results[results.length - 1].ply : afterPly;

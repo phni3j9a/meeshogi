@@ -16,7 +16,8 @@ vi.mock('@cloudflare/containers', () => ({
 
 import { EXPECTED_IDENTITY, legalMoves, type SearchConditions } from '../src/contract';
 import { handleJobBatch } from '../src/jobConsumer';
-import { JOB_LIMITS, JOB_PROFILES, type JobProfileId } from '../src/jobConfig';
+import { JOB_CONSUMER, JOB_LIMITS, JOB_PROFILES, type JobProfileId } from '../src/jobConfig';
+import { readFileSync } from 'node:fs';
 import { limitDay, handleV1Request, MAX_JOB_BODY_BYTES, MAX_JOB_MOVES } from '../src/jobs';
 import {
   AnalysisContainer,
@@ -188,6 +189,41 @@ function validResult(sfen: string, conditions: SearchConditions): Record<string,
   };
 }
 
+/** A driver failure line for the requested positions: plies not in failingPlies return a valid success. */
+function sessionWithDriverFailures(
+  body: SessionCall['body'],
+  failingPlies: number[],
+  code: string,
+  profileId: JobProfileId = 'free',
+  end: 'complete' | 'deadline' | 'error' = 'error',
+): string {
+  const conditions = JOB_PROFILES[profileId].conditions;
+  const lines: unknown[] = [{
+    type: 'session',
+    contract: 'analysis-session-v1',
+    profileId,
+    conditions: { ...conditions },
+    driverBootId: 'c'.repeat(32),
+    engineLaunch: 1,
+    identity: EXPECTED_IDENTITY,
+  }];
+  for (const position of body.positions) {
+    const result = failingPlies.includes(position.ply)
+      ? {
+        schemaVersion: 1,
+        sfen: position.sfen,
+        perspective: 'sente',
+        status: 'failure',
+        failure: { code, message: `driver reported ${code}` },
+        identity: EXPECTED_IDENTITY,
+      }
+      : validResult(position.sfen, conditions);
+    lines.push({ type: 'result', ply: position.ply, engineLaunch: 1, result });
+  }
+  lines.push({ type: 'end', reason: end });
+  return `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`;
+}
+
 interface FakeMessage extends Message<JobQueueMessage> {
   acked: boolean;
   retried: boolean;
@@ -342,6 +378,66 @@ describe('POST /v1/jobs validation and limits', () => {
     expect(replayView.idempotentReplay).toBe(true);
     const conflict = await createJob(env, credential, jobBody(['2g2f', '3c3d'], { idempotencyKey: 'stable-key' }));
     expect(conflict.status).toBe(409);
+  });
+
+  it('treats equivalent SFEN spellings and hand order as the same input', async () => {
+    const { d1, sqlite } = createTestDb();
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue });
+    const { credential, ownerId } = await issueCredential(env);
+    const key = 'normalized-sfen-key';
+    const first = await createJob(env, credential, jobBody(['2g2f'], { idempotencyKey: key }));
+    expect(first.status).toBe(201);
+    const { jobId } = await first.json() as { jobId: string };
+    // "/81/" spells the same empty row as "/9/"; the canonical replayed SFEN is hashed, not the raw string.
+    const equivalent = STARTPOS.replace('/9/9/9/', '/81/9/9/');
+    expect(Position.newBySFEN(equivalent)!.sfen).toBe(STARTPOS);
+    const replay = await createJob(env, credential, jobBody(['2g2f'], { idempotencyKey: key, initialSfen: equivalent }));
+    expect(replay.status).toBe(200);
+    expect((await replay.json() as { jobId: string; idempotentReplay: boolean })).toMatchObject({ jobId, idempotentReplay: true });
+    // Hand piece order also normalizes: "LP" and "PL" describe the same position.
+    const { credential: otherCredential } = await issueCredential(env);
+    const handA = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b LP 1';
+    const handB = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b PL 1';
+    expect(Position.newBySFEN(handA)!.sfen).toBe(Position.newBySFEN(handB)!.sfen);
+    const handJob = await createJob(env, otherCredential, jobBody([], { idempotencyKey: 'hand-key', initialSfen: handA }));
+    expect(handJob.status).toBe(201);
+    const { jobId: handJobId } = await handJob.json() as { jobId: string };
+    const handReplay = await createJob(env, otherCredential, jobBody([], { idempotencyKey: 'hand-key', initialSfen: handB }));
+    expect(handReplay.status).toBe(200);
+    expect((await handReplay.json() as { jobId: string }).jobId).toBe(handJobId);
+    // A different move list or profile with the same key is a conflict.
+    const conflict = await createJob(env, credential, jobBody(['2g2f', '8c8d'], { idempotencyKey: key, initialSfen: equivalent }));
+    expect(conflict.status).toBe(409);
+    sqlite.prepare('UPDATE owners SET precision_allowed = 1 WHERE owner_id = ?').run(ownerId);
+    const profileConflict = await createJob(env, credential, jobBody(['2g2f'], { idempotencyKey: key, profileId: 'precision' }));
+    expect(profileConflict.status).toBe(409);
+  });
+
+  it('never exceeds the active-job limit under concurrent submissions', async () => {
+    const { d1 } = createTestDb();
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue });
+    const { credential } = await issueCredential(env);
+    // Six concurrent POSTs for one owner: exactly one may pass the conditional INSERT.
+    const responses = await Promise.all(
+      Array.from({ length: 6 }, (_, index) => createJob(env, credential, jobBody(['2g2f'], { idempotencyKey: `concurrent-${index}` }))),
+    );
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.filter((status) => status === 201)).toHaveLength(1);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(5);
+    for (const response of responses) {
+      if (response.status !== 429) continue;
+      const body = await response.json() as { failure: { code: string } };
+      expect(body.failure.code).toBe('active_job_limit');
+    }
+  });
+
+  it('keeps the queue max_retries consistent between config and the wrangler template', async () => {
+    const config = JSON.parse(readFileSync(new URL('../config/job-profiles.json', import.meta.url), 'utf8')) as { consumer: { maxRetries: number } };
+    const wrangler = readFileSync(new URL('../wrangler.staging.jsonc', import.meta.url), 'utf8');
+    const match = /"max_retries"\s*:\s*(\d+)/u.exec(wrangler);
+    expect(match).not.toBeNull();
+    expect(Number(match![1])).toBe(config.consumer.maxRetries);
+    expect(JOB_CONSUMER.maxRetries).toBe(config.consumer.maxRetries);
   });
 
   it('enforces the active-job limit per owner', async () => {
@@ -565,6 +661,60 @@ describe('queue consumer', () => {
     expect(done.status).toBe('completed');
   });
 
+  it('aborts the stream on its own budget and continues from the cursor', async () => {
+    // The fake clock jumps past the 720 s budget while the driver stream is
+    // still open: committed progress is kept, a continuation is sent before
+    // the ack, and a later delivery resumes from the cursor.
+    let fakeNow = 1_700_000_000_000;
+    const { d1 } = createTestDb();
+    const probe = queueProbe();
+    const hangingCalls: SessionCall[] = [];
+    const env = makeJobsEnv({
+      d1,
+      queue: probe.queue,
+      normal: sessionBinding('ANALYSIS_CONTAINER', hangingCalls, (body) => {
+        const conditions = JOB_PROFILES.free.conditions;
+        const header = { type: 'session', contract: 'analysis-session-v1', profileId: 'free', conditions, driverBootId: 'd'.repeat(32), engineLaunch: 1, identity: EXPECTED_IDENTITY };
+        const first = { type: 'result', ply: body.positions[0].ply, engineLaunch: 1, result: validResult(body.positions[0].sfen, conditions) };
+        return new Response(new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(encoder.encode(`${JSON.stringify(header)}\n${JSON.stringify(first)}\n`));
+          },
+          pull() {
+            // The consumer asked for more data: the clock now jumps past its
+            // own budget deadline while this stream stays open forever.
+            fakeNow += JOB_CONSUMER.budgetMs + 60_000;
+          },
+        }), { headers: { 'content-type': 'application/x-ndjson' } });
+      }),
+    });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f', '8c8d', '2f2e']);
+    const first = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(first.batch, env, { now: () => fakeNow });
+    expect(first.messages[0].acked).toBe(true);
+    expect(hangingCalls).toHaveLength(1);
+    // The admission send plus the continuation send both precede the ack.
+    expect(probe.sent).toEqual([{ v: 1, jobId }, { v: 1, jobId }]);
+    const partial = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as Record<string, unknown>;
+    expect(partial.status).toBe('running');
+    expect(partial.nextPly).toBe(1);
+    // A later delivery on a completing driver finishes the job from the cursor.
+    const completeCalls: SessionCall[] = [];
+    const envComplete = makeJobsEnv({
+      d1,
+      queue: probe.queue,
+      normal: sessionBinding('ANALYSIS_CONTAINER', completeCalls, (body) => sessionLines(body.positions, 'free')),
+    });
+    const second = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(second.batch, envComplete);
+    expect(second.messages[0].acked).toBe(true);
+    expect(completeCalls[0].body.positions.map((position) => position.ply)).toEqual([1, 2, 3]);
+    const done = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as { status: string };
+    expect(done.status).toBe('completed');
+  });
+
   it('ignores duplicate delivery of a completed job', async () => {
     const { env, calls } = consumerEnv((body) => sessionLines(body.positions, 'free'));
     const { credential } = await issueCredential(env);
@@ -592,29 +742,108 @@ describe('queue consumer', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('commits a driver failure line as a failure result and keeps going', async () => {
+  it('does not commit a driver failure result and retries from the failed ply', async () => {
+    const { env } = consumerEnv((body) => sessionWithDriverFailures(body, [0], 'engine_error'));
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f', '8c8d']);
+    const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(batch, env);
+    expect(messages[0].retried).toBe(true);
+    expect(messages[0].acked).toBe(false);
+    const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as Record<string, unknown>;
+    expect(job.status).toBe('running');
+    expect(job.nextPly).toBe(0);
+    const results = await (await handleV1Request(get(`/v1/jobs/${jobId}/results`, credential), env)).json() as { results: unknown[] };
+    expect(results.results).toHaveLength(0);
+  });
+
+  it('keeps committed progress when a later ply fails, retrying from the cursor', async () => {
+    let sessionCalls = 0;
     const { env } = consumerEnv((body) => {
-      const conditions = JOB_PROFILES.free.conditions;
-      const lines = [
-        { type: 'session', contract: 'analysis-session-v1', profileId: 'free', conditions, driverBootId: 'b'.repeat(32), engineLaunch: 1, identity: EXPECTED_IDENTITY },
-        { type: 'result', ply: body.positions[0].ply, engineLaunch: 1, result: {
-          schemaVersion: 1, sfen: body.positions[0].sfen, perspective: 'sente', status: 'failure',
-          failure: { code: 'timeout', message: 'search deadline' }, identity: EXPECTED_IDENTITY,
-        } },
-        ...body.positions.slice(1).map((position) => ({ type: 'result', ply: position.ply, engineLaunch: 1, result: validResult(position.sfen, conditions) })),
-        { type: 'end', reason: 'complete' },
-      ];
-      return `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`;
+      sessionCalls += 1;
+      // Only the first session reports a driver failure at ply 1; the resumed session succeeds.
+      return sessionCalls === 1 ? sessionWithDriverFailures(body, [1], 'engine_error') : sessionLines(body.positions, 'free');
     });
     const { credential } = await issueCredential(env);
     const { jobId } = await createGame(env, credential, ['2g2f', '8c8d']);
     const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
     await handleJobBatch(batch, env);
-    expect(messages[0].acked).toBe(true);
+    expect(messages[0].retried).toBe(true);
+    const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as Record<string, unknown>;
+    expect(job.status).toBe('running');
+    expect(job.nextPly).toBe(1);
     const results = await (await handleV1Request(get(`/v1/jobs/${jobId}/results`, credential), env)).json() as {
       results: { ply: number; result: { status: string } }[];
     };
-    expect(results.results.map((row) => [row.ply, row.result.status])).toEqual([[0, 'failure'], [1, 'success'], [2, 'success']]);
+    expect(results.results.map((row) => [row.ply, row.result.status])).toEqual([[0, 'success']]);
+    // A follow-up delivery resumes from the cursor and finishes the job.
+    const second = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(second.batch, env);
+    const done = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as { status: string; nextPly: number };
+    expect(done.status).toBe('completed');
+    expect(done.nextPly).toBe(3);
+  });
+
+  it('fails the job when the driver reports a permanent failure', async () => {
+    const { env } = consumerEnv((body) => sessionWithDriverFailures(body, [1], 'identity_mismatch'));
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f', '8c8d']);
+    const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(batch, env);
+    expect(messages[0].acked).toBe(true);
+    expect(messages[0].retried).toBe(false);
+    const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as {
+      status: string; failure: { code: string };
+    };
+    expect(job.status).toBe('failed');
+    expect(job.failure.code).toBe('contract_violation');
+  });
+
+  it('marks the job failed when transient driver failures exhaust the retries', async () => {
+    const { env } = consumerEnv((body) => sessionWithDriverFailures(body, [0], 'engine_error'));
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    // attempts === maxRetries is still a standard retry; maxRetries + 1 is final.
+    const retriable = fakeBatch([{ v: 1, jobId }], JOB_CONSUMER.maxRetries);
+    await handleJobBatch(retriable.batch, env);
+    expect(retriable.messages[0].retried).toBe(true);
+    const final = fakeBatch([{ v: 1, jobId }], JOB_CONSUMER.maxRetries + 1);
+    await handleJobBatch(final.batch, env);
+    expect(final.messages[0].acked).toBe(true);
+    const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as {
+      status: string; failure: { code: string };
+    };
+    expect(job.status).toBe('failed');
+    expect(job.failure.code).toBe('retry_exhausted');
+  });
+
+  it('retries the delivery instead of acking when the failed state cannot be persisted', async () => {
+    const { d1 } = createTestDb();
+    const originalPrepare = d1.prepare.bind(d1);
+    let failureWrites = 0;
+    d1.prepare = ((sql: string) => {
+      if (sql.includes('failure_code = ?')) {
+        failureWrites += 1;
+        return { bind: () => ({ run: async () => { throw new Error('transient D1 write error'); } }) };
+      }
+      return originalPrepare(sql);
+    }) as typeof d1.prepare;
+    const calls: SessionCall[] = [];
+    const env = makeJobsEnv({
+      d1,
+      queue: queueProbe().queue,
+      normal: sessionBinding('ANALYSIS_CONTAINER', calls, () => new Response('busy', { status: 409 })),
+    });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const delivery = fakeBatch([{ v: 1, jobId }], JOB_CONSUMER.maxRetries + 1);
+    await handleJobBatch(delivery.batch, env);
+    expect(failureWrites).toBe(1);
+    // The failed state could not be persisted: the delivery goes back for retry/DLQ.
+    expect(delivery.messages[0].acked).toBe(false);
+    expect(delivery.messages[0].retried).toBe(true);
+    const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as { status: string };
+    expect(job.status).not.toBe('failed');
   });
 
   it('routes precision jobs to the standard-3 binding with profile conditions', async () => {
@@ -647,7 +876,7 @@ describe('queue consumer', () => {
     await handleJobBatch(first.batch, env);
     expect(first.messages[0].retried).toBe(true);
     expect((await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as { status: string }).status).toBe('running');
-    const exhausted = fakeBatch([{ v: 1, jobId }], 3);
+    const exhausted = fakeBatch([{ v: 1, jobId }], JOB_CONSUMER.maxRetries + 1);
     await handleJobBatch(exhausted.batch, env);
     expect(exhausted.messages[0].acked).toBe(true);
     const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as {

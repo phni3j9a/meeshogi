@@ -241,6 +241,22 @@ async function runSession(
       if (!validated) {
         return await abort({ kind: 'fail', code: 'contract_violation', message: 'Session result failed contract validation.' });
       }
+      if ((validated as DriverFailure).status === 'failure') {
+        // Driver execution failures never advance the cursor: a worker-validated
+        // position rejected as invalid, or an identity mismatch reported by the
+        // driver, is a permanent contract break; every other failure code is a
+        // transient engine fault retried from this ply by the standard Queue
+        // retry. The failed ply itself is never committed.
+        const code = String((validated as DriverFailure).failure?.code ?? 'unknown');
+        if (code === 'invalid' || code === 'identity_mismatch') {
+          return await abort({
+            kind: 'fail',
+            code: 'contract_violation',
+            message: `Driver reported a permanent failure for ply ${expected.ply}: ${code}.`,
+          });
+        }
+        return await abort(RETRY);
+      }
       const committed = await store.commitResult(
         job.job_id,
         expected.ply,
@@ -264,6 +280,9 @@ async function runSession(
   }
 
   if (endReason === 'complete' && received === positions.length) return RESUME;
+  // A driver-side error end takes the same transient path as a failure line;
+  // a deadline end is a clean boundary and continues with a fresh message.
+  if (endReason === 'error') return RETRY;
   return progress > 0 ? CONTINUE : RETRY;
 }
 
@@ -323,11 +342,13 @@ async function driveJob(
   }
 }
 
-async function markFailedQuietly(store: JobStore, jobId: string, code: string, message: string, now: () => number): Promise<void> {
+/** Returns true when the failed state was persisted. A false return keeps the delivery eligible for the standard retry/DLQ instead of an ack that would lose it. */
+async function persistFailed(store: JobStore, jobId: string, code: string, message: string, now: () => number): Promise<boolean> {
   try {
     await store.markFailed(jobId, code, message, iso(now()));
+    return true;
   } catch {
-    // Failing to persist the failure must not produce another retry loop.
+    return false;
   }
 }
 
@@ -337,9 +358,12 @@ async function retryOrFinish(
   jobId: string,
   now: () => number,
 ): Promise<void> {
-  if (message.attempts >= JOB_CONSUMER.maxAttempts) {
-    await markFailedQuietly(store, jobId, 'retry_exhausted', 'The delivery reached the configured retry limit.', now);
-    message.ack();
+  // Cloudflare attempts start at 1: maxRetries standard retries mean the
+  // delivery with attempts === maxRetries is still a retry and only
+  // attempts === maxRetries + 1 is the final one.
+  if (message.attempts > JOB_CONSUMER.maxRetries) {
+    if (await persistFailed(store, jobId, 'retry_exhausted', 'The delivery reached the configured retry limit.', now)) message.ack();
+    else message.retry();
     return;
   }
   message.retry();
@@ -359,8 +383,9 @@ export async function handleJobBatch(
       continue;
     }
     if (!env.JOBS_DB) {
-      if (message.attempts >= JOB_CONSUMER.maxAttempts) message.ack();
-      else message.retry();
+      // Nothing can be persisted, so the delivery is never confirmed: let the
+      // standard retry exhaust into the dead-letter queue instead of acking.
+      message.retry();
       continue;
     }
     const store = new JobStore(new D1RawDb(env.JOBS_DB));
@@ -407,8 +432,8 @@ export async function handleJobBatch(
         await retryOrFinish(store, message, jobId, now);
         break;
       case 'fail':
-        await markFailedQuietly(store, jobId, outcome.code, outcome.message, now);
-        message.ack();
+        if (await persistFailed(store, jobId, outcome.code, outcome.message, now)) message.ack();
+        else message.retry();
         break;
     }
   }
