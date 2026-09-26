@@ -108,8 +108,43 @@ owner に限って実施:
 
 `cloud-precision-denied` は allowlist 前、`cloud-precision-run` は allowlist 後に実行する。
 
+## 実施済み結果（Android focused run、candidate e6db45f 相当の製品コード）
+
+`evidence/issue22-android-20260927`（AVD emulator、Android 16、Release build）。
+
+| 項目 | 結果 |
+|---|---|
+| 方式 picker（設定・検討）・Sekirei 既定・切替で job 非発行 | PASS（DB `cloud_attempts` が切替前後とも 0 行） |
+| Cloud Free 開始・進行・完了 UI | PASS（job 複数、81/81 完走を確認） |
+| 中断耐性（bg/fg・kill/relaunch・実通信遮断+復帰） | PASS — 全 step で同一 `job_id`・attempt 数不変・受信結果保持。遮断は `ping 8.8.8.8` 不通で実証 |
+| 完了後のグラフ・候補・PV・通常 mate 表示 | PASS |
+| Cloud 選択中の証明詰めバッジ非表示 | PASS — ply 53 で Cloud は `-M1` のみ、同一 ply で Sekirei は `後手・1手詰め ›` |
+| 分岐・深掘りがローカル Sekirei | PASS（`分岐の解析結果（ローカル・Sekirei）` 等、DB に新規 cloud job なし） |
+| 明示取消 | PASS（live 中に取消 → server `cancelled`、受信 2 ply） |
+| Precision allowlist 前 403 | PASS（`profile_not_allowed` + Notice + 再試行） |
+| Precision allowlist 後 正常系 | PASS 6m04s（`job_daef4ff5b3a6d21bd5a1a47e`、81/81、owner `own_4129c89c73a30cd4b170f75b`） |
+| 3方式 export + analysis-compare | PASS — `meeshogi-comparison-3methods.json`（232KB）は同一棋譜の sekirei/cloud-free/cloud-precision を収録 |
+
+観測（Issue #24 判断材料）: この端末で Sekirei 全局解析は `65/81` で partial 終了
+（16 局面が恒久的な探索量不足）、Cloud Free/Precision は `81/81` 完走。
+
+### 運用注意（run で判明）
+
+- `import-review.yaml` の `clearState: true`（と reinstall）は SecureStore の
+  credential を wipe し install_id/owner_id が再生成される。precision allowlist は
+  owner 単位なので、phase B は **reinstall/clearState なし・同一 owner で** 実行する。
+- staging の Free job は busy 時に `retry_exhausted` になり得る（cancelled job の
+  drain と競合したとみられる一過性）。UI は正しく失敗+再試行 affordance を表示。
+- RN の header/ActionSheet: 大量 cloud 結果の同期再描画中は a11y ノード tap が
+  onPress を発火しないことがあり、Modal mount も遅延する。`cloud-export` は
+  座標 tap + 長め待機で安定化済み。
+
 ## 残る確認（このドラフト時点で未検証）
 
+- iOS 全般（macOS VM の接続障害で focused run 未実施 — evidence branch pending）
 - 512手超の棋譜に対する notice（fixture 未整備のため未検証と明記）
 - POST 応答喪失タイミングの live 再現（単体テストで代替保証）
 - 物理端末での発熱・実 network 環境（emulator/simulator のみ）
+- 中断中に server 側が ply を前進し続ける姿（Android では job が一過性
+  retry_exhausted となり server_next_ply 0→0 で観測できず。jobId 同一性と
+  非重複は証明済み。最終受入で live 完走 job への中断を再実施推奨）
