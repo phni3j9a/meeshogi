@@ -17,6 +17,7 @@ import type { LocalRepository } from '../storage/repository';
 import {
   attemptBlocksDelete,
   cloudContractEpoch,
+  isActiveAttempt,
   type CloudAttempt,
   type CloudProfileId,
 } from '../cloud/contract';
@@ -60,6 +61,40 @@ function countCurrentlyValidCloudRows(
   }
   return count;
 }
+
+/**
+ * Plan §3 limited exception — whether ONE blocking attempt is a confirmed
+ * unrecoverable Cloud request. Eligible only when the attempt failed with a
+ * credential that is provably unreachable from this device:
+ * `credential_absent` (storage key confirmed missing) or `credential_rejected`
+ * (the backend answered 401 to that credential). The answer is re-evaluated
+ * against the live credential store: a key that reappeared, or one belonging
+ * to a different owner, keeps the request recoverable and blocks deletion.
+ * Transient reads, network failures, contract violations, and generic errors
+ * never qualify. No new credential or key is ever issued to resolve this.
+ */
+async function canForgetCloudAttempt(
+  cloud: NonNullable<Dependencies['cloud']>,
+  attempt: CloudAttempt,
+): Promise<boolean> {
+  if (isActiveAttempt(attempt.status)) return false;
+  if (
+    attempt.failureCode !== 'credential_absent' &&
+    attempt.failureCode !== 'credential_rejected'
+  ) {
+    return false;
+  }
+  try {
+    const probe = await cloud.credentialsFor(attempt.endpoint).probe();
+    if (attempt.failureCode === 'credential_absent') return probe.state === 'absent';
+    if (probe.state === 'absent') return true;
+    if (probe.state === 'ok') return probe.credential.ownerId === attempt.ownerId;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 type GamePatch = Partial<
   Pick<
     GameRecord,
@@ -92,6 +127,14 @@ export interface AppState {
    * it removes the local request record while the server job may keep running.
    */
   deleteGame(id: string, options?: { forgetCloud?: boolean }): Promise<void>;
+  /**
+   * Plan §3 limited exception: whether EVERY attempt currently blocking this
+   * game's deletion is a confirmed unrecoverable Cloud request (credential key
+   * absent, or backend-401 rejected). Re-evaluated live against SecureStore —
+   * used by the UI only to decide whether to offer the local-forget dialog;
+   * deleteGame enforces the same check again at the delete boundary.
+   */
+  canForgetCloudGame(id: string): Promise<boolean>;
   updateSettings(patch: Partial<Settings>): Promise<void>;
   setLastViewed(id: string, ply: number): Promise<void>;
   startAnalysis(id: string): Promise<void>;
@@ -351,13 +394,29 @@ export function makeAppStore(deps: Dependencies) {
         }),
       deleteGame: (id, options) =>
         write(async () => {
-          const blocking = get().cloudAttempts.find(
+          const blockers = get().cloudAttempts.filter(
             (attempt) => attempt.gameId === id && attemptBlocksDelete(attempt),
           );
-          if (blocking && !options?.forgetCloud) {
-            throw new Error(
-              'この棋譜はCloud解析を実行中または未回収です。Cloud解析を取消してから削除してください。',
-            );
+          if (blockers.length) {
+            // Plan §3 limited exception only: forgetCloud is honoured when
+            // EVERY blocker is a confirmed unrecoverable request, re-evaluated
+            // against the latest SecureStore state right now. The flag alone
+            // never bypasses the protection.
+            const forgettable =
+              options?.forgetCloud === true &&
+              !!deps.cloud &&
+              (
+                await Promise.all(
+                  blockers.map((attempt) =>
+                    canForgetCloudAttempt(deps.cloud as NonNullable<Dependencies['cloud']>, attempt),
+                  ),
+                )
+              ).every(Boolean);
+            if (!forgettable) {
+              throw new Error(
+                'この棋譜はCloud解析を実行中または未回収です。Cloud解析を取消してから削除してください。',
+              );
+            }
           }
           if (get().analysisJob?.gameId === id) {
             get().stopAnalysis();
@@ -379,6 +438,18 @@ export function makeAppStore(deps: Dependencies) {
             ),
           }));
         }),
+      canForgetCloudGame: async (id) => {
+        if (!deps.cloud) return false;
+        const cloudDeps = deps.cloud;
+        const blockers = get().cloudAttempts.filter(
+          (attempt) => attempt.gameId === id && attemptBlocksDelete(attempt),
+        );
+        if (!blockers.length) return false;
+        for (const attempt of blockers) {
+          if (!(await canForgetCloudAttempt(cloudDeps, attempt))) return false;
+        }
+        return true;
+      },
       updateSettings: (patch) =>
         write(async () => {
           const settings = { ...get().settings, ...patch };

@@ -301,12 +301,26 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       return 'retry';
     }
     if (!credential || credential.ownerId !== attempt.ownerId) {
-      const message = credential
-        ? 'Cloudの認証情報が変わったため、実行中の解析へ再接続できません。'
-        : 'Cloudの認証情報が見つからず、実行中の解析へ再接続できません。';
+      // failureCode feeds delete-boundary eligibility (Plan §3 limited
+      // exception): only a CONFIRMED absent key or a backend 401 makes the
+      // local-forget escape possible. Owner mismatch and unreadable/corrupt
+      // entries stay recoverable-blocking.
+      let failureCode: string;
+      let message: string;
+      if (credential) {
+        failureCode = 'credential_owner_mismatch';
+        message = 'Cloudの認証情報が変わったため、実行中の解析へ再接続できません。';
+      } else {
+        const probe = await deps
+          .credentialsFor(endpoint)
+          .probe()
+          .catch(() => null);
+        failureCode = probe?.state === 'absent' ? 'credential_absent' : 'credential_unusable';
+        message = 'Cloudの認証情報が見つからず、実行中の解析へ再接続できません。';
+      }
       await persist(attempt.attemptId, {
         status: 'error',
-        failureCode: 'credential_lost',
+        failureCode,
         failureMessage: message,
         lastError: message,
       }).catch(() => undefined);
@@ -344,7 +358,9 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
         const message = mapApiError(error);
         await persist(attempt.attemptId, {
           status: 'error',
-          failureCode: error.code,
+          // A backend 401 means the submitted credential was rejected and this
+          // device cannot reconnect to that job (the local-forget exception).
+          failureCode: error.status === 401 ? 'credential_rejected' : error.code,
           failureMessage: message,
           lastError: message,
           finishedAt: deps.nowIso(),

@@ -222,11 +222,13 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
     expect(attempt(store).jobId).toBeNull();
     expect(attempt(store).submitAttempted).toBe(true);
+    expect(attempt(store).failureCode).toBe('credential_absent');
     // The server job may be live: deletion must stay blocked.
     expect(attemptBlocksDelete(attempt(store))).toBe(true);
     await expect(store.getState().deleteGame(game.id)).rejects.toThrow(/Cloud/u);
     expect(store.getState().games.some((g) => g.id === game.id)).toBe(true);
-    // The explicit escape removes only the local records.
+    // Confirmed key absence makes the limited local-forget exception eligible.
+    await expect(store.getState().canForgetCloudGame(game.id)).resolves.toBe(true);
     await store.getState().deleteGame(game.id, { forgetCloud: true });
     expect(store.getState().games.some((g) => g.id === game.id)).toBe(false);
     expect(store.getState().cloudAttempts).toHaveLength(0);
@@ -313,6 +315,177 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     expect(store.getState().cloudResults[attempt(store).attemptId]).toHaveLength(0);
     await vi.waitFor(() => expect(attempt(store).validCount).toBe(0));
     expect(cloudAttemptLabel(attempt(store))).not.toBe('解析済み');
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-004c: backend 401のattemptはcredential_rejectedでlocal-forget可能', async () => {
+    const { store, game } = await setup({
+      createJobError: () => {
+        throw new CloudApiError(401, 'unauthorized', 'auth failed');
+      },
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).failureCode).toBe('credential_rejected');
+    // The same rejected credential is still stored → confirmed unreachable.
+    await expect(store.getState().canForgetCloudGame(game.id)).resolves.toBe(true);
+    await store.getState().deleteGame(game.id, { forgetCloud: true });
+    expect(store.getState().games.some((g) => g.id === game.id)).toBe(false);
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-004d: 一時/一般エラー・credential復帰・複数blockerではforgetCloudを拒否する', async () => {
+    // (i) generic non-auth server error: never forgettable even with the flag.
+    const s1 = await setup({
+      createJobError: () => {
+        throw new CloudApiError(400, 'bad_request', 'broken');
+      },
+    });
+    await s1.store.getState().startCloudAnalysis(s1.game.id);
+    await vi.waitFor(() => expect(attempt(s1.store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(s1.store).failureCode).toBe('bad_request');
+    await expect(s1.store.getState().canForgetCloudGame(s1.game.id)).resolves.toBe(false);
+    await expect(
+      s1.store.getState().deleteGame(s1.game.id, { forgetCloud: true }),
+    ).rejects.toThrow(/Cloud/u);
+    s1.store.getState().pauseCloudJobs();
+
+    // (ii) transient credential-store read failure mid-flight: the attempt
+    // keeps retrying (never 'error') and forgetCloud stays refused.
+    const locked: CredentialStore = {
+      load: async () => {
+        throw new Error('keystore locked');
+      },
+      save: async () => {},
+      probe: async () => {
+        throw new Error('keystore locked');
+      },
+    };
+    const wakes2: (() => void)[] = [];
+    const holder: { store?: CredentialStore } = {};
+    const s2 = await setup(
+      {},
+      {
+        credentialsFor: () => holder.store ?? locked,
+        sleep: () => new Promise((resolve) => wakes2.push(resolve)),
+      },
+    );
+    holder.store = s2.credentials; // normal store until the attempt exists
+    await s2.store.getState().startCloudAnalysis(s2.game.id);
+    await vi.waitFor(() => expect(attempt(s2.store).jobId).toBe('job_1'), { timeout: 3000 });
+    holder.store = locked; // SecureStore read starts failing here
+    wakes2.splice(0).forEach((resolve) => resolve());
+    await vi.waitFor(() =>
+      expect(attempt(s2.store).lastError).toBe('Cloudの認証情報を読み込めませんでした。'),
+    );
+    expect(attempt(s2.store).status).not.toBe('error');
+    expect(attemptBlocksDelete(attempt(s2.store))).toBe(true);
+    await expect(s2.store.getState().canForgetCloudGame(s2.game.id)).resolves.toBe(false);
+    await expect(
+      s2.store.getState().deleteGame(s2.game.id, { forgetCloud: true }),
+    ).rejects.toThrow(/Cloud/u);
+    s2.store.getState().pauseCloudJobs();
+
+    // (iii) eligibility re-evaluated live: credential returns after the
+    // confirmed-absent error → the request is recoverable → refuse.
+    const wakes3: (() => void)[] = [];
+    const s3 = await setup(
+      { createJobFailAfterCreate: 1 },
+      { sleep: () => new Promise((resolve) => wakes3.push(resolve)) },
+    );
+    await s3.store.getState().startCloudAnalysis(s3.game.id);
+    await vi.waitFor(() => expect(wakes3.length).toBe(1));
+    setCredential(s3.credentials, null);
+    wakes3[0]();
+    await vi.waitFor(() => expect(attempt(s3.store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(s3.store).failureCode).toBe('credential_absent');
+    setCredential(s3.credentials, {
+      credential: 'cred-back',
+      ownerId: attempt(s3.store).ownerId,
+      installId: 'install-1',
+      endpoint: ENDPOINT,
+      issuedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await expect(s3.store.getState().canForgetCloudGame(s3.game.id)).resolves.toBe(false);
+    await expect(
+      s3.store.getState().deleteGame(s3.game.id, { forgetCloud: true }),
+    ).rejects.toThrow(/Cloud/u);
+    // The recoverable attempt can still be settled through the same key.
+    await s3.store.getState().cancelCloudAnalysis(attempt(s3.store).attemptId);
+    while (attempt(s3.store).status !== 'cancelled' && wakes3.length) {
+      wakes3.splice(0).forEach((resolve) => resolve());
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await vi.waitFor(() => expect(attempt(s3.store).status).toBe('cancelled'), { timeout: 3000 });
+    expect(attempt(s3.store).jobId).toBe('job_1');
+    s3.store.getState().pauseCloudJobs();
+  });
+
+  it('FP-004e: owner不一致はcredential喪失と断定せずlocal-forget不可', async () => {
+    const wakes: (() => void)[] = [];
+    const { store, credentials, game } = await setup(
+      {},
+      { sleep: () => new Promise((resolve) => wakes.push(resolve)) },
+    );
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(wakes.length).toBe(1));
+    // A credential for a DIFFERENT owner exists: do not conclude loss.
+    setCredential(credentials, {
+      credential: 'cred-other',
+      ownerId: 'own_other',
+      installId: 'install-2',
+      endpoint: ENDPOINT,
+      issuedAt: '2026-01-01T00:00:00.000Z',
+    });
+    wakes[0]();
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).failureCode).toBe('credential_owner_mismatch');
+    await expect(store.getState().canForgetCloudGame(game.id)).resolves.toBe(false);
+    await expect(
+      store.getState().deleteGame(game.id, { forgetCloud: true }),
+    ).rejects.toThrow(/Cloud/u);
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-004f: 複数blockerのうち1件でも非適格ならforgetCloudを拒否する', async () => {
+    const wakes: (() => void)[] = [];
+    const { store, credentials, game } = await setup(
+      {
+        createJobFailAfterCreate: 1,
+        // Second createJob (the precision attempt) fails generically.
+        createJobError: (call) => {
+          if (call === 2) throw new CloudApiError(400, 'bad_request', 'broken');
+        },
+      },
+      { sleep: () => new Promise((resolve) => wakes.push(resolve)) },
+    );
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(wakes.length).toBe(1));
+    setCredential(credentials, null);
+    wakes[0]();
+    await vi.waitFor(() => expect(attempt(store).failureCode).toBe('credential_absent'), {
+      timeout: 3000,
+    });
+    // Second attempt (precision) fails with a non-auth server error → not
+    // credential-related → the game as a whole stays unforgettabble.
+    await store.getState().updateSettings({ analysisMethod: 'cloud-precision' });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().cloudAttempts).toHaveLength(2));
+    await vi.waitFor(
+      () =>
+        expect(
+          store.getState().cloudAttempts.find((a) => a.profileId === 'precision')?.status,
+        ).toBe('error'),
+      { timeout: 3000 },
+    );
+    expect(
+      store.getState().cloudAttempts.find((a) => a.profileId === 'precision')?.failureCode,
+    ).toBe('bad_request');
+    await expect(store.getState().canForgetCloudGame(game.id)).resolves.toBe(false);
+    await expect(
+      store.getState().deleteGame(game.id, { forgetCloud: true }),
+    ).rejects.toThrow(/Cloud/u);
     store.getState().pauseCloudJobs();
   });
 

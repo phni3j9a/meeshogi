@@ -323,7 +323,7 @@ describe('Cloud解析のライフサイクル', () => {
 
   it('エラー応答(401/403/409/429)でattemptがerror終了する', async () => {
     for (const [status, code] of [
-      [401, 'unauthorized'],
+      [401, 'credential_rejected'],
       [403, 'profile_not_allowed'],
       [409, 'idempotency_key_in_use'],
       [429, 'quota_exceeded'],
