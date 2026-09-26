@@ -77,8 +77,9 @@ npm run analysis-compare -- <export.json> [<export2.json> …] \
 | Sekirei | `timing.wholeGameWallMs`（アプリ JS 側の壁時計） | 行の `timing.kind: 'app-call'` の `elapsedMs` |
 | Cloud | `timing.createdAt → finishedAt`（server job 時刻。queue・retry 込み） | 行の `timing.kind: 'server-search'` の `elapsedMs`（`result.meta.elapsedMs`。1局面の search+drain のみ。起動・queue・network を含まない） |
 
-- Sekirei の実行種別: `fresh-complete`（新規探索のみ）/ `completed-with-cache-reuse`（`cacheReuseCount > 0`）/ `resumed`（以前の試行の結果を引き継いだ）/ `partial` / `interrupted` / `unknown`。`interrupted`・`resumed`・`cacheReuseCount` は方式レベルの `timing` に保持し、cache 再利用 ply は行 `fromCache: true` で call 時間を持たない。
-- Sekirei の計測はアプリの JS 側が記録する: 全局 run 記録は `GameRecord.analysisRun`、行の call 時間は `PositionAnalysis.callElapsedMs`・生成 run は `runId` に保存する。記録方式の導入前に保存された結果にはこれらが無く、`completedAt` 等から推測もしない。
+- Sekirei の実行種別は今回の実行が記録した事実だけで分類する: `fresh-complete`（`completed`・`cacheReuseCount` 既知 0・非中断が確認できる — 新規全局解析時間の比較に使うのはこれだけ）/ `completed-with-cache-reuse`（`cacheReuseCount ≥ 1`。完了済み解析の再利用と中断後の継続の両方を含み、再利用元の完了履歴は追跡しない）/ `partial` / `interrupted` / `unknown`（記録不足。null を 0/false に倒さない）。`interrupted`・`cacheReuseCount` は方式レベルの `timing` に保持し、cache 再利用 ply は行 `fromCache: true` で call 時間を持たない。cache 行の過去の呼出し時間を今回の新規探索時間へ加算しない。
+- Sekireiの時間は今回の実行だけを計測しています。保存結果を再利用した実行には、完了済み解析の再利用と中断後の継続の両方が含まれ、再利用元の完了履歴は追跡していません。新規全局解析時間の比較には、全局面を今回計算して完了した実行だけを用います。
+- Sekirei の計測はアプリの JS 側が記録する: 全局 run 記録は `GameRecord.analysisRun`、行の call 時間は `PositionAnalysis.callElapsedMs`・生成 run は `runId` に保存する。記録方式の導入前に保存された結果にはこれらが無く、`completedAt` 等から推測もしない。旧形式の run 記録に残る `resumed` フラグは読み込み互換のため許容するだけで、分類・レポートの根拠にはしない。
 - Cloud job は background・再起動をまたいで server 側で継続するため、クライアント側の中断・再開という概念は持たない（idempotency key / jobId で同一 job に復帰する）。
 - 旧結果などで計測が無い値は `null` のまま保持する。**不明な時間を推定で埋めない**。
 

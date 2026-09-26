@@ -86,8 +86,6 @@ function runKindLabel(t: MethodTimingSummary): string {
       return '新規解析で完了';
     case 'completed-with-cache-reuse':
       return 'cache再利用を含む完了';
-    case 'resumed':
-      return '再開で完了';
     case 'partial':
       return 'partial（探索量不足あり）';
     case 'interrupted':
@@ -366,6 +364,7 @@ export function renderReport(summary: ComparisonSummary): string {
     '- terminal の種別は `checkmate`（詰み終局・勝者あり）と `no-legal-moves`（合法手なし・勝者なし）を区別する。',
     '- Cloud の `server-search` 時間は session 内の search+drain で、engine 起動・queue・network・端末での受信時間を含まない。job の createdAt→finishedAt（queue/retry 込み）と別に扱う。',
     '- Sekirei の `app-call` 時間は JS 側の呼出し壁時計。cache 再利用の ply は呼出し自体が無いため分母に入らない。',
+    '- Sekireiの時間は今回の実行だけを計測しています。保存結果を再利用した実行（`completed-with-cache-reuse`）には、完了済み解析の再利用と中断後の継続の両方が含まれ、再利用元の完了履歴は追跡していません。新規全局解析時間の比較には、全局面を今回計算して完了した実行（`fresh-complete`）だけを用います。',
     '- Cloud job の `completed` は server 処理の終了であり、全局面の有効な評価成立を保証しない（incomplete 行が残り得る）。',
     '',
   );

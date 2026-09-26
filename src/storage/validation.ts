@@ -41,7 +41,9 @@ function validAnalysisRun(value: unknown): boolean {
     finiteNonNegative(value.wholeGameWallMs) &&
     integer(value.cacheReuseCount, 0) &&
     typeof value.interrupted === 'boolean' &&
-    typeof value.resumed === 'boolean' &&
+    // Legacy field: records written before the timing-classification change
+    // carry `resumed`. It is tolerated for reading but never trusted.
+    !(value.resumed !== undefined && typeof value.resumed !== 'boolean') &&
     member(value.completion, ['completed', 'partial', 'interrupted'])
   );
 }

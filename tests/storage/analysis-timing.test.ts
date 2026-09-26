@@ -118,9 +118,9 @@ describe('Sekirei解析タイミングの永続化', () => {
       conditions: { nodes: DEFAULT_SETTINGS.analysisNodes, multiPV: DEFAULT_SETTINGS.multiPV },
       cacheReuseCount: 0,
       interrupted: false,
-      resumed: false,
       completion: 'completed',
     });
+    expect('resumed' in run!).toBe(false);
     expect(run!.wholeGameWallMs).toBeGreaterThanOrEqual(0);
     expect(Number.isFinite(run!.wholeGameWallMs)).toBe(true);
     for (const ply of [0, 1, 2]) {
@@ -158,7 +158,7 @@ describe('Sekirei解析タイミングの永続化', () => {
     expect(game.analysis[0].runId).toBe(game.analysisRun!.runId);
   });
 
-  it('再開したrunはcache再利用を数えresumedになる', async () => {
+  it('中断後に続けたrunはcache再利用を数えるだけで由来は追跡しない', async () => {
     const { store, analyze } = setup([shortGame()]);
     await store.getState().initialize();
     // Interrupt mid-run so ply 0 is persisted by run 1.
@@ -192,7 +192,9 @@ describe('Sekirei解析タイミングの永続化', () => {
     const run = game.analysisRun!;
     expect(run.completion).toBe('completed');
     expect(run.interrupted).toBe(false);
-    expect(run.resumed).toBe(true);
+    // The reused row came from an interrupted run, but the record only keeps
+    // this run's measured facts — the reuse origin is not tracked.
+    expect('resumed' in run).toBe(false);
     expect(run.cacheReuseCount).toBe(1);
     expect(analyze).toHaveBeenCalledTimes(2);
     // The reused row keeps its original runId — only fresh rows carry run 2's.
@@ -263,9 +265,11 @@ describe('タイミングのSQLite往復と後方互換', () => {
           wholeGameWallMs: 500,
           cacheReuseCount: 1,
           interrupted: false,
-          resumed: true,
           completion: 'completed' as const,
-        },
+          // Records written before the timing-classification change carry a
+          // `resumed` flag: tolerated on read, never promoted to a fact.
+          resumed: true,
+        } as unknown as GameRecord['analysisRun'],
       };
       const path = join(dir, 'data.db');
       const first = database(path);
@@ -276,7 +280,11 @@ describe('タイミングのSQLite往復と後方互換', () => {
       const second = database(path);
       await second.repository.initialize();
       const loaded = (await second.repository.load()).games[0];
-      expect(loaded.analysisRun).toEqual(game.analysisRun);
+      expect(loaded.analysisRun).toMatchObject({
+        runId: 'sek-run-persisted',
+        cacheReuseCount: 1,
+        completion: 'completed',
+      });
       expect(loaded.analysis[0].callElapsedMs).toBe(42);
       expect(loaded.analysis[0].runId).toBe('sek-run-persisted');
       second.db.close();

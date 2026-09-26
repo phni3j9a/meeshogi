@@ -530,7 +530,6 @@ function summarizeVolatility(
 export type RunKind =
   | 'fresh-complete'
   | 'completed-with-cache-reuse'
-  | 'resumed'
   | 'partial'
   | 'interrupted'
   | 'unknown';
@@ -550,22 +549,27 @@ export interface MethodTimingSummary {
   /** Sekirei: 新規探索せず保存済み結果を再利用した ply 数。 */
   cacheReuseCount: number | null;
   interrupted: boolean | null;
-  resumed: boolean | null;
   serverWindow: { createdAt: string; finishedAt: string } | null;
   /** 結果行の observed から見た実探索量（complete 行のみ）。 */
   observedNodes: Stats;
   observedDepth: Stats;
 }
 
+/**
+ * 今回の実行が記録した事実だけで分類する（再利用元の完了履歴は追跡しない）。
+ * `completed` + `cacheReuseCount` 既知 0 + 非中断 が確認できる実行だけが
+ * `fresh-complete`（新規全局時間の比較対象）。不明な項目は 0/false に
+ * 倒さず `unknown` とする。
+ */
 function sekireiRunKind(timing: SekireiMethodExport['timing']): RunKind {
   if (timing.completion === 'interrupted' || timing.interrupted === true) return 'interrupted';
   if (timing.completion === 'partial') return 'partial';
   if (timing.completion === 'completed') {
-    if (timing.resumed === true) return 'resumed';
     if (timing.cacheReuseCount !== null && timing.cacheReuseCount > 0) {
       return 'completed-with-cache-reuse';
     }
-    return 'fresh-complete';
+    if (timing.cacheReuseCount === 0 && timing.interrupted === false) return 'fresh-complete';
+    return 'unknown';
   }
   return 'unknown';
 }
@@ -613,7 +617,6 @@ function summarizeTiming(
       perPosition,
       cacheReuseCount: timing.cacheReuseCount ?? null,
       interrupted: timing.interrupted ?? null,
-      resumed: timing.resumed ?? null,
       serverWindow: null,
       observedNodes,
       observedDepth,
@@ -634,7 +637,6 @@ function summarizeTiming(
     perPosition,
     cacheReuseCount: null,
     interrupted: null,
-    resumed: null,
     serverWindow:
       timing.createdAt !== null && timing.finishedAt !== null
         ? { createdAt: timing.createdAt, finishedAt: timing.finishedAt }

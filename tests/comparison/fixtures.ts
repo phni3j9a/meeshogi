@@ -46,7 +46,6 @@ export function sekireiMethod(timing?: Partial<SekireiMethodExport['timing']>): 
       wholeGameWallMs: 400,
       cacheReuseCount: 0,
       interrupted: false,
-      resumed: false,
       completion: 'completed',
       ...timing,
     },

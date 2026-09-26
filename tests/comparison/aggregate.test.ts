@@ -256,24 +256,51 @@ describe('表示値の変動（±1500 clip・欠測非橋接）', () => {
 });
 
 describe('計測の分類と provenance', () => {
-  it('Sekirei の runKind を completion/cache/resume/interrupt から分類する', () => {
-    const withTiming = (timing: Parameters<typeof sekireiMethod>[0]) =>
-      summaryOf(
-        makeExport(2, (ply, sfen) => ({ sekirei: completeResult(sfen, cp(0), [cand('7g7f', cp(0))], { timing: { kind: 'app-call', elapsedMs: 10 } }) }), {
-          methods: { sekirei: sekireiMethod(timing) },
-        }),
-      ).timing.find((t) => t.method === 'sekirei')!;
+  const withTiming = (timing: Parameters<typeof sekireiMethod>[0]) =>
+    summaryOf(
+      makeExport(2, (ply, sfen) => ({ sekirei: completeResult(sfen, cp(0), [cand('7g7f', cp(0))], { timing: { kind: 'app-call', elapsedMs: 10 } }) }), {
+        methods: { sekirei: sekireiMethod(timing) },
+      }),
+    ).timing.find((t) => t.method === 'sekirei')!;
 
-    expect(withTiming({ completion: 'completed', cacheReuseCount: 0, resumed: false }).runKind).toBe(
-      'fresh-complete',
-    );
-    expect(withTiming({ completion: 'completed', cacheReuseCount: 3 }).runKind).toBe(
-      'completed-with-cache-reuse',
-    );
-    expect(withTiming({ completion: 'completed', resumed: true }).runKind).toBe('resumed');
+  it('Sekirei の runKind は今回の実行の記録した事実だけで分類する', () => {
+    // fresh-complete: completed + cacheReuseCount 既知 0 + 非中断が確認できる。
+    expect(
+      withTiming({ completion: 'completed', cacheReuseCount: 0, interrupted: false }).runKind,
+    ).toBe('fresh-complete');
+    // cache再利用を伴う完了は 1 分類だけ: 再利用元が完了済み実行か中断後の
+    // 継続かは追跡しない（FP-012 契約）。完了済み再実行・中断後継続・
+    // 条件変更を挟んだ継続はすべて completed-with-cache-reuse。
+    for (const count of [1, 3]) {
+      for (const interrupted of [false, null]) {
+        expect(
+          withTiming({ completion: 'completed', cacheReuseCount: count, interrupted }).runKind,
+        ).toBe('completed-with-cache-reuse');
+      }
+    }
     expect(withTiming({ completion: 'partial' }).runKind).toBe('partial');
+    expect(
+      withTiming({ completion: 'partial', cacheReuseCount: 2, interrupted: false }).runKind,
+    ).toBe('partial');
     expect(withTiming({ completion: 'completed', interrupted: true }).runKind).toBe('interrupted');
+    expect(withTiming({ completion: 'interrupted', cacheReuseCount: 2 }).runKind).toBe(
+      'interrupted',
+    );
     expect(withTiming({ completion: 'unknown' }).runKind).toBe('unknown');
+  });
+
+  it('記録不足を 0/false に倒さず unknown にする（fresh-complete は測定済みの実行だけ）', () => {
+    // cacheReuseCount 不明 → 再利用の有無が分からず fresh-complete にしない。
+    expect(
+      withTiming({ completion: 'completed', cacheReuseCount: null, interrupted: false }).runKind,
+    ).toBe('unknown');
+    // interrupted 不明 → 非中断を確認できず fresh-complete にしない。
+    expect(
+      withTiming({ completion: 'completed', cacheReuseCount: 0, interrupted: null }).runKind,
+    ).toBe('unknown');
+    expect(
+      withTiming({ completion: 'completed', cacheReuseCount: null, interrupted: null }).runKind,
+    ).toBe('unknown');
   });
 
   it('Cloud は server job 時刻から全局壁時計を引き、不明なら null のままにする', () => {

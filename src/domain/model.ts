@@ -105,8 +105,6 @@ export interface SekireiRunRecord {
   cacheReuseCount: number;
   /** The run stopped before covering every ply (cancel/invalidation/error). */
   interrupted: boolean;
-  /** The run continued from results persisted by earlier runs. */
-  resumed: boolean;
   completion: 'completed' | 'partial' | 'interrupted';
 }
 export interface GameRecord extends ParsedGame {

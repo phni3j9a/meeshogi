@@ -278,14 +278,12 @@ export async function buildComparisonExport(
             wholeGameWallMs: run.wholeGameWallMs,
             cacheReuseCount: run.cacheReuseCount,
             interrupted: run.interrupted,
-            resumed: run.resumed,
             completion: run.completion,
           }
         : {
             wholeGameWallMs: null,
             cacheReuseCount: null,
             interrupted: null,
-            resumed: null,
             completion: 'unknown',
           },
     } satisfies SekireiMethodExport;

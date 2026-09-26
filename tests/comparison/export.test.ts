@@ -116,7 +116,6 @@ function makeRun(overrides: Partial<SekireiRunRecord> = {}): SekireiRunRecord {
     wholeGameWallMs: 12_345,
     cacheReuseCount: 0,
     interrupted: false,
-    resumed: false,
     completion: 'completed',
     ...overrides,
   };
@@ -339,7 +338,7 @@ describe('比較export writer', () => {
         0: sekireiRow(positions[0], CONDITIONS, { runId: 'sek-run-old' }),
         1: sekireiRow(positions[1], CONDITIONS, { callElapsedMs: 55, runId: 'sek-run-1' }),
       },
-      analysisRun: makeRun({ cacheReuseCount: 1, resumed: true }),
+      analysisRun: makeRun({ cacheReuseCount: 1 }),
     });
     const doc = await build(game);
     const reused = doc.plies[0].results.sekirei;
@@ -351,7 +350,7 @@ describe('比較export writer', () => {
       timing: { kind: 'app-call', elapsedMs: 55 },
     });
     expect(doc.methods.sekirei).toMatchObject({
-      timing: { cacheReuseCount: 1, resumed: true, completion: 'completed' },
+      timing: { cacheReuseCount: 1, completion: 'completed' },
     });
     expect(validateComparisonExport(doc).ok).toBe(true);
   });
@@ -373,7 +372,6 @@ describe('比較export writer', () => {
         wholeGameWallMs: null,
         cacheReuseCount: null,
         interrupted: null,
-        resumed: null,
         completion: 'unknown',
       },
     });

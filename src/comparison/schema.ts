@@ -118,8 +118,6 @@ export interface SekireiMethodExport {
     cacheReuseCount: number | null;
     /** 全 ply を走査する前に中断したか。 */
     interrupted: boolean | null;
-    /** 以前の試行の保存済み結果を引き継いで再開したか。 */
-    resumed: boolean | null;
     completion: 'completed' | 'partial' | 'interrupted' | 'unknown';
   };
 }

@@ -555,18 +555,13 @@ export function makeAppStore(deps: Dependencies) {
         const budgetShortfallPlies: number[] = [];
         // JS-measured run record for the comparison export. Persisted even on
         // interruption so a partial run is distinguishable from a fresh pass.
+        // The record only carries facts measured by THIS run: whether reused
+        // rows came from an unfinished or a completed earlier pass is not
+        // tracked (the comparison classifies them together).
         const runId = `sek-${deps.createId()}`;
         latestRunByGame.set(id, runId);
-        // `resumed` means this run continues an unfinished earlier run of the
-        // same game — the previous record ended partial/interrupted AND rows
-        // it produced (identified by runId) are being reused under compatible
-        // conditions. Cache rows from a different run (e.g. an older completed
-        // pass after an intervening run under other conditions) are just
-        // reuse, not a resume.
-        const previousRun = game.analysisRun;
         const startedAt = Date.now();
         let cacheReuseCount = 0;
-        let reusedPreviousRun = false;
         let coveredAll = false;
         const makeJob = (status: AnalysisJob['status'], error?: string): AnalysisJob => ({
           gameId: id,
@@ -593,12 +588,6 @@ export function makeAppStore(deps: Dependencies) {
             if (!current) return;
             if (reusable(current.analysis[ply], sfen)) {
               cacheReuseCount++;
-              if (
-                previousRun &&
-                current.analysis[ply]?.runId === previousRun.runId
-              ) {
-                reusedPreviousRun = true;
-              }
               continue;
             }
             let result: PositionAnalysis;
@@ -667,10 +656,6 @@ export function makeAppStore(deps: Dependencies) {
                     wholeGameWallMs: Date.now() - startedAt,
                     cacheReuseCount,
                     interrupted: !coveredAll,
-                    resumed:
-                      reusedPreviousRun &&
-                      !!previousRun &&
-                      previousRun.completion !== 'completed',
                     completion: coveredAll
                       ? budgetShortfallPlies.length
                         ? ('partial' as const)

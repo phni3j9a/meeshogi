@@ -375,7 +375,7 @@ function validateSekireiMethod(
   } else if (
     checkKeys(
       value.timing,
-      ['wholeGameWallMs', 'cacheReuseCount', 'interrupted', 'resumed', 'completion'],
+      ['wholeGameWallMs', 'cacheReuseCount', 'interrupted', 'completion'],
       `${path}.timing`,
       errors,
     )
@@ -389,9 +389,6 @@ function validateSekireiMethod(
     }
     if (!optNullable(timing.interrupted, (v) => typeof v === 'boolean')) {
       errors.at(`${path}.timing.interrupted`, 'must be a boolean or null');
-    }
-    if (!optNullable(timing.resumed, (v) => typeof v === 'boolean')) {
-      errors.at(`${path}.timing.resumed`, 'must be a boolean or null');
     }
     if (!['completed', 'partial', 'interrupted', 'unknown'].includes(String(timing.completion))) {
       errors.at(`${path}.timing.completion`, 'invalid completion value');

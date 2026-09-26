@@ -19,6 +19,7 @@ import { memoryCredentialStore, type CredentialStore } from '../../src/cloud/cre
 import { secureStoreCredentials } from '../../src/cloud/secure-store';
 import type { CloudCredential } from '../../src/cloud/client';
 import { buildComparisonExport } from '../../src/comparison/export';
+import { aggregateExport } from '../../src/comparison/aggregate';
 import type { CloudMethodExport } from '../../src/comparison/schema';
 import type { CloudDeps } from '../../src/store/cloud-controller';
 import { ENDPOINT, makeCloudDeps, fakeCloud, sqliteDb, type FakeCloudOptions } from './helpers';
@@ -99,6 +100,27 @@ async function setup(
 }
 
 const attempt = (store: Store) => store.getState().cloudAttempts[0];
+/** Export the game's Sekirei section and return its aggregate runKind. */
+const sekireiRunKindOf = async (store: Store, gameId: string) => {
+  const g = store.getState().games.find((x) => x.id === gameId)!;
+  const doc = await buildComparisonExport(
+    {
+      game: g,
+      attempts: [],
+      results: {},
+      generator: {
+        platform: 'unknown',
+        osVersion: null,
+        deviceModel: null,
+        appVersion: null,
+        buildId: null,
+      },
+      exportedAt: '2026-01-03T00:00:00.000Z',
+    },
+    async () => 'hash',
+  );
+  return aggregateExport(doc, 't.json').timing.find((t) => t.method === 'sekirei')?.runKind;
+};
 const flush = async (turns = 50) => {
   for (let i = 0; i < turns; i += 1) await Promise.resolve();
 };
@@ -644,7 +666,7 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     store.getState().pauseCloudJobs();
   });
 
-  it('FP-012: 完了済み再実行のcache再利用はresumedにならない', async () => {
+  it('FP-012: 完了済み再実行のcache再利用はcompleted-with-cache-reuse', async () => {
     const { store, game } = await setup(
       {},
       {},
@@ -656,16 +678,22 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     const first = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
     expect(first?.completion).toBe('completed');
     expect(first?.cacheReuseCount).toBe(0);
+    // A run that measured everything itself classifies as fresh-complete.
+    expect(await sekireiRunKindOf(store, game.id)).toBe('fresh-complete');
     // Immediate rerun over the same conditions reuses all three rows.
     await store.getState().startAnalysis(game.id);
     await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
     const second = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
     expect(second?.completion).toBe('completed');
     expect(second?.cacheReuseCount).toBe(3);
-    expect(second?.resumed).toBe(false);
+    // `resumed` is no longer inferred: the record keeps only measured facts,
+    // and the reuse-inclusive completion is classified the same regardless of
+    // whether the reused rows came from a completed run.
+    expect('resumed' in second!).toBe(false);
+    expect(await sekireiRunKindOf(store, game.id)).toBe('completed-with-cache-reuse');
   });
 
-  it('FP-012b: 中断runの続きとしてcacheを再利用した場合のみresumed=true', async () => {
+  it('FP-012b: 中断後の継続としてcacheを再利用して完了しても同じ分類', async () => {
     const blocked: { release?: () => void } = {};
     let call = 0;
     const analyze = async (sfen: string, conditions: AnalysisConditions) => {
@@ -696,7 +724,9 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     const run = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
     expect(run?.completion).toBe('completed');
     expect(run?.cacheReuseCount).toBe(1);
-    expect(run?.resumed).toBe(true);
+    // Continuation after an interrupted run is classified the same as reuse of
+    // a completed pass: the origin of reused rows is not tracked.
+    expect(await sekireiRunKindOf(store, game.id)).toBe('completed-with-cache-reuse');
   });
 
   it('FP-013: 古いrunのfinallyが新しいrunのanalysisRunを上書きしない', async () => {
@@ -809,7 +839,7 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     store.getState().pauseCloudJobs();
   });
 
-  it('FP-012c: 異なる条件で中断した履歴はcache再利用をresumedにしない', async () => {
+  it('FP-012c: 完了済みA→別条件で中断したXを挟んだcache再利用も同じ分類', async () => {
     const analyze = async (sfen: string, conditions: AnalysisConditions) => {
       if (conditions.nodes === 20000) throw new Error('engine failed');
       return sekireiResult(sfen, conditions);
@@ -833,14 +863,63 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
       { timeout: 3000 },
     );
     // Back to 10000: every reused row belongs to run A, not to the
-    // interrupted run B → this is completed-with-cache-reuse, not a resume.
+    // interrupted run B. A completed-then-interrupted history and an
+    // interrupted-then-interrupted history classify identically: the export
+    // only knows this run's own reuse count.
     await store.getState().updateSettings({ analysisNodes: 10000 });
     await store.getState().startAnalysis(game.id);
     await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
     const run = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
     expect(run?.completion).toBe('completed');
     expect(run?.cacheReuseCount).toBe(3);
-    expect(run?.resumed).toBe(false);
+    expect(await sekireiRunKindOf(store, game.id)).toBe('completed-with-cache-reuse');
+  });
+
+  it('FP-012d: A中断→別条件X中断→Aの行を再利用して完了も同じ分類', async () => {
+    const blocked: { release?: () => void } = {};
+    let call = 0;
+    const analyze = async (sfen: string, conditions: AnalysisConditions) => {
+      if (conditions.nodes === 20000) throw new Error('engine failed');
+      call += 1;
+      if (call === 2) {
+        await new Promise<void>((resolve) => {
+          blocked.release = resolve;
+        });
+      }
+      return sekireiResult(sfen, conditions);
+    };
+    const { store, game } = await setup({}, {}, analyze);
+    await store.getState().updateSettings({ analysisMethod: 'sekirei' });
+    // Run A at 10000 nodes: interrupted after ply 0 is persisted.
+    void store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(call).toBe(2), { timeout: 3000 });
+    store.getState().stopAnalysis();
+    blocked.release?.();
+    await vi.waitFor(
+      () =>
+        expect(store.getState().games.find((g) => g.id === game.id)?.analysisRun?.completion).toBe(
+          'interrupted',
+        ),
+      { timeout: 3000 },
+    );
+    // Run X at 20000 nodes: fails immediately → interrupted, no saved rows.
+    await store.getState().updateSettings({ analysisNodes: 20000 });
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(
+      () =>
+        expect(store.getState().games.find((g) => g.id === game.id)?.analysisRun?.completion).toBe(
+          'interrupted',
+        ),
+      { timeout: 3000 },
+    );
+    // Back to 10000: run C reuses A's ply-0 row across two interruptions.
+    await store.getState().updateSettings({ analysisNodes: 10000 });
+    await store.getState().startAnalysis(game.id);
+    await vi.waitFor(() => expect(store.getState().analysisJob).toBeNull(), { timeout: 3000 });
+    const run = store.getState().games.find((g) => g.id === game.id)?.analysisRun;
+    expect(run?.completion).toBe('completed');
+    expect(run?.cacheReuseCount).toBe(1);
+    expect(await sekireiRunKindOf(store, game.id)).toBe('completed-with-cache-reuse');
   });
 
   it('FP-014: 未確認errorへの再試行は同一key・同一ownerで復帰し新発行しない', async () => {

@@ -8,7 +8,7 @@ import { aggregateAll } from '../../src/comparison/aggregate';
 import { renderReport } from '../../src/comparison/report';
 import { validateComparisonExport } from '../../src/comparison/validate';
 import type { ComparisonExport } from '../../src/comparison/schema';
-import { cand, completeResult, cp, makeExport, mate } from './fixtures';
+import { cand, cloudMethod, completeResult, cp, makeExport, mate, sekireiMethod } from './fixtures';
 
 const CLI = 'scripts/analysis-compare/compare.ts';
 const tmpDirs: string[] = [];
@@ -149,5 +149,32 @@ describe('レポート内容', () => {
     const out = renderReport(aggregateAll([{ source: 'x.json', data }]));
     expect(out).toContain('1（行なし 1）');
     expect(out).toContain('missing は明示 missing 行と結果行なし');
+  });
+
+  it('FP-012: 再利用を含む実行を新規解析時間として表示せず、由来を断定しない', () => {
+    const reused = makeExport(
+      3,
+      (ply, sfen) => ({
+        sekirei: completeResult(sfen, cp(100 + ply), [cand('7g7f', cp(100 + ply))]),
+        'cloud-precision': completeResult(sfen, cp(50 + ply), [cand('7g7f', cp(50 + ply))]),
+      }),
+      {
+        methods: {
+          sekirei: sekireiMethod({ cacheReuseCount: 2 }),
+          'cloud-precision': cloudMethod('cloud-precision'),
+        },
+      },
+    );
+    const summary = aggregateAll([{ source: 'fixture.json', data: reused }]);
+    expect(summary.exports[0].timing.find((t) => t.method === 'sekirei')!.runKind).toBe(
+      'completed-with-cache-reuse',
+    );
+    const out = renderReport(summary);
+    // No resumed claim anywhere; reuse-inclusive runs are labelled as such.
+    expect(out).not.toContain('resumed');
+    expect(out).not.toContain('再開');
+    expect(out).not.toContain('新規解析で完了');
+    expect(out).toContain('cache再利用を含む完了');
+    expect(out).toContain('再利用元の完了履歴は追跡していません');
   });
 });
