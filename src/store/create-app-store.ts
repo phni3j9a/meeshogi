@@ -16,6 +16,7 @@ import { inferAttribution, sameGameOccasion, sameRecordedGame } from '../domain'
 import type { LocalRepository } from '../storage/repository';
 import {
   attemptBlocksDelete,
+  attemptServerUnconfirmed,
   cloudContractEpoch,
   isActiveAttempt,
   type CloudAttempt,
@@ -95,6 +96,25 @@ async function canForgetCloudAttempt(
   }
 }
 
+/**
+ * Live recovery evaluation for a game's latest Cloud attempt (FP-015): the
+ * persisted failureCode is a snapshot, so the UI must re-check the CURRENT
+ * credential before hiding retry/cancel.
+ * - `recoverable`: no unconfirmed request, or the same-owner credential is
+ *   usable → retry/cancel reach the normal same-key path.
+ * - `unrecoverable-forget`: every blocker passes the local-forget exception
+ *   (confirmed absent key or backend-401) → offer only local-forget.
+ * - `unrecoverable`: credential unusable or owned by another owner → neither
+ *   recovery nor local-forget is possible; show a neutral explanation.
+ * - `transient`: the credential store cannot be read right now → nothing can
+ *   be concluded; re-evaluate later.
+ */
+export type CloudRecoveryState =
+  | 'recoverable'
+  | 'unrecoverable-forget'
+  | 'unrecoverable'
+  | 'transient';
+
 type GamePatch = Partial<
   Pick<
     GameRecord,
@@ -135,6 +155,12 @@ export interface AppState {
    * deleteGame enforces the same check again at the delete boundary.
    */
   canForgetCloudGame(id: string): Promise<boolean>;
+  /**
+   * FP-015: live evaluation of whether the game's unconfirmed-error Cloud
+   * attempt can still be recovered from this device. The UI calls this on
+   * focus/attempt changes instead of trusting the persisted failureCode.
+   */
+  cloudRecoveryState(id: string): Promise<CloudRecoveryState>;
   updateSettings(patch: Partial<Settings>): Promise<void>;
   setLastViewed(id: string, ply: number): Promise<void>;
   startAnalysis(id: string): Promise<void>;
@@ -449,6 +475,35 @@ export function makeAppStore(deps: Dependencies) {
           if (!(await canForgetCloudAttempt(cloudDeps, attempt))) return false;
         }
         return true;
+      },
+      cloudRecoveryState: async (id) => {
+        const cloudDeps = deps.cloud;
+        const profileId = cloudProfileOf(get().settings.analysisMethod);
+        if (!cloudDeps || !profileId) return 'recoverable';
+        const previous = get()
+          .cloudAttempts.filter(
+            (attempt) => attempt.gameId === id && attempt.profileId === profileId,
+          )
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        if (!previous || !attemptServerUnconfirmed(previous)) return 'recoverable';
+        // Confirmed loss/401 already qualifies for the local-forget exception;
+        // that path takes precedence over retry (a rejected credential would
+        // only 401 again).
+        if (await get().canForgetCloudGame(id)) return 'unrecoverable-forget';
+        let stored;
+        try {
+          stored =
+            previous.failureCode === 'credential_rejected'
+              ? null // backend rejected it; never count it as usable
+              : await cloudDeps.credentialsFor(previous.endpoint).load();
+        } catch {
+          return 'transient';
+        }
+        return stored &&
+          stored.endpoint === previous.endpoint &&
+          stored.ownerId === previous.ownerId
+          ? 'recoverable'
+          : 'unrecoverable';
       },
       updateSettings: (patch) =>
         write(async () => {

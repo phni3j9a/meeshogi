@@ -133,6 +133,25 @@ export function attemptBlocksDelete(
 }
 
 /**
+ * An error attempt whose server-side job was never confirmed terminal: the
+ * POST may have been in flight (submitAttempted) or a jobId is known, but no
+ * terminal serverStatus was observed. Only same-key recovery may continue it;
+ * a fresh attempt would strand the server job.
+ */
+export function attemptServerUnconfirmed(
+  attempt: Pick<CloudAttempt, 'status' | 'jobId' | 'submitAttempted' | 'serverStatus'>,
+): boolean {
+  return (
+    attempt.status === 'error' &&
+    (attempt.submitAttempted || attempt.jobId !== null) &&
+    !(
+      attempt.serverStatus !== null &&
+      CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)
+    )
+  );
+}
+
+/**
  * Cheap fingerprint of the constants that decide whether a stored Cloud row is
  * displayable. When it changes (identity/profile bump), persisted valid_count
  * is recomputed once instead of trusting counts made under old rules.

@@ -951,4 +951,121 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     expect(fake.jobList()).toHaveLength(2);
     store.getState().pauseCloudJobs();
   });
+
+  it('FP-015: credential復帰でrecoveryStateがrecoverableに戻り同一keyで完了する', async () => {
+    const wakes: (() => void)[] = [];
+    const { store, fake, credentials, game } = await setup(
+      { createJobFailAfterCreate: 1, perPollAdvance: 3 },
+      { sleep: () => new Promise((resolve) => wakes.push(resolve)) },
+    );
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(wakes.length).toBe(1));
+    const key = attempt(store).idempotencyKey;
+    setCredential(credentials, null);
+    wakes[0]();
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).failureCode).toBe('credential_absent');
+    // While the key is confirmed absent: only the local-forget path applies.
+    await expect(store.getState().cloudRecoveryState(game.id)).resolves.toBe(
+      'unrecoverable-forget',
+    );
+    // The credential returns — the persisted failureCode must NOT keep the
+    // attempt marked unrecoverable; the live check re-enables recovery.
+    setCredential(credentials, {
+      credential: 'cred-1',
+      ownerId: attempt(store).ownerId,
+      installId: 'install-1',
+      endpoint: ENDPOINT,
+      issuedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await expect(store.getState().cloudRecoveryState(game.id)).resolves.toBe('recoverable');
+    await store.getState().startCloudAnalysis(game.id);
+    await drainWakes(wakes, () => attempt(store).status === 'completed');
+    expect(store.getState().cloudAttempts).toHaveLength(1);
+    expect(attempt(store).idempotencyKey).toBe(key);
+    expect(attempt(store).jobId).toBe('job_1');
+    expect(fake.jobList()).toHaveLength(1);
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-015b: unusable/owner不一致はunrecoverableでforget案内なし、読取失敗はtransient', async () => {
+    // (i) corrupt credential record (present but unreadable): unrecoverable,
+    // and NOT eligible for the local-forget exception.
+    const key = `cloudCredential.${ENDPOINT.replace(/[^A-Za-z0-9.\-_]/gu, '_').slice(0, 96)}`;
+    secureValues.clear();
+    const secure = secureStoreCredentials(ENDPOINT);
+    const wakes1: (() => void)[] = [];
+    const s1 = await setup(
+      { createJobFailAfterCreate: 1 },
+      {
+        credentialsFor: () => secure,
+        sleep: () => new Promise((resolve) => wakes1.push(resolve)),
+      },
+    );
+    await s1.store.getState().startCloudAnalysis(s1.game.id);
+    await vi.waitFor(() => expect(wakes1.length).toBe(1));
+    secureValues.set(key, '{'); // corrupt record, key still present
+    wakes1[0]();
+    await vi.waitFor(() => expect(attempt(s1.store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(s1.store).failureCode).toBe('credential_unusable');
+    await expect(s1.store.getState().cloudRecoveryState(s1.game.id)).resolves.toBe(
+      'unrecoverable',
+    );
+    await expect(s1.store.getState().canForgetCloudGame(s1.game.id)).resolves.toBe(false);
+    s1.store.getState().pauseCloudJobs();
+
+    // (ii) owner mismatch: a different owner's credential exists — neither
+    // recoverable nor forget-eligible.
+    const wakes2: (() => void)[] = [];
+    const s2 = await setup(
+      {},
+      { sleep: () => new Promise((resolve) => wakes2.push(resolve)) },
+    );
+    await s2.store.getState().startCloudAnalysis(s2.game.id);
+    await vi.waitFor(() => expect(wakes2.length).toBe(1));
+    setCredential(s2.credentials, {
+      credential: 'cred-other',
+      ownerId: 'own_other',
+      installId: 'install-2',
+      endpoint: ENDPOINT,
+      issuedAt: '2026-01-01T00:00:00.000Z',
+    });
+    wakes2[0]();
+    await vi.waitFor(() => expect(attempt(s2.store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(s2.store).failureCode).toBe('credential_owner_mismatch');
+    await expect(s2.store.getState().cloudRecoveryState(s2.game.id)).resolves.toBe(
+      'unrecoverable',
+    );
+    s2.store.getState().pauseCloudJobs();
+
+    // (iii) transient credential-store read failure → 'transient', not a
+    // conclusion about loss.
+    const wakes3: (() => void)[] = [];
+    const holder: { store?: CredentialStore } = {};
+    const locked: CredentialStore = {
+      load: async () => {
+        throw new Error('keystore locked');
+      },
+      save: async () => {},
+      probe: async () => {
+        throw new Error('keystore locked');
+      },
+    };
+    const s3 = await setup(
+      { createJobFailAfterCreate: 1 },
+      {
+        credentialsFor: () => holder.store ?? locked,
+        sleep: () => new Promise((resolve) => wakes3.push(resolve)),
+      },
+    );
+    holder.store = s3.credentials;
+    await s3.store.getState().startCloudAnalysis(s3.game.id);
+    await vi.waitFor(() => expect(wakes3.length).toBe(1));
+    setCredential(s3.credentials, null);
+    wakes3[0]();
+    await vi.waitFor(() => expect(attempt(s3.store).status).toBe('error'), { timeout: 3000 });
+    holder.store = locked; // reads start failing now
+    await expect(s3.store.getState().cloudRecoveryState(s3.game.id)).resolves.toBe('transient');
+    s3.store.getState().pauseCloudJobs();
+  });
 });

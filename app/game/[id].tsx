@@ -25,13 +25,14 @@ import {
 import {
   CLOUD_PROFILE_LABELS,
   CLOUD_MAX_MOVES,
-  CLOUD_SERVER_TERMINAL_STATUSES,
+  attemptServerUnconfirmed,
   isActiveAttempt,
   type CloudAttempt,
 } from '@/cloud/contract';
 import { cloudEndpoint } from '@/cloud/config';
 import type { CloudPositionResult } from '@/cloud/results';
 import { useAppStore } from '@/store/app-store';
+import type { CloudRecoveryState } from '@/store/create-app-store';
 import { shareKif } from '@/platform/kif-files';
 import { shareComparisonExport } from '@/platform/comparison-files';
 import { AppText, EmptyState, Icon, IconButton, Notice, TextButton } from '@/ui/primitives';
@@ -84,34 +85,11 @@ function cloudStatusLabel(attempt: CloudAttempt): string {
       if (attempt.serverStatus === 'failed') return `Cloud解析はサーバーで失敗しました${suffix}`;
       if (attempt.serverStatus === 'completed')
         return `Cloud解析はサーバーで終了しました${suffix}`;
-      if (unrecoverableCloudAttempt(attempt))
-        return 'このCloud解析には復帰できません';
-      return 'Cloud解析を再開できます';
+      // Unconfirmed errors may still be recoverable — the action row
+      // evaluates the live credential state, so the label stays neutral.
+      return 'Cloud解析はエラーで停止しています';
     }
   }
-}
-
-/** Credential-loss failure codes: the request can never be reconnected or
- *  cancelled from this device (Plan §3). */
-const CLOUD_CREDENTIAL_FAILURE_CODES = new Set([
-  'credential_absent',
-  'credential_rejected',
-  'credential_owner_mismatch',
-  'credential_unusable',
-]);
-
-/**
- * An error attempt whose server job is unconfirmed AND whose recorded
- * credential can no longer be used from this device — retry and cancel are
- * both impossible, so the UI must not offer either.
- */
-function unrecoverableCloudAttempt(attempt: CloudAttempt): boolean {
-  return (
-    attempt.status === 'error' &&
-    (attempt.submitAttempted || attempt.jobId !== null) &&
-    !(attempt.serverStatus && CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)) &&
-    CLOUD_CREDENTIAL_FAILURE_CODES.has(attempt.failureCode ?? '')
-  );
 }
 
 type Branch = { origin: number; positions: string[]; moves: string[]; cursor: number };
@@ -145,6 +123,7 @@ export default function GameScreen() {
   const updateSettings = useAppStore((state) => state.updateSettings);
   const startCloudAnalysis = useAppStore((state) => state.startCloudAnalysis);
   const cancelCloudAnalysis = useAppStore((state) => state.cancelCloudAnalysis);
+  const cloudRecoveryState = useAppStore((state) => state.cloudRecoveryState);
   const loadCloudResults = useAppStore((state) => state.loadCloudResults);
   const cloudAttempts = useAppStore((state) => state.cloudAttempts);
   const cloudLoadError = useAppStore((state) => state.cloudLoadError);
@@ -187,6 +166,34 @@ export default function GameScreen() {
   );
   const otherProfileActive = gameAttempts.find(
     (item) => item.profileId !== profileId && isActiveAttempt(item.status),
+  );
+  // FP-015: the persisted failureCode is a snapshot — recovery eligibility is
+  // re-evaluated live via the store whenever the attempt changes or the
+  // screen regains focus, so a restored credential re-enables retry/cancel.
+  const unconfirmedAttempt =
+    attempt && attemptServerUnconfirmed(attempt) ? attempt : null;
+  const [cloudRecovery, setCloudRecovery] = useState<CloudRecoveryState | null>(null);
+  const refreshCloudRecovery = useCallback(() => {
+    if (!unconfirmedAttempt) {
+      setCloudRecovery(null);
+      return;
+    }
+    void cloudRecoveryState(id)
+      .then(setCloudRecovery)
+      .catch(() => setCloudRecovery('transient'));
+  }, [cloudRecoveryState, id, unconfirmedAttempt?.attemptId]);
+  useEffect(() => {
+    refreshCloudRecovery();
+  }, [
+    refreshCloudRecovery,
+    unconfirmedAttempt?.status,
+    unconfirmedAttempt?.failureCode,
+    unconfirmedAttempt?.serverStatus,
+  ]);
+  useFocusEffect(
+    useCallback(() => {
+      refreshCloudRecovery();
+    }, [refreshCloudRecovery]),
   );
   const runningElsewhere = useMemo(
     () =>
@@ -1074,14 +1081,57 @@ export default function GameScreen() {
                       }
                       icon="pause"
                     />
-                  ) : attempt && unrecoverableCloudAttempt(attempt) ? (
-                    // The credential that owns this request is gone or was
-                    // rejected: no reconnect or cancel is possible from this
-                    // device. The only remaining path is the local-forget
-                    // exception in the game-delete flow.
-                    <AppText variant="caption" tone="secondary" testID="cloud-unrecoverable">
-                      認証情報が失われたため、この解析には復帰できません。棋譜の削除時に「ローカルだけ削除」を選べます。
-                    </AppText>
+                  ) : unconfirmedAttempt ? (
+                    // Live-evaluated recovery state — never decided from the
+                    // persisted failureCode alone (FP-015).
+                    cloudRecovery === 'recoverable' ? (
+                      <>
+                        <TextButton
+                          label="Cloud解析を再試行"
+                          disabled={
+                            cloudStarting ||
+                            !cloudEndpoint() ||
+                            !!runningElsewhere ||
+                            !!otherProfileActive
+                          }
+                          testID="cloud-start"
+                          onPress={() => {
+                            setCloudStarting(true);
+                            void startCloudAnalysis(id)
+                              .catch((e) => setError(errorMessage(e)))
+                              .finally(() => setCloudStarting(false));
+                          }}
+                          icon="play"
+                        />
+                        <TextButton
+                          label="中断した解析を取消"
+                          testID="cloud-cancel-error"
+                          onPress={() =>
+                            void cancelCloudAnalysis(unconfirmedAttempt.attemptId).catch((e) =>
+                              setError(errorMessage(e)),
+                            )
+                          }
+                          icon="pause"
+                        />
+                      </>
+                    ) : cloudRecovery === 'unrecoverable-forget' ? (
+                      // Confirmed credential loss / backend 401: only the
+                      // adopted local-forget exception remains.
+                      <AppText variant="caption" tone="secondary" testID="cloud-unrecoverable">
+                        認証情報が失われたため、この解析には復帰できません。棋譜の削除時に「ローカルだけ削除」を選べます。
+                      </AppText>
+                    ) : cloudRecovery === 'unrecoverable' ? (
+                      // Unusable/owner-mismatch: neither recovery nor
+                      // local-forget is possible — neutral explanation only.
+                      <AppText variant="caption" tone="secondary" testID="cloud-unrecoverable">
+                        このCloud解析には復帰できません。サーバー上のジョブは継続している可能性がありますが、この端末から再接続・取消できません。
+                      </AppText>
+                    ) : (
+                      // transient | null (still evaluating)
+                      <AppText variant="caption" tone="secondary" testID="cloud-recovery-checking">
+                        Cloud解析の復帰可否を確認しています。しばらくしてから開き直してください。
+                      </AppText>
+                    )
                   ) : (
                     <>
                       <TextButton

@@ -9,6 +9,7 @@ import {
   CLOUD_MAX_MOVES,
   CLOUD_RESULTS_PAGE_LIMIT,
   CLOUD_SERVER_TERMINAL_STATUSES,
+  attemptServerUnconfirmed,
   isActiveAttempt,
 } from '../cloud/contract';
 import { CloudApiError, type CloudClient, type CloudCredential } from '../cloud/client';
@@ -465,13 +466,7 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
    * but no terminal serverStatus was ever observed. Such attempts must be
    * recovered under the same key — a fresh attempt would strand the job.
    */
-  const unconfirmedError = (attempt: CloudAttempt): boolean =>
-    attempt.status === 'error' &&
-    (attempt.submitAttempted || attempt.jobId !== null) &&
-    !(
-      attempt.serverStatus !== null &&
-      CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)
-    );
+  const unconfirmedError = attemptServerUnconfirmed;
 
   const doStart = async (gameId: string): Promise<void> => {
     const profileId = ctx.getCloudMethodProfile();
