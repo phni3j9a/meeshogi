@@ -48,8 +48,10 @@ npm run analysis-compare -- <export.json> [<export2.json> …] \
 - **mate 勝者一致**: `mate×mate` の ply で winner（'black'/'white'/'unknown'）の一致・不一致・unknown の件数。生の距離の完全一致は別途数えるが、両エンジンの距離規約は未確認のため**品質指標にしない**。
 - **terminal 一致**: 両側 terminal の ply で kind（checkmate/no-legal-moves）と winner の一致。片側のみ terminal（もう片側が評価値を返した）も別に数える。
 - **ply 区分別の集計**: ply 0–40 / 41–90 / 91+ の 3 区分で上記の cp 差・Top-1・包含率を出す。**手数による便宜区分であり、局面内容から実際の序盤・中盤・終盤を判定するものではない**。対象 ply が無い区分は `N/A`。
+- **ply 別の評価値行**: export 内の比較 pair ごとに、全 ply の行を `comparisons[].plyRows` として JSON に残し、Markdown にも「ply 別の評価値」表を出す。各行は ply・行の SFEN（JSON は完全な文字列、表は盤面フィールドを短いキーにする）・両側の生評価（cp / mate{value,winner} / terminal kind）・両側が cp のときの符号差と絶対差・それ以外の除外・欠測理由（`missing-*` / `incomplete-*` / `sfen-mismatch` / `terminal-mismatch`）を持つ。結果行自体が無い側は `status: 'absent'`。合算（overall）の比較では別棋譜の ply が衝突するため `plyRows` は空になる。
 - **欠測の内訳**: 双方欠測・比較側のみ欠測・reference 側のみ欠測・SFEN 不一致（結果ソースが行と別の局面を報告した ply は比較しない）・片側 incomplete をそれぞれ数え、品質指標の分母から外す。incomplete を「mate なし」として数えない。
-- **グラフ変動（表示値の隣接差）**: アプリの評価値グラフと同じ写像（cp はそのまま、mate/詰み終局は ±1500、表示時 ±1500 clip）で表示値に変換し、隣接 ply の `|差|` を集計する。欠測をまたいだ差は計算しない（区間を橋接しない）。**画面上の変動量の指標であり、滑らかさは解析の正しさを示さない**。写像は `src/comparison/chart-value.ts` が `src/ui/evaluation.ts` と `src/ui/charts.tsx` の規則をミラーしたもので、等価性は `tests/comparison/chart-value.test.ts` が検証する。
+- **方式別件数（missing の定義）**: 方式表は宣言済み方式の全 ply を走査し、`results` に結果行が無い ply も missing に数える。`missing` は明示 `'missing'` 行と結果行なしの合計で、その内訳を `absent`（行なし）として保持する。各方式の `complete + incomplete + terminal + missing` は常に局面数に一致する。未宣言の方式は「未実行」として件数を出さない。
+- **グラフ変動（表示値の隣接差）**: アプリの評価値グラフと同じ写像（cp はそのまま、mate/詰み終局は ±1500、表示時 ±1500 clip）で表示値に変換し、隣接 ply の `|差|` を集計する。欠測をまたいだ差は計算しない（区間を橋接しない）。**画面上の変動量の指標であり、滑らかさは解析の正しさを示さない**。結果側 sfen が行 sfen と異なる行は pair 比較と同じ規則で null にし（アプリが SFEN 不一致の結果を表示対象から外すのと同じ）、その件数を `sfenMismatchRows` に残す。写像は `src/comparison/chart-value.ts` が `src/ui/evaluation.ts` と `src/ui/charts.tsx` の規則をミラーしたもので、等価性は `tests/comparison/chart-value.test.ts` が検証する。
 - **実探索量**: complete 行の `observed.nodes` / `observed.completedDepth` / `observed.multiPV` / `observed.engineLaunch` の統計（報告がある行のみ）。
 
 比率は分子/分母を JSON summary に保持し、分母 0 は `rate: null`・レポートでは `N/A`。

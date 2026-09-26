@@ -129,4 +129,25 @@ describe('レポート内容', () => {
     expect(md).toContain('N/A'); // 空の phase bucket
     expect(md).toContain('reference 最善手が比較側の候補列に含まれる率');
   });
+
+  it('FP-007: ply 別の評価値表を両側の生値・符号差・理由付きで出す', () => {
+    expect(md).toContain('| ply | 局面 | 比較側 | reference | Δ | \\|Δ\\| | 状態 |');
+    // ply1 は Sekirei=mate(5,先手)・reference=cp51 → 種別不一致で差は出さない
+    expect(md).toContain('| 1 |');
+    expect(md).toContain('+M5');
+    expect(md).toContain('種別不一致（cp×mate）');
+    // cp×cp の ply0 は 比較側+100・ref+50・Δ+50
+    expect(md).toContain('| 0 |');
+    expect(md).toMatch(/\| 0 \| `[^`]+` \| \+100 \| \+50 \| \+50 \| 50 \| — \|/u);
+  });
+
+  it('FP-009: 結果行なしを方式表の missing（行なし N）に数える', () => {
+    const data = makeExport(2, (ply, sfen) => ({
+      'cloud-precision': completeResult(sfen, cp(0), [cand('7g7f', cp(0))]),
+      ...(ply === 0 ? { sekirei: completeResult(sfen, cp(5), [cand('7g7f', cp(5))]) } : {}),
+    }));
+    const out = renderReport(aggregateAll([{ source: 'x.json', data }]));
+    expect(out).toContain('1（行なし 1）');
+    expect(out).toContain('missing は明示 missing 行と結果行なし');
+  });
 });
