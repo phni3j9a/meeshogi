@@ -18,6 +18,8 @@ Issue #20では、このstagingゲートで同じengine/modelの探索条件48�
 
 Issue #21では、同じstaging Workerに公開`/v1/*`の非同期解析バックエンドを追加しました。`POST /v1/credentials`がインストール単位の匿名credentialを発行し（D1はSHA-256 hashのみ保持）、`POST /v1/jobs`が1局を1つの永続jobとして受け付けます。Queue consumerがdriverの`/session`ストリームで局面を順に解析し、進捗・結果・取消は`GET /v1/jobs/:id`、`GET /v1/jobs/:id/results`、`POST /v1/jobs/:id/cancel`で提供します。利用制限とprofile値は`cloud/config/job-profiles.json`に集約しており、精密解析はサーバー側allowlist制です。アプリとの接続はIssue #22（SecureStoreへのcredential保存）、本番切替はIssue #24で、これもproduction serviceではありません。手順と検証範囲は[cloud README](cloud/README.md)を参照してください。
 
+Issue #22では、アプリが3つの解析方式を切り替えられるようになりました。既定は端末内のSekireiで、Cloud Free / Cloud Precisionはstaging技術ゲートへのopt-in選択です（接続先はビルド時の`EXPO_PUBLIC_CLOUD_ENDPOINT`で指定し、production serviceではありません）。Cloud解析はserver jobとして継続し、アプリの終了や通信断からは同じjobへ復帰します。3方式の結果は分離して保存され、開発用の方式比較は[解析方式の比較レポート](docs/ANALYSIS-COMPARISON.md)を参照してください。
+
 全局解析では、native境界で検証済みの初回反復の予算不足だけをその局面の欠測として扱い、後続局面の解析を続けます。処理が最後まで走っても不足が残る場合は解析済み件数と探索量不足の件数を分けて表示し、全局面の有効結果が揃った場合だけ全局解析完了と表示します。不完全な候補は保存せず、再起動後は保存済み結果と欠測だけを表示します。
 
 ## 開発

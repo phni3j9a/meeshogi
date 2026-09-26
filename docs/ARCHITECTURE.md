@@ -55,6 +55,22 @@ Issue #20の比較ベンチマークでは、同一Container appの`instance_typ
 
 匿名identityは発行時だけ返す`mcd1_`形式のcredentialで、D1はSHA-256 hashだけを保持する。raw credentialは永続化・記録しない。Issue #22でアプリがSecureStoreに保存して提示するまでの引き渡し境界であり、端末を跨ぐ復旧やアカウント機能は持たない。profileは`free`と`precision`だけを受け付け、movetime・Threads・Hash・MultiPVやbenchmark条件は公開APIへ露出しない。profile値と利用制限（Free 5局/日・Asia/Tokyo、5局/60秒、同時active 1）は`cloud/config/job-profiles.json`に集約し、stagingの調整可能な既定値とする。`precision`はowner行の`precision_allowed`をoperatorが`wrangler d1 execute`で立てた場合のみ許可する。sessionの経路は、freeが`/internal/analyze`と同じ`analysis-mvp-singleton`インスタンスを共有し（max_instances=1で別名を増やせず、busy競合はtransient retryで処理）、precisionが既存のstandard-3 benchmark app上の専用名`analysis-jobs-standard-3`を使う。precision jobとbenchmark計測は同じappの単一要求ガードを共用するため、benchmark modeはprecision job利用と同時に走らせない。各局面は`legalMoveCount`を送り、driverの実効MultiPVは`min(profile.multiPV, legalMoveCount)`となる。これはモバイル接続（Issue #22）・本番切替（Issue #24）の前段であり、stagingの技術ゲートの範囲を出ない。
 
+## Issue #22 アプリ側のCloud解析共存
+
+アプリは`sekirei`・`cloud-free`・`cloud-precision`の明示的な3方式を持ち（汎用のmulti-engine frameworkは作らない）、`settings.analysisMethod`で選択する。Cloud関連は`src/cloud/`に閉じる。
+
+- `client.ts`: 公開`/v1/*`の型付き呼出し。HTTP statusとerror codeを`CloudApiError`として区別し、401を`credential_rejected`へ写像する。
+- `config.ts`: 接続先は`EXPO_PUBLIC_CLOUD_ENDPOINT`をビルド時に読むだけで、stagingのhostnameはリポジトリへ含めない。
+- `contract.ts`: attemptの語彙・共有predicate・表示ラベル・512手上限。UI・store・controllerが同じ判定を使う。
+- `credentials.ts` / `secure-store.ts`: credentialはSecureStoreにのみ保存し、SQLiteへはownerId・installIdだけを残す。`probe()`はキー欠落（absent）・破損/形状不正（unusable）・読み取り例外（呼び出し側へ伝播）を区別する。
+- `results.ts`: 永続行の再検証と表示用結果への変換（mateProofは生成しない）。
+- `src/storage/cloud-repository.ts`: `cloud_attempts`（attemptId・gameIdentity・profile・endpoint・ownerId・idempotencyKey・jobId・`submit_attempted`・`server_status`・`server_created_at`・`server_finished_at`・cursor・error）、`cloud_results`（局面結果行）、`cloud_meta`（契約epochのfingerprint）の独立テーブル。棋譜削除には`ON DELETE CASCADE`で追随し、既存DBへの列追加はguarded ALTERで行い`user_version`は据置き。契約epochが変わると`validCount`を現行契約で再計算する。
+- `src/store/cloud-controller.ts`: `requesting→queued/running→終端`と`cancel-requested`を進めるポンプ。idempotency keyはPOSTの前に永続化し（`submit_attempted`）、応答を失っても同じkey・同じ入力の再POSTで同一jobへ復帰しjobIdを確定する。受信cursor（drain済み行数）とserver確認cursor（`server_status`/next_ply）を分け、結果は検証してからatomic commitし、server終端はdrain完了後にpollを止める。未確認の要求が残る間は`doEnsureCredential`が代替credential発行を拒否し、同owner credentialが戻れば新しいattempt・keyを作らず同じ要求へ復帰する。
+- Sekirei側の全局runは`GameRecord.analysisRun`に今回の実行が測定した事実（runId・conditions・wall時計・cache再利用数・終了状態）だけを記録し、行は`callElapsedMs`と生成`runId`を持つ。再利用行の由来は追跡しない（比較側の分類契約は[ANALYSIS-COMPARISON.md](ANALYSIS-COMPARISON.md)）。
+- 開発用の3方式比較exportは`src/comparison/`（export・schema・validate・aggregate・report）にあり、`exportComparison`が書き出し前にschema検証する。UI入口は`__DEV__`またはビルド時の`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`のときだけ出る。
+
+Cloud jobはserver側で継続するため、アプリのバックグラウンド移行・終了・通信断はpollを止めるだけでjobを消さない。credential喪失時の限定「ローカルだけ削除」例外と確定取消までの保持規則はPRODUCT.mdの方式選択節を正本とする。
+
 ## 詰みと戦型
 
 短手数の詰みは通常評価とは別の確定結果として扱う。1手・3手の範囲で合法手・王手回避・打ち歩詰めなどの規則を含めて検証し、手順表示の結果と証明の結果を区別する。Sekireiに必要なAPIがあるかは実装前に調べ、不足する場合は共通ロジックとして実装する。
