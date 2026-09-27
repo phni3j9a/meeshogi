@@ -719,5 +719,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 
 export default {
   fetch: handleRequest,
-  queue: (batch: MessageBatch, env: Env): Promise<void> => handleJobBatch(batch as MessageBatch<JobQueueMessage>, env),
+  queue: (batch: MessageBatch, env: Env, ctx: ExecutionContext): Promise<void> => handleJobBatch(
+    batch as MessageBatch<JobQueueMessage>, env, { waitUntil: (task) => ctx.waitUntil(task) },
+  ),
 } satisfies ExportedHandler<Env>;
