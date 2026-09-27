@@ -10,6 +10,7 @@ import queue
 import re
 import resource
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -53,6 +54,7 @@ MAX_SESSION_POSITIONS = 512
 MAX_SESSION_PLY = 8192
 MAX_SESSION_DEADLINE_MS = 3_600_000
 SESSION_DRAIN_MS = 50
+SHUTDOWN_GRACE_SECONDS = 10.0
 MOVE_RE = re.compile(r"^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$")
 SFEN_RE = re.compile(r"^[0-9KkLlNnSsGgBbRrPp/+ bw-]+$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -504,10 +506,11 @@ class MultiPvCollector:
 
 
 class EngineSession:
-    def __init__(self, engine_path: Path, manifest: dict[str, Any], settings: dict[str, Any]):
+    def __init__(self, engine_path: Path, manifest: dict[str, Any], settings: dict[str, Any], shutdown_requested: threading.Event):
         self.engine_path = engine_path
         self.manifest = manifest
         self.settings = settings
+        self.shutdown_requested = shutdown_requested
         self.process: subprocess.Popen[str] | None = None
         self.process_started_monotonic: float | None = None
         self.lines: queue.Queue[str | None] = queue.Queue()
@@ -518,6 +521,7 @@ class EngineSession:
         self.verification_stop_injected = False
 
     def start(self) -> None:
+        self._check_shutdown()
         try:
             self.process = subprocess.Popen(
                 [str(self.engine_path)],
@@ -581,16 +585,21 @@ class EngineSession:
         except (BrokenPipeError, OSError) as error:
             raise DriverError("engine_error", "Engine input pipe closed unexpectedly.") from error
 
+    def _check_shutdown(self) -> None:
+        if self.shutdown_requested.is_set():
+            raise DriverError("engine_error", "Driver is shutting down.")
+
     def next_line(self, deadline: float) -> str | None:
         if self.process is None:
             return None
-        for remaining in [max(0.0, deadline - time.monotonic())]:
+        while True:
+            self._check_shutdown()
+            remaining = max(0.0, deadline - time.monotonic())
             try:
-                line = self.lines.get(timeout=remaining)
+                return self.lines.get(timeout=min(remaining, 0.1))
             except queue.Empty as error:
-                raise TimeoutError from error
-            return line
-        return None
+                if time.monotonic() >= deadline:
+                    raise TimeoutError from error
 
     def _read_stdout(self) -> None:
         assert self.process is not None and self.process.stdout is not None
@@ -901,6 +910,7 @@ class AnalysisService:
         self._job_profiles: dict[str, dict[str, Any]] | None = None
         self._monotonic = monotonic if monotonic is not None else time.monotonic
         self.busy = threading.Lock()
+        self.shutdown_requested = threading.Event()
         self.verify_stop_engine_once_enabled = os.environ.get("ANALYSIS_VERIFY_STOP_ENGINE_ONCE") == "1"
         self.verify_stop_engine_once_pending = self.verify_stop_engine_once_enabled
         self.benchmark_enabled = os.environ.get("ANALYSIS_BENCHMARK_ENABLED") == "1"
@@ -1062,6 +1072,7 @@ class AnalysisService:
                 "moveTimeMs": condition["moveTimeMs"],
                 "effectiveMultiPV": effective,
             },
+            self.shutdown_requested,
         )
         timed_out = False
         engine_outcome: str | None = None
@@ -1156,6 +1167,7 @@ class AnalysisService:
             self.engine_path,
             self.manifest,
             {**self.settings, "effectiveMultiPV": effective},
+            self.shutdown_requested,
         )
         timed_out = False
         engine_outcome: str | None = None
@@ -1393,6 +1405,7 @@ class AnalysisService:
                 "moveTimeMs": profile["moveTimeMs"],
                 "effectiveMultiPV": profile["multiPV"],
             },
+            self.shutdown_requested,
         )
         engine_launches = 0
         analyzed = 0
@@ -1572,12 +1585,74 @@ def create_handler(service: AnalysisService) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+class DriverServer(ThreadingHTTPServer):
+    """Track sockets so shutdown also unblocks idle keepalive and partial bodies."""
+
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], service: AnalysisService):
+        self.connections: set[socket.socket] = set()
+        self.connections_lock = threading.Lock()
+        super().__init__(address, create_handler(service))
+        self.timeout = 0.25
+
+    def process_request(self, request: socket.socket, client_address: Any) -> None:
+        with self.connections_lock:
+            self.connections.add(request)
+        super().process_request(request, client_address)
+
+    def shutdown_request(self, request: socket.socket) -> None:
+        try:
+            super().shutdown_request(request)
+        finally:
+            with self.connections_lock:
+                self.connections.discard(request)
+
+    def close_connections(self) -> None:
+        with self.connections_lock:
+            connections = tuple(self.connections)
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+def serve(service: AnalysisService, address: tuple[str, int]) -> int:
+    shutdown_signal: int | None = None
+
+    def request_shutdown(signum: int, _frame: Any) -> None:
+        nonlocal shutdown_signal
+        shutdown_signal = signum
+        service.shutdown_requested.set()
+
+    previous_handlers = {signum: signal.signal(signum, request_shutdown) for signum in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        with DriverServer(address, service) as server:
+            print(json.dumps({"event": "driver_started", "driverBootId": DRIVER_BOOT_ID, "port": server.server_port}), flush=True)
+            # handle_request's bounded accept wait lets the signal handler only
+            # notify us. Calling shutdown() from serve_forever's own thread deadlocks.
+            while not service.shutdown_requested.is_set():
+                server.handle_request()
+            print(json.dumps({"event": "driver_stopping", "driverBootId": DRIVER_BOOT_ID, "signal": shutdown_signal}), flush=True)
+            server.close_connections()
+            # Every engine is owned by the busy guard and reaped in its request's
+            # finally block. Engine reads observe shutdown even during a hung search.
+            reaped = service.busy.acquire(timeout=SHUTDOWN_GRACE_SECONDS)
+            if reaped:
+                service.busy.release()
+            print(json.dumps({"event": "driver_stopped", "driverBootId": DRIVER_BOOT_ID, "engineReaped": reaped}), flush=True)
+            # A failed drain exits PID 1 nonzero; the container runtime then kills
+            # the remaining processes. Never wait indefinitely after SIGTERM.
+            return 0 if reaped else 1
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+
 def main() -> None:
     # Identity verification runs before the HTTP listener opens. A mismatched image fails closed.
-    service = AnalysisService()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), create_handler(service))
-    server.daemon_threads = True
-    server.serve_forever(poll_interval=0.25)
+    raise SystemExit(serve(AnalysisService(), ("0.0.0.0", PORT)))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Issue #19 staging analysis gate
 
-This package is an isolated technical gate. It serves an authenticated, synchronous SFEN analysis endpoint (Issue #19) and an asynchronous game-analysis job backend over D1 and Queues (Issue #21). It is not connected to the mobile app. The iOS and Android app continue to analyze on-device, and staging access, an account, and network access are not required to use the initial product.
+This package is a staging technical gate. It serves an authenticated, synchronous SFEN analysis endpoint (Issue #19) and an asynchronous game-analysis job backend over D1 and Queues (Issue #21), connected to the optional Cloud modes in the iOS and Android app by Issue #22. It is not a production service. The planned Cloud-only transition and Sekirei removal are separate work; Issue #30 only repairs the existing Container lifecycle.
 
 ## Contract and boundaries
 
@@ -15,6 +15,14 @@ Cloudflare Containers require one Durable Object class and binding. This impleme
 The Python 3.12 driver uses only the standard library. It checks engine, model, options, source archive, source tree, and build identity before opening its HTTP listener. The `ubuntu:24.04` image provides a new enough glibc and libstdc++ for the engine; a Docker build-time USI/`isready` smoke applies the same `EvalDir=/opt/engine` and fixed options as the driver, so an incompatible base or unreadable model fails the image build. It starts a fresh engine process for each request and waits for it to exit. A busy request is rejected immediately. The search deadline is `movetime + 5 s`; on timeout the driver sends `stop`, waits up to 750 ms for a response, sends `SIGTERM`, then `SIGKILL` if needed, and always calls `wait()` to reap the child. The next request uses a new process. `bestmove resign` yields an incomplete result with `engineOutcome: "resign"` and no fabricated move.
 
 The image is `linux/amd64`. The Worker config is only for `meeshogi-analysis-mvp-staging`. The normal API uses one `standard-2` Container app (`meeshogi-analysis-mvp-staging-analysis`); benchmark mode has separate fixed `standard-2` and `standard-3` apps. All three use the same digest-pinned Cloudflare managed registry image and have `max_instances: 1`. `wrangler.staging.jsonc` is a template; scripts render a temporary config with the real account ID and image digest, then remove it. There is no public fault-injection route or public Container port.
+
+## Container shutdown (Issue #30)
+
+All Container classes retain `sleepAfter = '5m'` and the SDK's standard idle lifecycle. The Python entrypoint handles SIGTERM/SIGINT even as PID 1: it stops accepting requests, shuts down open HTTP sockets, interrupts engine waits, and lets the request's existing `finally` block reap its engine. It waits at most ten seconds for that drain and exits nonzero if the drain fails. This bound applies only after a shutdown signal; it does not limit normal job duration. Startup, shutdown request and drain completion emit a boot ID and lifecycle event, without credentials or positions.
+
+The Queue consumer owns each request through an AbortController and releases both the transport and response reader on every completion/error path. It also cancels responses that arrive after a header timeout, with cleanup tied to the Queue execution context's `waitUntil`. A session `end` does not imply HTTP EOF: an unread or stalled body must not leave the Containers SDK's inflight count nonzero. Deadline timers are cleared when their operation finishes.
+
+Regression checks include real Python HTTP/process shutdown with a hung synthetic engine, the installed Containers SDK and consumer in workerd, delayed/aborted headers, stalled bodies, protocol end before EOF, transport errors, and real local HTTP sockets. These checks do not replace staging verification of automatic stop, usage convergence and restart with the deployed image. The five-minute wait, Free/Precision profiles, queues, instance types and application behavior are unchanged.
 
 ## Offline checks
 
