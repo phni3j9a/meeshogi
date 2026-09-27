@@ -6,6 +6,11 @@ env:
 # must run to a terminal state under the Precision contract
 # (threads=2, hash=64, 5000 ms/ply, MultiPV=3). ~81 plies x 5 s plus queue:
 # allow 15 minutes. Run only after the owner was allowlisted for this install.
+#
+# iOS note: select the method via the settings picker (same reason as
+# cloud-precision-denied: the review screen's deep-scroll a11y frames lag
+# behind the rendered position after the swipe workaround, so by-id taps
+# miss). cloud-method-picker covers the review-screen picker itself.
 - launchApp
 - extendedWaitUntil:
     visible:
@@ -14,6 +19,25 @@ env:
 - extendedWaitUntil:
     visible: '.*KeroPona.*'
     timeout: 30000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: 'Cloud・精密'
+    timeout: 120000
+- tapOn: Cloud・精密
+- waitForAnimationToEnd
+- tapOn:
+    id: tab-games
 - tapOn: '.*KeroPona.*'
 - extendedWaitUntil:
     visible:
@@ -37,14 +61,6 @@ env:
             - swipe:
                 start: 50%, 82%
                 end: 50%, 55%
-- tapOn:
-    id: analysis-method
-- waitForAnimationToEnd
-- extendedWaitUntil:
-    visible: 'Cloud・精密'
-    timeout: 120000
-- tapOn: Cloud・精密
-- waitForAnimationToEnd
 - tapOn:
     id: cloud-start
     waitToSettleTimeoutMs: 500

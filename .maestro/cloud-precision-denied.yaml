@@ -7,6 +7,14 @@ env:
 # server message (Notice) while the attempt stays resumable. This flow must
 # run BEFORE the acceptance owner is allowlisted; after allowlisting use
 # cloud-precision-run instead.
+#
+# iOS note: the method is selected via the settings picker, not the review
+# screen row. On the completed-job layout the review screen's method row sits
+# deep in the ScrollView; its a11y frame lags the rendered position while
+# scroll momentum decays after the iOS swipe workaround, so by-id taps miss
+# (observed 3x). The settings picker (proven in cloud-method-picker) produces
+# the identical stored method, and this flow only needs Precision selected —
+# the review-screen picker itself is covered by cloud-method-picker.
 - launchApp
 - extendedWaitUntil:
     visible:
@@ -15,6 +23,29 @@ env:
 - extendedWaitUntil:
     visible: '.*KeroPona.*'
     timeout: 30000
+# --- select Cloud・精密 via settings ---
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- assertVisible:
+    id: analysis-method
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: 'Cloud・精密'
+    timeout: 120000
+- tapOn: Cloud・精密
+- waitForAnimationToEnd
+# --- review screen: Precision has no attempt yet, so cloud-start is armed ---
+- tapOn:
+    id: tab-games
 - tapOn: '.*KeroPona.*'
 - extendedWaitUntil:
     visible:
@@ -38,15 +69,9 @@ env:
             - swipe:
                 start: 50%, 82%
                 end: 50%, 55%
-- tapOn:
-    id: analysis-method
-- waitForAnimationToEnd
-- extendedWaitUntil:
-    visible: 'Cloud・精密'
-    timeout: 120000
-- tapOn: Cloud・精密
-- waitForAnimationToEnd
-- assertVisible: この棋譜はCloud未解析です
+# First run shows 'Cloud未解析'; a rerun sees the previous denied attempt's
+# error state — tapping cloud-start re-POSTs and hits the same 403.
+- assertVisible: 'この棋譜はCloud未解析です|Cloud解析はエラーで停止しています'
 - takeScreenshot: c50-precision-selected
 - tapOn:
     id: cloud-start
@@ -60,23 +85,26 @@ env:
     visible: '.*allowlist.*|Cloud解析を再開できます|.*Cloud解析が失敗.*'
     timeout: 120000
 - assertVisible: '.*allowlist.*'
-- assertVisible: 'Cloud解析を再試行|Cloud解析を再開できます'
+# iOS exposes the retry button as composite 'play, Cloud解析を再試行'.
+- assertVisible: '.*Cloud解析を再試行.*|.*Cloud解析を再開できます.*'
 - takeScreenshot: c51-precision-403
-# Leave the stored method on Sekirei for the remaining flows.
+# Leave the stored method on Sekirei for the remaining flows: restore via the
+# settings picker for the same reason as above. The pushed game screen hides
+# the tab bar, so go back to the library first.
+- tapOn: '戻る|Back'
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 30000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
 - scrollUntilVisible:
     element:
       id: analysis-method
     direction: DOWN
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - repeat:
-          times: 3
-          commands:
-            - swipe:
-                start: 50%, 82%
-                end: 50%, 55%
 - tapOn:
     id: analysis-method
 - waitForAnimationToEnd

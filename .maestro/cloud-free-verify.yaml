@@ -80,7 +80,9 @@ env:
 # synced (formatEvaluation 'checkmate' needs the stored row; '—' meanwhile).
 # Results pull is slow on a cold app — allow minutes.
 - extendedWaitUntil:
-    visible: '後手勝ち・詰み終局'
+    # iOS exposes this inside a composite a11y label
+    # ("80手目、本譜、先手視点、後手勝ち・詰み終局") — substring regex.
+    visible: '.*後手勝ち・詰み終局.*'
     timeout: 300000
 - assertNotVisible: '.*手詰め ›'
 - takeScreenshot: c22-cloud-terminal
@@ -111,7 +113,9 @@ env:
     visible: '0 / 80手'
     timeout: 15000
 - extendedWaitUntil:
-    visible: 第一候補
+    # Android exposes '第一候補'; iOS labels candidates '候補1、…'
+    # (full-string match — the iOS label continues after 候補1, so .* wrap)
+    visible: '.*(第一候補|候補1).*'
     timeout: 240000
 - scrollUntilVisible:
     element:
@@ -161,7 +165,7 @@ env:
 - extendedWaitUntil:
     visible: '53 / 80手'
     timeout: 15000
-- assertNotVisible: '後手・1手詰め ›'
+- assertNotVisible: '.*後手・1手詰め.*'
 - assertNotVisible: '.*手詰め ›'
 - takeScreenshot: c25-cloud-no-badge-ply53
 # --- switch back to Sekirei: stored local results return, same plies show
@@ -236,7 +240,7 @@ env:
 - assertVisible: '53 / 80手'
 - scrollUntilVisible:
     element:
-      text: '後手・1手詰め ›'
+      text: '.*後手・1手詰め.*'
     direction: UP
 - runFlow:
     when:
@@ -248,5 +252,5 @@ env:
             - swipe:
                 start: 50%, 55%
                 end: 50%, 82%
-- assertVisible: '後手・1手詰め ›'
+- assertVisible: '.*後手・1手詰め.*'
 - takeScreenshot: c26-sekirei-badge-ply53

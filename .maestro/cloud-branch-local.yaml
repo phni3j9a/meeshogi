@@ -23,20 +23,54 @@ env:
     element:
       id: analysis-method
     direction: DOWN
-# Precondition: method stays 'Cloud・無料' (persisted from cloud-free-start).
-# Assert instead of tapping — the sheet item label duplicates the method
-# row's own value text, so tapping 'Cloud・無料' resolves ambiguously.
+# Precondition: a cloud method stays persisted from the earlier cloud flows
+# (cloud-free-verify switches it to Sekirei at its tail, so accept either
+# persisted value). Assert instead of tapping — the sheet item label
+# duplicates the method row's own value text, so tapping 'Cloud・無料'
+# resolves ambiguously.
 - assertVisible:
     id: analysis-method
-- assertVisible: 'Cloud・無料'
-# Enter a branch from ply 0. Board square taps raced whenever analysis rows
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      # iOS does not expose the method row's value text in the a11y tree
+      # (the row is a single '解析方式を変更' element).
+      - assertVisible: '.*(端末内（Sekirei）|Cloud・無料).*'
+# The branch screen only carries the （ローカル・Sekirei） markers when the
+# stored method is a Cloud profile; cloud-free-verify leaves Sekirei
+# persisted, so re-select Cloud・無料 first. 'Cloud・無料' is unambiguous
+# here: the row value is Sekirei and nothing else on screen shows the text.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - swipe:
+          start: 50%, 82%
+          end: 50%, 60%
+- tapOn:
+    id: analysis-method
+- extendedWaitUntil:
+    visible: 'Cloud・無料'
+    timeout: 120000
+- tapOn: 'Cloud・無料'
+- waitForAnimationToEnd
+# Enter a branch from ply 0. The game screen resumes the last-viewed ply
+# (e.g. 53 after cloud-free-verify), so reset the position explicitly first.
+- tapOn:
+    id: move-first
+- extendedWaitUntil:
+    visible: '0 / 80手'
+    timeout: 15000
+# Board square taps raced whenever analysis rows
 # were still populating (board remount eats the touches), so use the designed
 # affordance instead: a candidate row tap ("タップして分岐を検討") opens the
 # branch directly via previewCandidate.
 # Cloud results sync back slowly on a cold start — wait for the candidate
 # rows to exist before tapping.
 - extendedWaitUntil:
-    visible: 第一候補
+    # iOS exposes candidates as composite labels ('候補1、…、タップして分岐を検討')
+    visible: '.*(第一候補|候補1).*'
     timeout: 240000
 - scrollUntilVisible:
     element:
@@ -121,7 +155,7 @@ env:
 - extendedWaitUntil:
     visible: 'この局面を深く解析（ローカル・Sekirei）'
     timeout: 180000
-- assertVisible: 第一候補
+- assertVisible: '.*(第一候補|候補1).*'
 - takeScreenshot: c31-focus-local-label
 - scrollUntilVisible:
     element:
