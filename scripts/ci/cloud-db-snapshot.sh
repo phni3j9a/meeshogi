@@ -43,7 +43,7 @@ case "$platform" in
       echo "DB_UNAVAILABLE: get_app_container failed" > "$out_file"
       exit 1
     }
-    db=$(find "$container" -name 'meeshogi.db' -type f 2>/dev/null | head -1)
+    db=$(find "$container" -name 'meeshogi.db' -type f -size +0c 2>/dev/null | head -1)
     if [[ -z $db ]]; then
       echo "DB_UNAVAILABLE: meeshogi.db not found under $container" > "$out_file"
       exit 1
