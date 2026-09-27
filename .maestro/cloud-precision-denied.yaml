@@ -1,0 +1,120 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: Cloud Precision requires a server-side allowlist. Without it the
+# POST must fail with 403/profile_not_allowed and the UI must surface the
+# server message (Notice) while the attempt stays resumable. This flow must
+# run BEFORE the acceptance owner is allowlisted; after allowlisting use
+# cloud-precision-run instead.
+#
+# iOS note: the method is selected via the settings picker, not the review
+# screen row. On the completed-job layout the review screen's method row sits
+# deep in the ScrollView; its a11y frame lags the rendered position while
+# scroll momentum decays after the iOS swipe workaround, so by-id taps miss
+# (observed 3x). The settings picker (proven in cloud-method-picker) produces
+# the identical stored method, and this flow only needs Precision selected —
+# the review-screen picker itself is covered by cloud-method-picker.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+# --- select Cloud・精密 via settings ---
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- assertVisible:
+    id: analysis-method
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: 'Cloud・精密'
+    timeout: 120000
+- tapOn: Cloud・精密
+- waitForAnimationToEnd
+# --- review screen: Precision has no attempt yet, so cloud-start is armed ---
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # iOS: the a11y tree reports this ScrollView's children while still
+      # below the fixed playback footer, so scrollUntilVisible no-ops and a
+      # by-id tap lands on the footer. Swipe inside the lower list region
+      # (below the eval graph, which would scrub the move position).
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
+# First run shows 'Cloud未解析'; a rerun sees the previous denied attempt's
+# error state — tapping cloud-start re-POSTs and hits the same 403.
+- assertVisible: 'この棋譜はCloud未解析です|Cloud解析はエラーで停止しています'
+- takeScreenshot: c50-precision-selected
+- tapOn:
+    id: cloud-start
+    waitToSettleTimeoutMs: 500
+# 403 profile_not_allowed is non-transient: the attempt lands on 'error' with
+# the mapped Japanese message (raw English server text never reaches the UI),
+# and the retry affordance stays available. The POST rejection is a definitive
+# refusal — serverStatus 'not_created' — so no cancel button is offered.
+# Error state renders status 'Cloud解析はエラーで停止しています' plus the
+# 'Cloud解析を再試行' button — 'Cloud解析を再開できます' is only the resumable
+# (transient-failure) status label, not this affordance.
+- extendedWaitUntil:
+    visible: '.*サーバー側の許可.*|Cloud解析を再開できます|.*Cloud解析が失敗.*'
+    timeout: 120000
+- assertVisible: '.*サーバー側の許可.*'
+# iOS exposes the retry button as composite 'play, Cloud解析を再試行'.
+- assertVisible: '.*Cloud解析を再試行.*|.*Cloud解析を再開できます.*'
+- takeScreenshot: c51-precision-403
+# Leave the stored method on Sekirei for the remaining flows: restore via the
+# settings picker for the same reason as above. The pushed game screen hides
+# the tab bar, so go back to the library first.
+# Android exposes the header back chevron as 'Navigate up' (Expo Router),
+# not '戻る'/'Back' — union all three labels.
+- tapOn: '戻る|Back|Navigate up'
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: 30000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: '端末内（Sekirei）'
+    timeout: 120000
+- tapOn: 端末内（Sekirei）
+- waitForAnimationToEnd
+- takeScreenshot: c52-back-to-sekirei

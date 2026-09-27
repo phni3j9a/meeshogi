@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { FORMATION_LABELS, gameFormation, inferAttribution, parseKif } from '@/domain';
 import {
+  ANALYSIS_METHOD_LABELS,
   OPENING_LABELS,
   RESULT_LABELS,
   GameResult,
@@ -36,6 +37,7 @@ export default function ImportScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const settings = useAppStore((state) => state.settings);
+  const analysisMethod = settings.analysisMethod;
   const saveImport = useAppStore((state) => state.saveImport);
   const [source, setSource] = useState(0);
   const [parsed, setParsed] = useState<ParsedGame | null>(null);
@@ -348,7 +350,7 @@ export default function ImportScreen() {
               </AppText>
             )}
             <Group>
-              <Row label="保存後に解析する" last>
+              <Row label={`保存後に解析する（${ANALYSIS_METHOD_LABELS[analysisMethod]}）`} last>
                 <Switch
                   value={autoAnalyze}
                   onValueChange={setAutoAnalyze}

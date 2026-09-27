@@ -3,7 +3,15 @@ import { Alert, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAppStore } from '@/store/app-store';
-import { Settings } from '@/domain/model';
+import {
+  ANALYSIS_METHOD_LABELS,
+  ANALYSIS_METHODS,
+  Settings,
+  cloudProfileOf,
+  type AnalysisMethod,
+} from '@/domain/model';
+import { CLOUD_PROFILE_LABELS, isActiveAttempt } from '@/cloud/contract';
+import { cloudEndpoint } from '@/cloud/config';
 import { AppText, Group, Notice, PageHeader, PageScroll, Row, SectionLabel } from '@/ui/primitives';
 import { useTheme } from '@/ui/theme';
 import { PIECE_SETS } from '@/ui/piece-sets';
@@ -12,9 +20,17 @@ import { errorMessage, useChoice } from '@/ui/use-choice';
 export default function SettingsScreen() {
   const settings = useAppStore((state) => state.settings);
   const updateSettings = useAppStore((state) => state.updateSettings);
+  const cloudAttempts = useAppStore((state) => state.cloudAttempts);
+  const games = useAppStore((state) => state.games);
+  const cloudLoadError = useAppStore((state) => state.cloudLoadError);
   const [error, setError] = useState('');
   const theme = useTheme();
   const choose = useChoice();
+  const profileId = cloudProfileOf(settings.analysisMethod);
+  const runningAttempt = cloudAttempts.find((attempt) => isActiveAttempt(attempt.status));
+  const runningGame = runningAttempt
+    ? games.find((game) => game.id === runningAttempt.gameId)
+    : undefined;
   const update = async (patch: Partial<Settings>) => {
     try {
       await updateSettings(patch);
@@ -67,6 +83,32 @@ export default function SettingsScreen() {
         </AppText>
         <SectionLabel>棋譜解析</SectionLabel>
         <Group>
+          <Row
+            label="解析方法"
+            value={ANALYSIS_METHOD_LABELS[settings.analysisMethod]}
+            onPress={() =>
+              void choose(
+                '解析方法',
+                ANALYSIS_METHODS.map((value) => ({
+                  label: ANALYSIS_METHOD_LABELS[value],
+                  value,
+                })),
+              ).then((value: AnalysisMethod | undefined) => {
+                if (value !== undefined) return update({ analysisMethod: value });
+              })
+            }
+            testID="analysis-method"
+          />
+          {runningAttempt && runningGame && (
+            <Row
+              label="Cloud解析の実行中"
+              value={`${CLOUD_PROFILE_LABELS[runningAttempt.profileId]}・${runningAttempt.serverNextPly}/${runningAttempt.totalPlies}局面`}
+              onPress={() =>
+                router.push({ pathname: '/game/[id]', params: { id: runningGame.id } })
+              }
+              testID="cloud-running-link"
+            />
+          )}
           <Row label="保存時に自動解析">{toggle('autoAnalyze')}</Row>
           <Row
             label="解析の長さ"
@@ -102,8 +144,16 @@ export default function SettingsScreen() {
           />
         </Group>
         <AppText variant="caption" tone="secondary" style={{ padding: 10 }}>
-          端末内で解析します。解析中も棋譜を操作できます。
+          {settings.analysisMethod === 'sekirei'
+            ? '端末内で解析します。解析中も棋譜を操作できます。'
+            : profileId
+              ? `${CLOUD_PROFILE_LABELS[profileId]}：サーバーの解析エンジンで1局をまとめて解析します。解析中にアプリを閉じてもサーバーで処理が継続し、次回起動時に続きを受け取ります。分岐検討と「この局面を深く解析」は常に端末内（Sekirei）で行います。`
+              : null}
+          {!cloudEndpoint() && profileId
+            ? '現在Cloud解析の接続先が設定されていないため、開始できません。'
+            : ''}
         </AppText>
+        {cloudLoadError ? <Notice text={cloudLoadError} error /> : null}
         <SectionLabel>盤面と操作</SectionLabel>
         <Group>
           <Row

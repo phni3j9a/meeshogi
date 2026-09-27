@@ -9,7 +9,12 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.meeshogi.app",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "entitlements": {
+        "keychain-access-groups": [
+          "$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)"
+        ]
+      }
     },
     "android": {
       "package": "com.meeshogi.app",
@@ -25,7 +30,8 @@
       "expo-sharing",
       "expo-image",
       "expo-build-properties",
-      "expo-font"
+      "expo-font",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

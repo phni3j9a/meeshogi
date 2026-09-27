@@ -26,6 +26,28 @@ const pv = (value: unknown): value is string[] =>
 function requireValid(condition: unknown): asserts condition {
   if (!condition) throw new Error('保存したデータの形式が不正です。');
 }
+const finiteNonNegative = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+/** Latest Sekirei run record; entirely optional for backward compatibility. */
+function validAnalysisRun(value: unknown): boolean {
+  return (
+    object(value) &&
+    string(value.runId) &&
+    value.runId.length > 0 &&
+    object(value.conditions) &&
+    integer(value.conditions.nodes, 1, 10_000_000) &&
+    integer(value.conditions.multiPV, 1, 3) &&
+    finiteNonNegative(value.wholeGameWallMs) &&
+    integer(value.cacheReuseCount, 0) &&
+    typeof value.interrupted === 'boolean' &&
+    // Legacy field: records written before the timing-classification change
+    // carry `resumed`. It is tolerated for reading but never trusted.
+    !(value.resumed !== undefined && typeof value.resumed !== 'boolean') &&
+    member(value.completion, ['completed', 'partial', 'interrupted'])
+  );
+}
+
 function validAnalysis(value: unknown, sfen: string): boolean {
   if (
     !object(value) ||
@@ -39,7 +61,11 @@ function validAnalysis(value: unknown, sfen: string): boolean {
     !integer(value.conditions.nodes, 1, 10_000_000) ||
     !integer(value.conditions.multiPV, 1, 3) ||
     !Array.isArray(value.candidates) ||
-    value.candidates.length > 3
+    value.candidates.length > 3 ||
+    // Optional JS-call timing fields added after the initial format; absent on
+    // legacy rows, validated when present.
+    !(value.callElapsedMs === undefined || finiteNonNegative(value.callElapsedMs)) ||
+    !(value.runId === undefined || (string(value.runId) && value.runId.length > 0))
   )
     return false;
   const isCurrentIdentity =
@@ -192,6 +218,7 @@ export function decodeGame(value: unknown, id: string, identity: string): GameRe
         validAnalysis(analysis, (value.positions as string[])[Number(key)]),
     ),
   );
+  requireValid(value.analysisRun === undefined || validAnalysisRun(value.analysisRun));
   return value as unknown as GameRecord;
 }
 
@@ -215,7 +242,8 @@ export function decodeSettings(value: unknown): Settings {
   requireValid(
     integer(settings.analysisNodes, 1000, 1_000_000) &&
       integer(settings.multiPV, 1, 3) &&
-      member(settings.theme, ['system', 'light', 'dark']),
+      member(settings.theme, ['system', 'light', 'dark']) &&
+      member(settings.analysisMethod, ['sekirei', 'cloud-free', 'cloud-precision']),
   );
   requireValid(
     ['autoAnalyze', 'boardFlip', 'showArrows', 'showMateBadges', 'haptics'].every(

@@ -1,0 +1,71 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22 (phase B, post-allowlist): the acceptance owner's Precision job
+# must run to a terminal state under the Precision contract
+# (threads=2, hash=64, 5000 ms/ply, MultiPV=3). ~81 plies x 5 s plus queue:
+# allow 15 minutes. Run only after the owner was allowlisted for this install.
+#
+# iOS note: select the method via the settings picker (same reason as
+# cloud-precision-denied: the review screen's deep-scroll a11y frames lag
+# behind the rendered position after the swipe workaround, so by-id taps
+# miss). cloud-method-picker covers the review-screen picker itself.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '設定.*'
+- extendedWaitUntil:
+    visible:
+      id: settings-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: 'Cloud・精密'
+    timeout: 120000
+- tapOn: Cloud・精密
+- waitForAnimationToEnd
+- tapOn:
+    id: tab-games
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # iOS: the a11y tree reports this ScrollView's children while still
+      # below the fixed playback footer, so scrollUntilVisible no-ops and a
+      # by-id tap lands on the footer. Swipe inside the lower list region
+      # (below the eval graph, which would scrub the move position).
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
+- tapOn:
+    id: cloud-start
+    waitToSettleTimeoutMs: 500
+- extendedWaitUntil:
+    visible: 'Cloud解析が完了しました|.*Cloud解析が終了しました.*|Cloud解析を再開できます'
+    timeout: 900000
+- takeScreenshot: c60-precision-result
+- assertVisible: 'Cloud解析が完了しました|.*Cloud解析が終了しました.*'

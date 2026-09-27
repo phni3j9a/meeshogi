@@ -1,0 +1,222 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: while a Cloud method is selected, branch analysis and the
+# per-position deep analysis must stay on the local Sekirei engine — the UI
+# labels must say so. The acceptance script snapshots cloud_attempts before
+# and after this flow to prove no new Cloud job was created.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+# The branch screen only carries the （ローカル・Sekirei） markers when the
+# stored method is a Cloud profile; cloud-free-verify leaves Sekirei
+# persisted, so this flow re-selects Cloud・無料 before entering the game.
+# iOS selects via the settings picker, not the review screen row: on the
+# completed-job layout the method row sits deep in the ScrollView and its
+# a11y frame lags the rendered position while scroll momentum decays, so
+# synthesized taps land but never fire the Pressable (observed across plain
+# tap, doubleTapOn, and retryTapIfNoChange probes; a manual tap works).
+# Same workaround as cloud-precision-denied.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: '設定.*'
+      - extendedWaitUntil:
+          visible:
+            id: settings-screen
+          timeout: 30000
+      - scrollUntilVisible:
+          element:
+            id: analysis-method
+          direction: DOWN
+      - assertVisible:
+          id: analysis-method
+      - tapOn:
+          id: analysis-method
+      - waitForAnimationToEnd
+      - extendedWaitUntil:
+          visible: 'Cloud・無料'
+          timeout: 120000
+      - tapOn: 'Cloud・無料'
+      - waitForAnimationToEnd
+      - tapOn:
+          id: tab-games
+      - extendedWaitUntil:
+          visible: '.*KeroPona.*'
+          timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+# Assert instead of tapping — on Android the sheet item label duplicates the
+# method row's own value text, so tapping 'Cloud・無料' resolves ambiguously.
+- assertVisible:
+    id: analysis-method
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      # iOS does not expose the method row's value text in the a11y tree
+      # (the row is a single '解析方式を変更' element).
+      - assertVisible: '.*(端末内（Sekirei）|Cloud・無料).*'
+      - tapOn:
+          id: analysis-method
+      - extendedWaitUntil:
+          visible: 'Cloud・無料'
+          timeout: 30000
+      - tapOn: 'Cloud・無料'
+      - waitForAnimationToEnd
+      # Android: when the persisted method is already Cloud・無料 the text tap
+      # above resolves ambiguously against the row's own value and lands
+      # behind the sheet (observed: sheet left open, later asserts fail).
+      # Retry the sheet row by point (always the 2nd item, ~[0,1959][1080,2106]
+      # on the acceptance AVD) while the sheet's 'キャンセル' row is still up.
+      - repeat:
+          times: 4
+          while:
+            visible: 'キャンセル'
+          commands:
+            - tapOn:
+                point: 50%,85%
+            - waitForAnimationToEnd
+      - extendedWaitUntil:
+          notVisible: 'キャンセル'
+          timeout: 15000
+# Enter a branch from ply 0. The game screen resumes the last-viewed ply
+# (e.g. 53 after cloud-free-verify), so reset the position explicitly first.
+# While cloud results are still syncing the playback footer remounts and eats
+# the tap, so re-tap until the position actually shows ply 0.
+- repeat:
+    times: 4
+    while:
+      notVisible: '0 / 80手'
+    commands:
+      - tapOn:
+          id: move-first
+      - waitForAnimationToEnd
+- assertVisible: '0 / 80手'
+# Board square taps raced whenever analysis rows
+# were still populating (board remount eats the touches), so use the designed
+# affordance instead: a candidate row tap ("タップして分岐を検討") opens the
+# branch directly via previewCandidate.
+# Cloud results sync back slowly on a cold start — wait for the candidate
+# rows to exist before tapping.
+- extendedWaitUntil:
+    # iOS exposes candidates as composite labels ('候補1、…、タップして分岐を検討')
+    visible: '.*(第一候補|候補1).*'
+    timeout: 240000
+- scrollUntilVisible:
+    element:
+      id: candidate-0
+    direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # iOS: the a11y tree reports this ScrollView's children while still
+      # below the fixed playback footer, so scrollUntilVisible no-ops and a
+      # by-id tap lands on the footer. Swipe inside the lower list region
+      # (below the eval graph, which would scrub the move position).
+      - swipe:
+          start: 50%, 82%
+          end: 50%, 60%
+- tapOn:
+    id: candidate-0
+- extendedWaitUntil:
+    visible: 分岐検討
+    timeout: 10000
+- assertVisible: '0手目から分岐'
+# Branch analysis label must carry the local-Sekirei marker under Cloud.
+# Wait for the completed label only — '分岐を解析中' would match too early.
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
+- extendedWaitUntil:
+    visible: '分岐の解析結果（ローカル・Sekirei）'
+    timeout: 180000
+- takeScreenshot: c30-branch-local-label
+# The evaluation caption sits above the analysis section; scroll it back.
+- scrollUntilVisible:
+    element:
+      text: '分岐の評価・ローカル'
+    direction: UP
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 55%
+                end: 50%, 82%
+- assertVisible: '分岐の評価・ローカル'
+- takeScreenshot: c30b-branch-eval-local
+# Deep-analysis button label must carry the local-Sekirei marker too.
+- scrollUntilVisible:
+    element:
+      id: analysis-focus
+    direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
+- assertVisible: 'この局面を深く解析（ローカル・Sekirei）'
+- tapOn:
+    id: analysis-focus
+# In branch mode the deep-analysis result feeds the candidate list; the
+# 'focused-analysis-ready' banner only renders on the mainline view
+# ({!branch && ...} in app/game/[id].tsx). Completion is observable as the
+# button's busy label ('追加解析中…') clearing back to the local label.
+- extendedWaitUntil:
+    visible: 'この局面を深く解析（ローカル・Sekirei）'
+    timeout: 180000
+- assertVisible: '.*(第一候補|候補1).*'
+- takeScreenshot: c31-focus-local-label
+- scrollUntilVisible:
+    element:
+      text: 本譜に戻る
+    direction: UP
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 55%
+                end: 50%, 82%
+- tapOn: 本譜に戻る
+- extendedWaitUntil:
+    visible: '0 / 80手'
+    timeout: 15000

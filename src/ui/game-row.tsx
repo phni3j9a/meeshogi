@@ -1,6 +1,13 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { GameRecord, OPENING_LABELS, SERVICE_LABELS, SIDE_LABELS } from '@/domain/model';
+import {
+  GameRecord,
+  OPENING_LABELS,
+  SERVICE_LABELS,
+  SIDE_LABELS,
+  cloudProfileOf,
+} from '@/domain/model';
+import { CLOUD_PROFILE_LABELS, cloudAttemptLabel } from '@/cloud/contract';
 import { AppText, Icon } from './primitives';
 import { useTheme } from './theme';
 import { writtenDate } from './dates';
@@ -39,6 +46,17 @@ export function GameRow({
 }) {
   const theme = useTheme();
   const settings = useAppStore((state) => state.settings);
+  const cloudAttempts = useAppStore((state) => state.cloudAttempts);
+  const profileId = cloudProfileOf(settings.analysisMethod);
+  const attempt = useMemo(
+    () =>
+      profileId
+        ? cloudAttempts
+            .filter((item) => item.gameId === game.id && item.profileId === profileId)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+        : undefined,
+    [cloudAttempts, game.id, profileId],
+  );
   const outcome = gameOutcome(game);
   const date = writtenDate(game.startedAt);
   const analyzed = currentGameAnalysis(game, {
@@ -46,6 +64,17 @@ export function GameRow({
     multiPV: settings.multiPV,
   }).filter(Boolean).length;
   const previous = Object.keys(game.analysis).length - analyzed;
+  const analysisLabel = profileId
+    ? attempt
+      ? `${CLOUD_PROFILE_LABELS[profileId]}：${cloudAttemptLabel(attempt)}`
+      : `${CLOUD_PROFILE_LABELS[profileId]}：未解析`
+    : analyzed === 0
+      ? previous
+        ? '条件が変わりました・再解析できます'
+        : '未解析'
+      : analyzed >= game.positions.length
+        ? '解析済み'
+        : `解析 ${analyzed}/${game.positions.length}局面`;
   return (
     <Pressable
       accessibilityRole="button"
@@ -94,14 +123,8 @@ export function GameRow({
         <AppText variant="caption" tone="secondary" numberOfLines={1}>
           {openingDescription(game)}
         </AppText>
-        <AppText variant="small" tone="muted">
-          {analyzed === 0
-            ? previous
-              ? '条件が変わりました・再解析できます'
-              : '未解析'
-            : analyzed >= game.positions.length
-              ? '解析済み'
-              : `解析 ${analyzed}/${game.positions.length}局面`}
+        <AppText variant="small" tone="muted" numberOfLines={1}>
+          {analysisLabel}
         </AppText>
       </View>
       <AppText variant="caption" tone="secondary">

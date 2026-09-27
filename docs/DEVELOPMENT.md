@@ -10,6 +10,14 @@ Issue #20はこのgatewayから同じprivate imageを使うserial benchmarkの�
 
 Issue #21は、このstaging Workerへ公開`/v1/*`の非同期jobバックエンドを追加した。`POST /v1/credentials`がインストール単位の匿名credential（`mcd1_`形式、D1はSHA-256 hashのみ保存）を発行し、`POST /v1/jobs`が1局を1つの永続jobとして受け付けてQueueへ送る。consumerはdriver `POST /session`のストリームをcursor `next_ply`から継続し、局面ごとの検証済み結果をD1へ条件付きで書き込む。`GET /v1/jobs/:id`（進捗・再接続）、`GET /v1/jobs/:id/results`（永続結果のcursor付き取得）、`POST /v1/jobs/:id/cancel`（原子的な取消と遅延結果ガード）を提供する。利用制限（Free 5局/JST日・5局/60秒・同時active 1）とprofile値は`cloud/config/job-profiles.json`に集約し、`precision`はoperatorがD1のowner行でallowlistする場合のみ有効。エンジン条件・benchmark条件は公開APIへ露出しない。検証は実SQLite上の永続層・admission・guardテストとfake session streamによるconsumer振る舞いテストに加え、2026-09-26にstaging実環境（candidate `b5f339e`、digest-pinned image `sha256:0c9543b4…`）で同期smoke・Free/Precision非同期smoke・daily quota（429 `daily_quota_exceeded`）・1 engine process再利用証跡（`engineLaunch` 27行一意）を実測済み。初回runでは、rollout完了後も休眠中のContainer instanceが旧imageのまま再開する事象を観測し（原因はrolloutが既存instanceを置換しないためと推定、未確定）、対象app3件のdelete→再deployで是正した。DLQ到達・continuationの実経路・job経路のidle-sleep resumeは未検証のまま。アプリへの接続はIssue #22（SecureStoreへのcredential保存）、本番切替はIssue #24であり、Issue #20のベンチマーク実測はこの非同期経路の性能・コスト測定ではない。詳細は[`cloud/README.md`](../cloud/README.md)の「Issue #21 asynchronous job backend」を参照する。
 
+### Issue #22: 3方式の解析共存（アプリ側）
+
+アプリに「端末内（Sekirei）」「Cloud・無料」「Cloud・精密」の方式選択を追加し、既定はSekireiのままとした。Cloud解析は`cloud_attempts`/`cloud_results`/`cloud_meta`の独立テーブルで3方式の結果を分離し、POST前に永続化したidempotency keyとjobIdでアプリ終了・通信断から同一jobへ復帰する。credentialはSecureStoreにのみ保存し、キー欠落・破損・owner不一致・401を区別して復帰可否を再評価する。未確認の要求がある間は代替credentialの発行を拒否し、棋譜削除はserver終了・取消の確認まで保持する。分岐検討と深掘りはSekireiのローカル解析のまま、詰みバッジは証明済みmateProofのみを根拠とし、開発用の3方式比較export（`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`または`__DEV__`時のみ）を追加した。設計は[構成方針のIssue #22節](ARCHITECTURE.md#issue-22-アプリ側のcloud解析共存)、製品上の規則は[PRODUCT.mdの方式選択節](PRODUCT.md#解析方式の選択issue-22)を参照。
+
+最終候補`7d35caa`で`npm run check`（typecheckとVitest 21ファイル・264 tests）・`npx expo install --check`・`git diff --check`が成功した。同じ候補から両OSを新規ビルドし、Devin Cloudで既存全フロー（Android 15/15、iOS full 15/15）とCloud phase A 7/7（方式picker・Free開始/完了・明示取消・Cloud選択中のローカル分岐・Precision 403）を通した。background／kill・再起動／実通信遮断では両OSとも同一jobId・attempt数不変のまま復帰し、遮断中にserverの`next_ply`が0→81へ進むことを確認した。403拒否後の画面（日本語メッセージ・取消ボタンなし）と通常削除（`cloud_attempts`0行）はスクリーンショットを開いて確認した。Precision正常系81/81と実棋譜の3方式export・比較レポートは直前の候補（Android `bd0788b`、iOS `c94f88b`系）で実測した（以後の製品差分はCloudの4xx処理・日本語メッセージ・iOS entitlementのみ）。物理端末は未検証。証跡・未検証項目・手動操作で補った箇所は[Issue #22受入](ISSUE-22-ACCEPTANCE.md)にまとめた。
+
+受入に必要な環境: iOS SimulatorのReleaseビルドはadhoc署名（`CODE_SIGN_IDENTITY=-`）にする。`CODE_SIGNING_ALLOWED=NO`ではkeychain entitlementが埋め込まれず、SecureStoreが失敗してCloud解析を使えない。接続先はビルド時の`EXPO_PUBLIC_CLOUD_ENDPOINT`で注入し、stagingのhostnameをリポジトリへ含めない。開発用の比較exportメニューは`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`をビルド時に付ける。Precisionは`cloud/config/job-profiles.json`の既定運用どおり、operatorがowner行の`precision_allowed`を立てたcredentialのみ有効である。
+
 ### PR #12: 解析画面と駒セット
 
 盤面・評価グラフ・候補手・手送りを再構成し、グラフの横ドラッグで局面を確認できる。設定では黄楊・白木・桜木・青磁を比較して選択でき、SQLite保存後に盤上・持駒・詰み手順へ共通反映する。生成済み23PNGは約0.55MiB。仕様と以前のWeb検証は[画面の改善](design/analysis-refresh.md)・[駒セット](design/piece-sets.md)を参照。
@@ -93,7 +101,7 @@ meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機
 
 | セッション | 環境 | 用途 |
 | --- | --- | --- |
-| [`7cb3955c8c0a49b3ac96fa8e52137897`](https://app.devin.ai/sessions/7cb3955c8c0a49b3ac96fa8e52137897) | Devin Cloud macOS (Apple Silicon) | iOS Simulator受入（visual / full） |
+| [`8d6602ec533b498e9d85ca46f268f72c`](https://app.devin.ai/sessions/8d6602ec533b498e9d85ca46f268f72c) | Devin Cloud macOS (Apple Silicon) | iOS Simulator受入（visual / full）。2026-09-27に旧セッション`7cb3955c…`のVMが接続不能になったため置き換えた |
 | [`f9dace84ec92408da0bcacaf1c95930b`](https://app.devin.ai/sessions/f9dace84ec92408da0bcacaf1c95930b) | Devin Cloud Linux (KVM) | Android ビルド・エミュレーター・Maestro受入 |
 
 実行の流れ:

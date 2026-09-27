@@ -1,0 +1,121 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: developer comparison export. The menu item exists only when the
+# Release build was bundled with EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1. The
+# file is written to the deterministic cache path
+# meeshogi-comparison-<gameId>.json BEFORE the share sheet opens; the
+# acceptance scripts pull it (Android: helper share target -> /sdcard/Download;
+# iOS: Library/Caches inside the app container) and run analysis-compare.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+# Let the library->game transition finish before touching the header: the
+# game-screen id appears before the header buttons accept touches, so a tap
+# fired right after it can land in the dying transition frame and is eaten.
+- waitForAnimationToEnd
+# Tap by point: on this header Pressable an accessibility-node tap reports
+# success but never fires onPress (ActionSheet never opens; verified vs. a raw
+# coordinate tap at the same bounds which opens it). Point is inside the
+# header '...' button on the 1080x2400 acceptance AVD.
+- tapOn:
+    point: 91%,9%
+# The Modal sheet can mount noticeably late when the app just finished a big
+# cloud result sync (observed: sheet appears only after the run ends).
+- extendedWaitUntil:
+    visible: '比較レポートを書き出す（開発用）'
+    timeout: 120000
+- takeScreenshot: c70-game-menu
+# The item must exist in this build; if it does not the release bundle lacks
+# EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1 and that is the failure to report.
+- assertVisible: '比較レポートを書き出す（開発用）'
+- tapOn: '比較レポートを書き出す（開発用）'
+- waitForAnimationToEnd
+- takeScreenshot: c71-export-share-sheet
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      # Route the share through the CI helper so the JSON bytes also land in
+      # /sdcard/Download/meeshogi-comparison.json (Release builds have no
+      # run-as access to the app cache). The collapsed sharesheet truncates
+      # long labels, so match a prefix; expansion can need several swipes with
+      # a settle between each (a single fling can overshoot the row).
+      # The collapsed sharesheet truncates the helper label to 'Meeshogi E…' /
+      # 'meeshogi t…' (full 'Meeshogi Export Test' only lands below the fold),
+      # so accept the truncated forms too.
+      - repeat:
+          times: 8
+          while:
+            notVisible: 'Meeshogi Export.*|Meeshogi E.*|meeshogi t.*'
+          commands:
+            - swipe:
+                start: 50%, 90%
+                end: 50%, 55%
+            - waitForAnimationToEnd
+      - runFlow:
+          when:
+            visible: 'Meeshogi Export.*|Meeshogi E.*|meeshogi t.*'
+          commands:
+            # After the tap the sheet dismisses and the app shows the
+            # '書き出しました' Alert, which covers id: game-screen — so the
+            # completion signal is the alert text, not the game screen.
+            - tapOn: 'Meeshogi Export.*|Meeshogi E.*|meeshogi t.*'
+            # After the helper receives the share the app shows the
+            # '書き出しました' Alert, which covers the game-screen testID —
+            # so wait on the alert text, not the screen id (verified on
+            # evidence/issue22-android-20260927: target tap landed, write
+            # succeeded, but the game-screen wait timed out on the Alert).
+            - extendedWaitUntil:
+                visible: '.*書き出しました.*'
+                timeout: 60000
+      - runFlow:
+          when:
+            # Once the target is tapped the sheet is dismissed, so its label
+            # is gone — a missing '書き出しました' Alert is the only reliable
+            # "share did not complete" signal.
+            notVisible: '.*書き出しました.*'
+          commands:
+            # The helper target never appeared — capture the sheet state for
+            # diagnosis, dismiss it, and fail loudly on the next assert.
+            - takeScreenshot: c71b-export-share-target-missing
+            - pressKey: back
+            - assertVisible: 'Meeshogi Export Test target was visible'
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # Same idiom as export-review-ios: 'Save to Files' completes the
+      # activity and dismisses the sheet (the Files browser never mounts
+      # under automation — that is fine, the file is already in the app
+      # container's Library/Caches for the script to pull).
+      - scrollUntilVisible:
+          element:
+            text: 'Save to Files|ファイルに保存'
+          direction: DOWN
+          timeout: 20000
+          optional: true
+      - tapOn:
+          text: 'Save to Files|ファイルに保存'
+          optional: true
+      - tapOn:
+          text: '閉じる|Close|完了|Done'
+          optional: true
+- extendedWaitUntil:
+    visible: '.*書き出しました.*'
+    timeout: 60000
+- takeScreenshot: c72-export-written
+- tapOn:
+    text: OK
+    optional: true

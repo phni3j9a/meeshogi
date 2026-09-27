@@ -34,8 +34,36 @@ export default function GameInfoScreen() {
   const updateGame = useAppStore((state) => state.updateGame);
   const updateOpening = useAppStore((state) => state.updateOpening);
   const deleteGame = useAppStore((state) => state.deleteGame);
+  const canForgetCloudGame = useAppStore((state) => state.canForgetCloudGame);
   const [error, setError] = useState('');
   const choose = useChoice();
+  const runDelete = (forgetCloud = false) =>
+    deleteGame(id, { forgetCloud })
+      .then(() => router.dismissTo('/'))
+      .catch((e) => {
+        // Plan §3 limited exception: the local-forget escape is offered only
+        // when every blocking Cloud request is confirmed unrecoverable from
+        // this device (credential key absent or backend-401 rejected) — the
+        // store re-checks the latest state again inside deleteGame.
+        void (async () => {
+          if (!forgetCloud && (await canForgetCloudGame(id))) {
+            Alert.alert(
+              'Cloud要求の記録を端末から削除しますか？',
+              'この端末の棋譜・ローカル解析結果・Cloud解析要求の記録を削除します。サーバー側の解析ジョブは取消されず継続する可能性があり、この端末から再接続・取消できなくなります。',
+              [
+                { text: 'キャンセル', style: 'cancel' },
+                {
+                  text: 'ローカルだけ削除',
+                  style: 'destructive',
+                  onPress: () => runDelete(true),
+                },
+              ],
+            );
+            return;
+          }
+          setError(errorMessage(e));
+        })();
+      });
   if (!game)
     return <EmptyState title="棋譜が見つかりません" message="棋譜一覧から開き直してください。" />;
   const selectOpening = async (side: Side) => {
@@ -161,10 +189,7 @@ export default function GameInfoScreen() {
               {
                 text: '削除',
                 style: 'destructive',
-                onPress: () =>
-                  void deleteGame(id)
-                    .then(() => router.dismissTo('/'))
-                    .catch((e) => setError(errorMessage(e))),
+                onPress: () => void runDelete(),
               },
             ],
           )

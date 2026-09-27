@@ -1,0 +1,258 @@
+appId: com.meeshogi.app
+env:
+  INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
+---
+# Issue #22: after cloud-interruption.sh the same Cloud Free attempt must be
+# visible and reach a terminal state; its stored rows then drive the existing
+# graph / candidates / PV / mate UI. Mate values under Cloud must never grow
+# the Sekirei proof badge ('・N手詰め ›'). The flow ends on Sekirei where the
+# same plies DO show proven badges — the A/B gate evidence.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: library-screen
+    timeout: ${INITIAL_READY_TIMEOUT}
+- extendedWaitUntil:
+    visible: '.*KeroPona.*'
+    timeout: 30000
+- tapOn: '.*KeroPona.*'
+- extendedWaitUntil:
+    visible:
+      id: game-screen
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # iOS: the a11y tree reports this ScrollView's children while still
+      # below the fixed playback footer, so scrollUntilVisible no-ops and a
+      # by-id tap lands on the footer. Swipe inside the lower list region
+      # (below the eval graph, which would scrub the move position).
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
+# The Free job (81 plies x ~1 s server-side) plus interruption delays: allow
+# up to 10 minutes for the terminal label.
+- extendedWaitUntil:
+    visible: 'Cloud解析が完了しました|.*Cloud解析が終了しました.*'
+    timeout: 600000
+- takeScreenshot: c20-cloud-completed
+# Evaluation graph fed by Cloud results.
+- scrollUntilVisible:
+    element:
+      id: evaluation-chart
+    direction: UP
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 55%
+                end: 50%, 82%
+- assertVisible:
+    id: evaluation-chart
+- assertVisible:
+    id: evaluation-chart-plot
+- takeScreenshot: c21-cloud-graph
+# Terminal ply: checkmate label, and no proof badge anywhere. A single
+# element tap is eaten while cloud results finish syncing (footer remounts);
+# retry until the position actually lands on the terminal ply.
+- repeat:
+    times: 6
+    while:
+      notVisible: '80 / 80手'
+    commands:
+      - tapOn:
+          id: move-last
+      - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: '80 / 80手'
+    timeout: 30000
+# '後手勝ち・詰み終局' renders only once the position's Cloud result has
+# synced (formatEvaluation 'checkmate' needs the stored row; '—' meanwhile).
+# Results pull is slow on a cold app — allow minutes.
+- extendedWaitUntil:
+    # iOS exposes this inside a composite a11y label
+    # ("80手目、本譜、先手視点、後手勝ち・詰み終局") — substring regex.
+    visible: '.*後手勝ち・詰み終局.*'
+    timeout: 300000
+- assertNotVisible: '.*手詰め ›'
+- takeScreenshot: c22-cloud-terminal
+# One ply earlier Cloud must report a signed mate/eval value — still no badge.
+- repeat:
+    times: 4
+    while:
+      notVisible: '79 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
+      - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: '79 / 80手'
+    timeout: 30000
+- assertNotVisible: '.*手詰め ›'
+- takeScreenshot: c23-cloud-mate-or-eval
+# Mid-game ply: Cloud candidates + principal variation are visible.
+- repeat:
+    times: 4
+    while:
+      notVisible: '0 / 80手'
+    commands:
+      - tapOn:
+          id: move-first
+      - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: '0 / 80手'
+    timeout: 30000
+- extendedWaitUntil:
+    # Android exposes '第一候補'; iOS labels candidates '候補1、…'
+    # (full-string match — the iOS label continues after 候補1, so .* wrap)
+    visible: '.*(第一候補|候補1).*'
+    timeout: 240000
+- scrollUntilVisible:
+    element:
+      id: candidate-0
+    direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - swipe:
+          start: 50%, 82%
+          end: 50%, 60%
+- assertVisible:
+    id: candidate-0
+- takeScreenshot: c24-cloud-candidates
+# A ply where Sekirei proves 1手詰め — in this fixture run that is ply 53
+# (plies 41-64 block has several '探索量不足' shortfall plies incl. 51; the
+# proven short-mate ply is 53). Under Cloud the badge must be absent even
+# though a mate value may be displayed.
+- tapOn:
+    id: move-last
+- runFlow:
+    when:
+      notVisible: '80 / 80手'
+    commands:
+      - tapOn:
+          id: move-last
+- extendedWaitUntil:
+    visible: '80 / 80手'
+    timeout: 15000
+- tapOn:
+    id: move-prev
+    repeat: 27
+    delay: 800
+- runFlow:
+    when:
+      visible: '54 / 80手'
+    commands:
+      - tapOn:
+          id: move-prev
+- runFlow:
+    when:
+      visible: '52 / 80手'
+    commands:
+      - tapOn:
+          id: move-next
+- extendedWaitUntil:
+    visible: '53 / 80手'
+    timeout: 15000
+- assertNotVisible: '.*後手・1手詰め.*'
+- assertNotVisible: '.*手詰め ›'
+- takeScreenshot: c25-cloud-no-badge-ply53
+# --- switch back to Sekirei: stored local results return, same plies show
+# the proven badge (proof exists only on the Sekirei result set).
+- scrollUntilVisible:
+    element:
+      id: analysis-method
+    direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
+- tapOn:
+    id: analysis-method
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: '端末内（Sekirei）'
+    timeout: 120000
+- tapOn: 端末内（Sekirei）
+- waitForAnimationToEnd
+- scrollUntilVisible:
+    element:
+      id: analysis-status
+    direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
+# Wait for a local end-state label. The partial state shows
+# '解析済み N / 81局面' + a '解析を再開' button — neither matches the
+# '局面を解析済み' wording, so that label must be an alternative here.
+- extendedWaitUntil:
+    visible: '全局解析が完了しました|解析処理が終了しました|.*局面を解析済み.*|解析済み.*|解析を再開'
+    timeout: 600000
+# If the run ended partial, resume once (same finite-resume semantics as
+# analysis-review) then wait for the real end state again.
+- runFlow:
+    when:
+      visible: '解析を再開'
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: analysis-start
+          direction: DOWN
+      - runFlow:
+          when:
+            platform: iOS
+          commands:
+            - repeat:
+                times: 3
+                commands:
+                  - swipe:
+                      start: 50%, 82%
+                      end: 50%, 55%
+      - tapOn:
+          id: analysis-start
+      - extendedWaitUntil:
+          visible: '全局解析が完了しました|解析処理が終了しました|.*局面を解析済み.*'
+          timeout: 600000
+- assertVisible: '53 / 80手'
+- scrollUntilVisible:
+    element:
+      text: '.*後手・1手詰め.*'
+    direction: UP
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 55%
+                end: 50%, 82%
+- assertVisible: '.*後手・1手詰め.*'
+- takeScreenshot: c26-sekirei-badge-ply53
