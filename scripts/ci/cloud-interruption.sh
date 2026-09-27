@@ -83,7 +83,10 @@ app_bg() {
 app_fg() {
   case "$platform" in
     android) adb "${adb_serial_args[@]}" shell monkey -p com.meeshogi.app -c android.intent.category.LAUNCHER 1 >/dev/null ;;
-    ios) xcrun simctl openurl "$sim_udid" 'meeshogi://' ;;
+    # simctl openurl of the meeshogi:// scheme is gated behind iOS's
+    # 'Open in meeshogi?' consent dialog that never resolves unattended;
+    # simctl launch foregrounds a running instance directly.
+    ios) xcrun simctl launch "$sim_udid" com.meeshogi.app >/dev/null ;;
   esac
 }
 app_kill() {
