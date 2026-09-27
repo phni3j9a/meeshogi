@@ -23,7 +23,14 @@ import { buildComparisonExport } from '../../src/comparison/export';
 import { aggregateExport } from '../../src/comparison/aggregate';
 import type { CloudMethodExport } from '../../src/comparison/schema';
 import type { CloudDeps } from '../../src/store/cloud-controller';
-import { ENDPOINT, makeCloudDeps, fakeCloud, sqliteDb, type FakeCloudOptions } from './helpers';
+import {
+  ENDPOINT,
+  makeCloudDeps,
+  fakeCloud,
+  sqliteDb,
+  type FakeCloudOptions,
+  type FakeJob,
+} from './helpers';
 
 // expo-secure-store is a native module: the whole module is mocked and the
 // raw key/value backing is driven by the test to simulate absent / empty /
@@ -1526,5 +1533,171 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     );
     expect(fake.counts.createJob).toBe(0); // never auto-resubmitted
     store3.getState().pauseCloudJobs();
+  });
+
+  it('FP-020a: ADD COLUMN後に中断（submit_count=0の既送信行）でも再送拒否はnot_createdにならない', async () => {
+    // Interrupted migration (after ADD COLUMN, before backfill): a row that
+    // already POSTed still carries submit_count=0. First-POST detection uses
+    // submit_attempted — persisted before EVERY POST — so the counter can
+    // never reclassify it.
+    const { repository, fake, game } = await setup({
+      createJobError: () => {
+        throw new CloudApiError(403, 'profile_not_allowed', 'denied');
+      },
+    });
+    const now = '2026-01-02T00:00:00.000Z';
+    await repository.cloud.createAttempt({
+      attemptId: 'a-legacy',
+      gameId: game.id,
+      gameIdentity: game.identity,
+      profileId: 'free',
+      endpoint: ENDPOINT,
+      installId: 'inst-1',
+      ownerId: 'own_test',
+      idempotencyKey: 'mk.legacy-1',
+      initialSfen: game.positions[0],
+      moves: game.moves.map((m) => m.usi),
+      totalPlies: game.positions.length,
+      jobId: null,
+      status: 'requesting',
+      receiveAfterPly: -1,
+      serverNextPly: 0,
+      resultCounts: null,
+      receivedCount: 0,
+      validCount: 0,
+      failureCode: null,
+      failureMessage: null,
+      lastError: null,
+      submitAttempted: true, // an earlier POST outcome is unknown
+      submitCount: 0, // as if the backfill never ran
+      serverStatus: null,
+      serverCreatedAt: null,
+      serverFinishedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+    });
+    const credStore = memoryCredentialStore();
+    await credStore.save({
+      credential: 'mcd1_testcredential',
+      ownerId: 'own_test',
+      installId: 'inst-1',
+      endpoint: ENDPOINT,
+      issuedAt: now,
+    });
+    const store2 = makeAppStore({
+      openRepository: async () => repository,
+      analyze: async () => {
+        throw new Error('unused');
+      },
+      cancel: () => {},
+      createId: () => 'id-x',
+      cloud: makeCloudDeps(fake.client, credStore),
+    });
+    await store2.getState().initialize();
+    const loaded = () =>
+      store2.getState().cloudAttempts.find((a) => a.attemptId === 'a-legacy');
+    await vi.waitFor(() => expect(loaded()?.status).toBe('error'), { timeout: 3000 });
+    expect(loaded()?.serverStatus).toBeNull(); // resend denial ≠ first-POST refusal
+    expect(loaded() && attemptServerUnconfirmed(loaded()!)).toBe(true);
+    expect(loaded() && attemptBlocksDelete(loaded()!)).toBe(true);
+    await expect(store2.getState().deleteGame(game.id)).rejects.toThrow(/Cloud/u);
+    store2.getState().pauseCloudJobs();
+  });
+
+  it('FP-020b: backfill後・訂正前の中断でもinitialize毎の訂正でjobId既知のnot_createdを解消する', async () => {
+    // Interrupted migration (after backfill, before the correction): a stale
+    // not_created + known jobId row survives the guarded migration. The
+    // correction runs on EVERY initialize, so loading the row re-evaluates
+    // it to unconfirmed — association retained, normal delete refused, and
+    // the known jobId stays cancellable.
+    const { repository, fake, game } = await setup();
+    const now = '2026-01-02T00:00:00.000Z';
+    // A server-side job exists for the recorded jobId.
+    const job: FakeJob = {
+      jobId: 'job_orphan',
+      idempotencyKey: 'mk.legacy-2',
+      profileId: 'free',
+      initialSfen: game.positions[0],
+      moves: game.moves.map((m) => m.usi),
+      request: {
+        profileId: 'free',
+        initialSfen: game.positions[0],
+        moves: game.moves.map((m) => m.usi),
+      },
+      totalPlies: game.positions.length,
+      nextPly: 0,
+      status: 'running',
+      results: [],
+      advance(steps: number) {
+        this.nextPly = Math.min(this.totalPlies, this.nextPly + steps);
+      },
+    };
+    fake.jobs.set('mk.legacy-2', job);
+    await repository.cloud.createAttempt({
+      attemptId: 'a-stale-mark',
+      gameId: game.id,
+      gameIdentity: game.identity,
+      profileId: 'free',
+      endpoint: ENDPOINT,
+      installId: 'inst-1',
+      ownerId: 'own_test',
+      idempotencyKey: 'mk.legacy-2',
+      initialSfen: game.positions[0],
+      moves: game.moves.map((m) => m.usi),
+      totalPlies: game.positions.length,
+      jobId: 'job_orphan',
+      status: 'error',
+      receiveAfterPly: -1,
+      serverNextPly: 0,
+      resultCounts: null,
+      receivedCount: 0,
+      validCount: 0,
+      failureCode: 'profile_not_allowed',
+      failureMessage: null,
+      lastError: null,
+      submitAttempted: true,
+      submitCount: 1,
+      serverStatus: 'not_created',
+      serverCreatedAt: null,
+      serverFinishedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    });
+    // Re-running the migration performs the correction (not gated on the
+    // column-add branch).
+    await repository.initialize();
+    const corrected = await repository.cloud.attempts();
+    expect(corrected.find((a) => a.attemptId === 'a-stale-mark')?.serverStatus).toBeNull();
+
+    const credStore = memoryCredentialStore();
+    await credStore.save({
+      credential: 'mcd1_testcredential',
+      ownerId: 'own_test',
+      installId: 'inst-1',
+      endpoint: ENDPOINT,
+      issuedAt: now,
+    });
+    const store2 = makeAppStore({
+      openRepository: async () => repository,
+      analyze: async () => {
+        throw new Error('unused');
+      },
+      cancel: () => {},
+      createId: () => 'id-x',
+      cloud: makeCloudDeps(fake.client, credStore),
+    });
+    await store2.getState().initialize();
+    const loaded = () =>
+      store2.getState().cloudAttempts.find((a) => a.attemptId === 'a-stale-mark');
+    expect(loaded() && attemptServerUnconfirmed(loaded()!)).toBe(true);
+    expect(loaded() && attemptBlocksDelete(loaded()!)).toBe(true);
+    await expect(store2.getState().deleteGame(game.id)).rejects.toThrow(/Cloud/u);
+    // Known jobId → cancel reachable through the normal path.
+    await store2.getState().cancelCloudAnalysis('a-stale-mark');
+    await vi.waitFor(() => expect(loaded()?.status).toBe('cancelled'), { timeout: 3000 });
+    expect(job.status).toBe('cancelled');
+    store2.getState().pauseCloudJobs();
   });
 });

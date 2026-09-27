@@ -221,9 +221,9 @@ export interface CloudAttempt {
   submitAttempted: boolean;
   /**
    * Number of POST /jobs dispatches durably recorded for this attempt's key
-   * before sending. Only a rejection to the FIRST POST proves no job exists
-   * (FP-017): a denied resend can coexist with a job created by an earlier
-   * POST whose response was lost.
+   * before sending. Diagnostic only — first-POST detection uses
+   * `submitAttempted` (persisted before every POST, including rows that
+   * predate this column), never this counter (FP-020).
    */
   submitCount: number;
   /**

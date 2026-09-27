@@ -249,19 +249,20 @@ export class CloudRepository {
       await this.db.execAsync(
         'ALTER TABLE cloud_attempts ADD COLUMN submit_count INTEGER NOT NULL DEFAULT 0',
       );
-      // Rows written before the counter existed may already have POSTed:
-      // count them so a later rejection is never mistaken for a first-POST
-      // refusal (FP-017).
+      // Informational backfill only — first-POST detection relies on
+      // submit_attempted (persisted before every POST), never this counter,
+      // so an interrupted migration cannot reclassify a submitted row.
       await this.db.execAsync(
         'UPDATE cloud_attempts SET submit_count = 1 WHERE submit_attempted = 1',
       );
-      // A 'not_created' mark coexisting with a known jobId is provably wrong
-      // (a job was once confirmed); clear it back to unconfirmed rather than
-      // unblocking deletion for a possibly-live job.
-      await this.db.execAsync(
-        "UPDATE cloud_attempts SET server_status = NULL WHERE server_status = 'not_created' AND job_id IS NOT NULL",
-      );
     }
+    // FP-020: idempotent, run on every initialize — a 'not_created' mark
+    // coexisting with a known jobId is provably wrong (a job was once
+    // confirmed); clear it back to unconfirmed rather than unblocking
+    // deletion for a possibly-live job.
+    await this.db.execAsync(
+      "UPDATE cloud_attempts SET server_status = NULL WHERE server_status = 'not_created' AND job_id IS NOT NULL",
+    );
   }
 
   async metaGet(key: string): Promise<string | null> {

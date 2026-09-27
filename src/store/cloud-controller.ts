@@ -273,16 +273,25 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       }
       return;
     }
-    // FP-017/019 dispatch bookkeeping BEFORE the POST: the counter makes
-    // "this was the first POST for this key" provable later, and the write
-    // itself re-establishes the unconfirmed state before the request is in
-    // flight (the not_created guard above means a stale marker can never
-    // reach this persist).
+    // FP-017/019 dispatch bookkeeping BEFORE the POST: submitAttempted is
+    // durably true once any POST for this key was ever dispatched (even when
+    // its response was lost), and the counter keeps diagnostics. The write
+    // re-establishes the unconfirmed state before the request is in flight
+    // (the not_created guard above means a stale marker never reaches this
+    // persist).
     await persist(attempt.attemptId, {
       submitAttempted: true,
       submitCount: attempt.submitCount + 1,
     });
-    const firstPost = attempt.submitCount === 0 && attempt.jobId === null;
+    // FP-020: "first POST" is judged from the pre-dispatch submitAttempted —
+    // persisted before EVERY POST including rows that predate the submitCount
+    // column — plus the absence of any job evidence. It never depends on the
+    // migrated counter, so an interrupted migration cannot reclassify a
+    // previously-submitted key as first.
+    const firstPost =
+      !attempt.submitAttempted &&
+      attempt.jobId === null &&
+      attempt.serverStatus === null;
     let view: CloudJobView;
     try {
       view = await client.createJob(credential.credential, {
