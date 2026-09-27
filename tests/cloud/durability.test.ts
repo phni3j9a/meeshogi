@@ -1369,4 +1369,162 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     );
     store.getState().pauseCloudJobs();
   });
+
+  it('FP-017-r7a: 応答喪失後の再送403はnot_createdにならず対応を保持して削除をブロックする', async () => {
+    // Reviewer repro: first POST creates the job server-side but its response
+    // is lost (network); the same-key resend is then denied (403, e.g. the
+    // allowlist was revoked). The job EXISTS — the attempt must stay
+    // server-unconfirmed, not be marked not_created.
+    const { store, fake, game } = await setup({
+      createJobFailAfterCreate: 1, // first POST: row persisted, response lost
+      createJobError: (call) => {
+        if (call === 2) {
+          throw new CloudApiError(403, 'profile_not_allowed', 'denied after revoke');
+        }
+      },
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(fake.jobList()).toHaveLength(1); // the server job from the lost response exists
+    expect(attempt(store).serverStatus).toBeNull(); // never observed a view
+    expect(attempt(store).submitCount).toBe(2);
+    expect(attempt(store).failureCode).toBe('profile_not_allowed');
+    expect(attemptServerUnconfirmed(attempt(store))).toBe(true);
+    expect(attemptBlocksDelete(attempt(store))).toBe(true);
+    await expect(store.getState().deleteGame(game.id)).rejects.toThrow(/Cloud/u);
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-017-r7b: jobId既知の再送4xxは対応を保持し・削除ブロック・取消可能', async () => {
+    // Reviewer repro: POST succeeds (jobId known), a later drain error lands
+    // the attempt on 'error' with serverStatus 'running'; the FP-014 retry
+    // re-POSTs the same key and is denied — the attempt must keep the job
+    // association and stay unconfirmed.
+    const { store, fake, game } = await setup({
+      getResultsError: (call) =>
+        call === 1 ? new CloudApiError(400, 'invalid', 'drain rejected') : null,
+      createJobError: (call) => {
+        if (call === 2) {
+          throw new CloudApiError(409, 'idempotency_conflict', 'resend conflict');
+        }
+      },
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).jobId).toBe('job_1'), { timeout: 3000 });
+    fake.jobList()[0].advance(2); // server produces rows; next drain hits the bad row
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    // A real server status was observed (queued or running depending on when
+    // the drain raced the job) — definitely not the not_created marker.
+    expect(attempt(store).serverStatus === 'queued' || attempt(store).serverStatus === 'running').toBe(true);
+
+    // FP-014 recovery re-activates the same attempt; the resend is denied.
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(
+      () => expect(attempt(store).failureCode).toBe('idempotency_conflict'),
+      { timeout: 3000 },
+    );
+    expect(attempt(store).status).toBe('error');
+    expect(attempt(store).jobId).toBe('job_1'); // association retained
+    expect(attempt(store).serverStatus).not.toBe('not_created');
+    expect(attemptServerUnconfirmed(attempt(store))).toBe(true);
+    expect(attemptBlocksDelete(attempt(store))).toBe(true);
+    await expect(store.getState().deleteGame(game.id)).rejects.toThrow(/Cloud/u);
+
+    // The known jobId stays cancellable under the same credential.
+    await store.getState().cancelCloudAnalysis(attempt(store).attemptId);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('cancelled'), { timeout: 3000 });
+    expect(fake.jobList()[0].status).toBe('cancelled');
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-019a: 確定拒否のマーカーと終了状態は単一の永続化で書かれる', async () => {
+    const { store, repository, game } = await setup({
+      createJobError: () => {
+        throw new CloudApiError(429, 'rate_limited', 'too many');
+      },
+    });
+    const patches: Record<string, unknown>[] = [];
+    const original = repository.cloud.updateAttempt.bind(repository.cloud);
+    repository.cloud.updateAttempt = async (attemptId, patch) => {
+      patches.push(patch);
+      return original(attemptId, patch);
+    };
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    // The kill window is gone: the marker and the terminal status are in the
+    // same update, so no persisted state can carry requesting + not_created.
+    const marker = patches.find((patch) => patch.serverStatus === 'not_created');
+    expect(marker?.status).toBe('error');
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-019b: requesting+not_createdの行は復元時に再送せずerrorに落とす', async () => {
+    // Reviewer repro: a process killed between the two eef5070-era writes
+    // leaves requesting + submitAttempted + not_created persisted. Restore
+    // must NOT resubmit (the first POST was definitively rejected) — the row
+    // settles to a terminal local state without any POST.
+    const { repository, fake, game } = await setup();
+    const now = '2026-01-02T00:00:00.000Z';
+    await repository.cloud.createAttempt({
+      attemptId: 'a-stale',
+      gameId: game.id,
+      gameIdentity: game.identity,
+      profileId: 'free',
+      endpoint: ENDPOINT,
+      installId: 'inst-1',
+      ownerId: 'own_test',
+      idempotencyKey: 'mk.stale-1',
+      initialSfen: game.positions[0],
+      moves: game.moves.map((m) => m.usi),
+      totalPlies: game.positions.length,
+      jobId: null,
+      status: 'requesting',
+      receiveAfterPly: -1,
+      serverNextPly: 0,
+      resultCounts: null,
+      receivedCount: 0,
+      validCount: 0,
+      failureCode: 'rate_limited',
+      failureMessage: null,
+      lastError: null,
+      submitAttempted: true,
+      submitCount: 1,
+      serverStatus: 'not_created',
+      serverCreatedAt: null,
+      serverFinishedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+    });
+    // Simulate the restart: a fresh store over the same repository loads the
+    // row and initialize()'s resume() starts its pump. Seed the credential so
+    // the pump reaches the submit path (and would POST if unguarded).
+    const credStore = memoryCredentialStore();
+    await credStore.save({
+      credential: 'mcd1_testcredential',
+      ownerId: 'own_test',
+      installId: 'inst-1',
+      endpoint: ENDPOINT,
+      issuedAt: now,
+    });
+    const store3 = makeAppStore({
+      openRepository: async () => repository,
+      analyze: async () => {
+        throw new Error('unused');
+      },
+      cancel: () => {},
+      createId: () => 'id-x',
+      cloud: makeCloudDeps(fake.client, credStore),
+    });
+    await store3.getState().initialize(); // loads attempts + resumes pumps
+    await vi.waitFor(
+      () =>
+        expect(
+          store3.getState().cloudAttempts.find((a) => a.attemptId === 'a-stale')?.status,
+        ).toBe('error'),
+      { timeout: 3000 },
+    );
+    expect(fake.counts.createJob).toBe(0); // never auto-resubmitted
+    store3.getState().pauseCloudJobs();
+  });
 });

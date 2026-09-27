@@ -260,11 +260,29 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     client: CloudClient,
     credential: CloudCredential,
   ) => {
-    if (!attempt.submitAttempted) {
-      // Mark dispatch durably before the POST: if the response is lost the
-      // server may hold a job even though jobId stays null.
-      await persist(attempt.attemptId, { submitAttempted: true });
+    if (attempt.serverStatus === 'not_created') {
+      // FP-019: a definitively rejected first POST must never be resubmitted —
+      // not on restore, not via cancel re-entry. Rows from before the atomic
+      // write can still carry requesting/cancel-requested + not_created;
+      // settle them locally instead of POSTing.
+      if (attempt.status !== 'error') {
+        await persist(attempt.attemptId, {
+          status: 'error',
+          finishedAt: deps.nowIso(),
+        }).catch(() => undefined);
+      }
+      return;
     }
+    // FP-017/019 dispatch bookkeeping BEFORE the POST: the counter makes
+    // "this was the first POST for this key" provable later, and the write
+    // itself re-establishes the unconfirmed state before the request is in
+    // flight (the not_created guard above means a stale marker can never
+    // reach this persist).
+    await persist(attempt.attemptId, {
+      submitAttempted: true,
+      submitCount: attempt.submitCount + 1,
+    });
+    const firstPost = attempt.submitCount === 0 && attempt.jobId === null;
     let view: CloudJobView;
     try {
       view = await client.createJob(credential.credential, {
@@ -274,13 +292,23 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
         moves: attempt.moves,
       });
     } catch (error) {
-      // #21 admission is atomic (FP-017): a definitive 4xx contract rejection
-      // means the server holds NO job for this request, so the attempt is
-      // settled — not "server unconfirmed". 401 stays a credential rejection
-      // (the adopted local-forget exception path), and a non-contract 4xx
-      // body can't be confirmed as an API admission decision.
-      if (error instanceof CloudApiError && isAdmissionRejection(error)) {
-        await persist(attempt.attemptId, { serverStatus: 'not_created' }).catch(() => undefined);
+      // FP-017: only a FIRST-POST definitive rejection proves no job exists —
+      // a denied resend can coexist with a job created by an earlier POST
+      // whose response was lost, or by the recorded jobId. Those stay
+      // unconfirmed (association retained; deletion blocked).
+      if (firstPost && error instanceof CloudApiError && isAdmissionRejection(error)) {
+        const message = mapApiError(error);
+        // FP-019: marker + terminal state in ONE write — a kill between two
+        // commits can no longer leave requesting + not_created behind.
+        await persist(attempt.attemptId, {
+          status: 'error',
+          serverStatus: 'not_created',
+          failureCode: error.code,
+          failureMessage: message,
+          lastError: message,
+          finishedAt: deps.nowIso(),
+        }).catch(() => undefined);
+        return;
       }
       throw error;
     }
@@ -636,6 +664,7 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       failureMessage: null,
       lastError: null,
       submitAttempted: false,
+      submitCount: 0,
       serverStatus: null,
       serverCreatedAt: null,
       serverFinishedAt: null,

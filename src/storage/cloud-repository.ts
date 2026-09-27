@@ -38,6 +38,7 @@ type AttemptColumns = {
   failureMessage: 'failure_message';
   lastError: 'last_error';
   submitAttempted: 'submit_attempted';
+  submitCount: 'submit_count';
   serverStatus: 'server_status';
   serverCreatedAt: 'server_created_at';
   serverFinishedAt: 'server_finished_at';
@@ -57,6 +58,7 @@ const ATTEMPT_COLUMNS: AttemptColumns = {
   failureMessage: 'failure_message',
   lastError: 'last_error',
   submitAttempted: 'submit_attempted',
+  submitCount: 'submit_count',
   serverStatus: 'server_status',
   serverCreatedAt: 'server_created_at',
   serverFinishedAt: 'server_finished_at',
@@ -94,6 +96,7 @@ function decodeAttempt(row: Record<string, unknown>): CloudAttempt {
     typeof row.received_count !== 'number' ||
     typeof row.valid_count !== 'number' ||
     !(row.submit_attempted === 0 || row.submit_attempted === 1) ||
+    typeof row.submit_count !== 'number' ||
     !(
       row.server_status === null ||
       (typeof row.server_status === 'string' &&
@@ -143,6 +146,7 @@ function decodeAttempt(row: Record<string, unknown>): CloudAttempt {
     failureMessage: typeof row.failure_message === 'string' ? row.failure_message : null,
     lastError: typeof row.last_error === 'string' ? row.last_error : null,
     submitAttempted: row.submit_attempted === 1,
+    submitCount: row.submit_count as number,
     serverStatus:
       typeof row.server_status === 'string'
         ? (row.server_status as CloudAttempt['serverStatus'])
@@ -202,6 +206,7 @@ export class CloudRepository {
         failure_message TEXT,
         last_error TEXT,
         submit_attempted INTEGER NOT NULL DEFAULT 0,
+        submit_count INTEGER NOT NULL DEFAULT 0,
         server_status TEXT,
         server_created_at TEXT,
         server_finished_at TEXT,
@@ -240,6 +245,23 @@ export class CloudRepository {
     if (!names.has('server_finished_at')) {
       await this.db.execAsync('ALTER TABLE cloud_attempts ADD COLUMN server_finished_at TEXT');
     }
+    if (!names.has('submit_count')) {
+      await this.db.execAsync(
+        'ALTER TABLE cloud_attempts ADD COLUMN submit_count INTEGER NOT NULL DEFAULT 0',
+      );
+      // Rows written before the counter existed may already have POSTed:
+      // count them so a later rejection is never mistaken for a first-POST
+      // refusal (FP-017).
+      await this.db.execAsync(
+        'UPDATE cloud_attempts SET submit_count = 1 WHERE submit_attempted = 1',
+      );
+      // A 'not_created' mark coexisting with a known jobId is provably wrong
+      // (a job was once confirmed); clear it back to unconfirmed rather than
+      // unblocking deletion for a possibly-live job.
+      await this.db.execAsync(
+        "UPDATE cloud_attempts SET server_status = NULL WHERE server_status = 'not_created' AND job_id IS NOT NULL",
+      );
+    }
   }
 
   async metaGet(key: string): Promise<string | null> {
@@ -273,9 +295,10 @@ export class CloudRepository {
         attempt_id, game_id, game_identity, profile_id, endpoint, install_id, owner_id,
         idempotency_key, initial_sfen, moves_json, total_plies, job_id, status,
         receive_after_ply, server_next_ply, result_counts, received_count, valid_count,
-        failure_code, failure_message, last_error, submit_attempted, server_status,
+        failure_code, failure_message, last_error, submit_attempted, submit_count,
+        server_status,
         server_created_at, server_finished_at, created_at, updated_at, finished_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       attempt.attemptId,
       attempt.gameId,
       attempt.gameIdentity,
@@ -298,6 +321,7 @@ export class CloudRepository {
       attempt.failureMessage,
       attempt.lastError,
       (attempt.submitAttempted ?? false) ? 1 : 0,
+      attempt.submitCount ?? 0,
       attempt.serverStatus ?? null,
       attempt.serverCreatedAt ?? null,
       attempt.serverFinishedAt ?? null,

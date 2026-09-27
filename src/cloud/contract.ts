@@ -82,10 +82,11 @@ export const CLOUD_RESULTS_PAGE_LIMIT = 200;
 export type CloudJobServerStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 /**
- * `not_created` is a local marker persisted when POST /v1/jobs returned a
- * definitive contract rejection: #21 admission is atomic, so no job exists
- * for that request. The server never emits it in a job view — it only
- * appears on attempts whose POST was denied.
+ * `not_created` is a local marker persisted when the FIRST POST /v1/jobs for
+ * an attempt's key returned a definitive contract rejection: #21 admission is
+ * atomic, so no job exists for that request. A rejected RESEND never earns
+ * the marker — an earlier POST whose response was lost may still have
+ * created the job. The server never emits it in a job view.
  */
 export type CloudAttemptServerStatus = CloudJobServerStatus | 'not_created';
 
@@ -218,6 +219,13 @@ export interface CloudAttempt {
    * was lost, a server job may exist even though jobId is null.
    */
   submitAttempted: boolean;
+  /**
+   * Number of POST /jobs dispatches durably recorded for this attempt's key
+   * before sending. Only a rejection to the FIRST POST proves no job exists
+   * (FP-017): a denied resend can coexist with a job created by an earlier
+   * POST whose response was lost.
+   */
+  submitCount: number;
   /**
    * Latest job status the server itself confirmed (job view, submit replay, or
    * cancel response). Terminal values settle the attempt even when result

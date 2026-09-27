@@ -148,6 +148,7 @@ function makeAttempt(
     failureCode: null,
     failureMessage: null,
     submitAttempted: false,
+    submitCount: 0,
     serverStatus: null,
     serverCreatedAt: null,
     serverFinishedAt: null,
