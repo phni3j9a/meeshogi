@@ -128,6 +128,29 @@ owner に限って実施:
 観測（Issue #24 判断材料）: この端末で Sekirei 全局解析は `65/81` で partial 終了
 （16 局面が恒久的な探索量不足）、Cloud Free/Precision は `81/81` 完走。
 
+## 実施済み結果（iOS focused run、product `e6db45f`+`c94f88b` SecureStore entitlement 修正）
+
+`evidence/issue22-ios-20260927`（iPhone 18 Pro Simulator、iOS 27.0、Release-iphonesimulator）。
+全既存フロー 33/33 PASS + cloud phase A 7/7 PASS + phase B（precision-run・3方式 export・健全 job 中断）実施済み。
+
+| 項目 | 結果 |
+|---|---|
+| 方式 picker・Sekirei 既定・切替で job 非発行 | PASS |
+| Cloud Free 開始・進行・完了 UI | PASS（`job_88f7c806…` 81/81 完走） |
+| 明示取消 | PASS（live 中 `job_f290c653…` → server cancelled、受信 5 ply） |
+| 中断耐性（bg/fg・kill/relaunch・pf netcut 60s） | PASS — 同一 job_id・attempt 数不変。**健全 Precision job では遮断中に server_next_ply 1→37 が進行し、復帰後受信継続→完走 78/78**（Android で未観測だった「中断中の server 側進行」をこちらで実証）。pf による endpoint 限定遮断は curl fail+github.com OK で検証済み |
+| 完了後のグラフ・候補・PV・通常 mate 表示・Cloud での詰めバッジ非表示/Sekirei で表示 | PASS（ply 53 A/B 両者スクリーンショット確認済み） |
+| 分岐・深掘りがローカル Sekirei | PASS |
+| Precision allowlist 前 403 | PASS（`profile_not_allowed` + Notice + `Cloud解析を再試行`） |
+| Precision allowlist 後 正常系 | PASS（`job_b3bee287…` 81/81 完走。ただし flow の `cloud-start` タップは stale-a11y-frame の harness 問題で未着火 — job 開始は手動 GUI タップ、完了 assert はフローで検証） |
+| 3方式 export + analysis-compare | PASS — `comparison-export.json`（232KB、81 plies、sekirei+cloud-free+cloud-precision、両 Cloud profile の engine identity 全 SHA 付き） |
+| Free 日次 quota | 実測 — 6 件目の Free job が `daily_quota_exceeded`（5/owner/day が機能） |
+
+iOS 固有の発見:
+- **製品修正 `c94f88b`**: adhoc 署名の simulator ビルドは entitlement 空で SecItem が `errSecMissingEntitlement` → cloud credential が読めず全 cloud flow が不可。`app.json` に `keychain-access-groups` を追加して解消（製品ブランチ側の修正）。
+- harness（フロー側）: XCTest は footer 下の ScrollView 子を a11y tree に残すため scrollUntilVisible が無効化 → `platform: iOS` の実スワイプで対応（`ede2195`）。`simctl openurl` は「Open in meeshogi?」consent ダイアログを残すため `simctl launch` に変更（`2230bba`）。複合 a11y ラベルには `.*` matcher（`bd0788b`）。
+- `retry_exhausted` は staging 既知 Issue #29（cancel 直後 ~30-40s の次 Free job が 0手目失敗）に該当 — app 起因でないことを双方の run で確認。
+
 ### 運用注意（run で判明）
 
 - `import-review.yaml` の `clearState: true`（と reinstall）は SecureStore の
@@ -141,10 +164,9 @@ owner に限って実施:
 
 ## 残る確認（このドラフト時点で未検証）
 
-- iOS 全般（macOS VM の接続障害で focused run 未実施 — evidence branch pending）
 - 512手超の棋譜に対する notice（fixture 未整備のため未検証と明記）
 - POST 応答喪失タイミングの live 再現（単体テストで代替保証）
 - 物理端末での発熱・実 network 環境（emulator/simulator のみ）
-- 中断中に server 側が ply を前進し続ける姿（Android では job が一過性
-  retry_exhausted となり server_next_ply 0→0 で観測できず。jobId 同一性と
-  非重複は証明済み。最終受入で live 完走 job への中断を再実施推奨）
+- Android 側で「中断中に server が進行する」姿の再実施（iOS では
+  interruptions-precision で server_next_ply 1→37 を実証済み。
+  Android は対象 job が Issue #29 の retry_exhausted に当たり未観測）
