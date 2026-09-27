@@ -91,7 +91,9 @@ env:
 # Leave the stored method on Sekirei for the remaining flows: restore via the
 # settings picker for the same reason as above. The pushed game screen hides
 # the tab bar, so go back to the library first.
-- tapOn: '戻る|Back'
+# Android exposes the header back chevron as 'Navigate up' (Expo Router),
+# not '戻る'/'Back' — union all three labels.
+- tapOn: '戻る|Back|Navigate up'
 - extendedWaitUntil:
     visible:
       id: library-screen
