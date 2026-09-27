@@ -1173,6 +1173,7 @@ export default function GameScreen() {
                         icon={fullyAnalyzed ? 'check' : 'play'}
                       />
                       {attempt?.status === 'error' &&
+                      attempt.serverStatus !== 'not_created' &&
                       (attempt.jobId || attempt.submitAttempted) ? (
                         <TextButton
                           label="中断した解析を取消"

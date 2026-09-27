@@ -77,14 +77,16 @@ env:
     id: cloud-start
     waitToSettleTimeoutMs: 500
 # 403 profile_not_allowed is non-transient: the attempt lands on 'error' with
-# the server failure message, and the retry affordance stays available.
+# the mapped Japanese message (raw English server text never reaches the UI),
+# and the retry affordance stays available. The POST rejection is a definitive
+# refusal — serverStatus 'not_created' — so no cancel button is offered.
 # Error state renders status 'Cloud解析はエラーで停止しています' plus the
 # 'Cloud解析を再試行' button — 'Cloud解析を再開できます' is only the resumable
 # (transient-failure) status label, not this affordance.
 - extendedWaitUntil:
-    visible: '.*allowlist.*|Cloud解析を再開できます|.*Cloud解析が失敗.*'
+    visible: '.*サーバー側の許可.*|Cloud解析を再開できます|.*Cloud解析が失敗.*'
     timeout: 120000
-- assertVisible: '.*allowlist.*'
+- assertVisible: '.*サーバー側の許可.*'
 # iOS exposes the retry button as composite 'play, Cloud解析を再試行'.
 - assertVisible: '.*Cloud解析を再試行.*|.*Cloud解析を再開できます.*'
 - takeScreenshot: c51-precision-403

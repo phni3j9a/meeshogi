@@ -140,6 +140,8 @@ export interface FakeCloudOptions {
   credential?: { credential: string; ownerId: string; createdAt: string };
   /** Throw this error on the Nth createJob call (1-based) after recording the job. */
   createJobFailAfterCreate?: number;
+  /** Return an error to throw on the Nth createJob call AFTER the job row exists (e.g. 503 enqueue_failed). */
+  createJobErrorAfterCreate?: (call: number) => Error | null;
   createJobError?: (call: number, body: unknown) => void;
   /** Advance each job's nextPly by this many positions per getJob call. */
   perPollAdvance?: number;
@@ -240,6 +242,8 @@ export function fakeCloud(options: FakeCloudOptions = {}) {
         },
       };
       jobs.set(body.idempotencyKey, job);
+      const injected = options.createJobErrorAfterCreate?.(createCalls);
+      if (injected) throw injected;
       if (options.createJobFailAfterCreate === createCalls) {
         throw new CloudApiError(0, 'network', 'network');
       }

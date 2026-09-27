@@ -97,7 +97,11 @@ function decodeAttempt(row: Record<string, unknown>): CloudAttempt {
     !(
       row.server_status === null ||
       (typeof row.server_status === 'string' &&
-        ['queued', 'running', 'completed', 'failed', 'cancelled'].includes(row.server_status))
+        // 'not_created' is the local marker for a definitively rejected POST;
+        // it never appears in server wire views.
+        ['queued', 'running', 'completed', 'failed', 'cancelled', 'not_created'].includes(
+          row.server_status,
+        ))
     ) ||
     typeof row.created_at !== 'string' ||
     typeof row.updated_at !== 'string'

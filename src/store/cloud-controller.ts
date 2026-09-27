@@ -51,13 +51,62 @@ export interface CloudContext {
 
 const TERMINAL_STATUSES: CloudAttemptStatus[] = ['completed', 'failed', 'cancelled'];
 
+/**
+ * Contract error codes → concise Japanese. Raw English server text must never
+ * reach the UI (FP-018); the code itself stays in `failureCode` and is shown
+ * only in development builds.
+ */
 function mapApiError(error: CloudApiError): string {
-  if (error.status === 401) return 'Cloudの認証情報が無効です。アプリを再インストールせず、時間をおいて再試行してください。';
-  if (error.status === 403) return error.message;
-  if (error.status === 404) return 'Cloudサーバー上に解析ジョブが見つかりません。';
-  if (error.status === 409) return '同じ解析要求が既に終了しています。新しい解析としてやり直してください。';
-  if (error.status === 429) return error.message;
-  return error.message || `Cloudサーバーがエラーを返しました（${error.status}）。`;
+  if (error.status === 401) {
+    return 'Cloudの認証情報が無効です。アプリを再インストールせず、時間をおいて再試行してください。';
+  }
+  const base = (() => {
+    switch (error.code) {
+      case 'profile_not_allowed':
+        return '精密解析はこの端末では利用できません（サーバー側の許可が必要です）。';
+      case 'daily_quota_exceeded':
+        return '本日のCloud・無料の解析回数（5回）を使い切りました。明日以降に再度お試しください。';
+      case 'rate_limited':
+        return '短時間に多くの解析要求があったため制限されています。時間をおいて再度お試しください。';
+      case 'active_job_limit':
+        return '実行中のCloud解析があるため新しい解析を開始できません。終了または取消してから開始してください。';
+      case 'idempotency_conflict':
+      case 'idempotency_key_in_use':
+        return '同じ解析要求が既に終了しています。新しい解析としてやり直してください。';
+      case 'invalid':
+        return '解析要求がサーバーに拒否されました。棋譜がCloud解析の条件に合わない可能性があります。';
+      case 'not_found':
+        return 'Cloudサーバー上に解析ジョブが見つかりません。';
+      case 'network':
+        return 'Cloudサーバーへ接続できませんでした。';
+      case 'invalid_response':
+        return 'Cloudサーバーの応答を解釈できませんでした。';
+      default:
+        return error.status >= 500
+          ? 'Cloudサーバーで一時的なエラーが発生しました。時間をおいて再度お試しください。'
+          : `Cloudサーバーがエラーを返しました（${error.status}）。`;
+    }
+  })();
+  // The contract code aids diagnosis in development; production users only
+  // see the Japanese text (the raw code remains queryable via failureCode).
+  return typeof __DEV__ !== 'undefined' && __DEV__ ? `${base}（${error.code}）` : base;
+}
+
+/**
+ * FP-017: POST /v1/jobs admission is atomic, so any 4xx carrying a parsed
+ * contract failure body means no job was created. Exceptions: 401 stays a
+ * credential rejection (local-forget exception), and a 4xx without the
+ * contract body ('http_error'/'invalid_response') can't be confirmed as an
+ * API admission decision — those keep the attempt server-unconfirmed.
+ */
+function isAdmissionRejection(error: CloudApiError): boolean {
+  return (
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 401 &&
+    error.code !== 'http_error' &&
+    error.code !== 'invalid_response'
+  );
 }
 
 /**
@@ -216,12 +265,25 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       // server may hold a job even though jobId stays null.
       await persist(attempt.attemptId, { submitAttempted: true });
     }
-    const view = await client.createJob(credential.credential, {
-      idempotencyKey: attempt.idempotencyKey,
-      profileId: attempt.profileId,
-      initialSfen: attempt.initialSfen,
-      moves: attempt.moves,
-    });
+    let view: CloudJobView;
+    try {
+      view = await client.createJob(credential.credential, {
+        idempotencyKey: attempt.idempotencyKey,
+        profileId: attempt.profileId,
+        initialSfen: attempt.initialSfen,
+        moves: attempt.moves,
+      });
+    } catch (error) {
+      // #21 admission is atomic (FP-017): a definitive 4xx contract rejection
+      // means the server holds NO job for this request, so the attempt is
+      // settled — not "server unconfirmed". 401 stays a credential rejection
+      // (the adopted local-forget exception path), and a non-contract 4xx
+      // body can't be confirmed as an API admission decision.
+      if (error instanceof CloudApiError && isAdmissionRejection(error)) {
+        await persist(attempt.attemptId, { serverStatus: 'not_created' }).catch(() => undefined);
+      }
+      throw error;
+    }
     checkJobView(attempt, view);
     // The user may have cancelled while the POST was in flight; never let the
     // freshly learned jobId overwrite a cancel-requested state.
@@ -341,7 +403,9 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       } else if (
         attempt.status === 'cancel-requested' &&
         attempt.serverStatus !== null &&
-        CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)
+        CLOUD_SERVER_TERMINAL_STATUSES.includes(
+          attempt.serverStatus as (typeof CLOUD_SERVER_TERMINAL_STATUSES)[number],
+        )
       ) {
         // The server already finished/cancelled the job: skip the cancel POST
         // (it would 404/409 on a finished job) and just drain + settle.
@@ -357,7 +421,9 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
         const transient =
           error.status === 0 || error.status === 408 || error.status >= 500;
         if (transient) {
-          await persist(attempt.attemptId, { lastError: error.message }).catch(() => undefined);
+          await persist(attempt.attemptId, { lastError: mapApiError(error) }).catch(
+            () => undefined,
+          );
           return 'retry';
         }
         const message = mapApiError(error);
@@ -604,11 +670,12 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
         ensurePump(attemptId);
         return;
       }
-      if (attempt.status === 'error' && (attempt.jobId || attempt.submitAttempted)) {
+      if (attemptServerUnconfirmed(attempt)) {
         // A job that may still be live server-side (e.g. drained results were
         // rejected, or a POST whose response was lost) gets an explicit cancel
         // attempt: without a jobId the pump re-sends under the same idempotency
-        // key to learn it, then cancels.
+        // key to learn it, then cancels. A 'not_created' attempt is settled —
+        // there is nothing server-side to cancel.
         await persist(attemptId, { status: 'cancel-requested', lastError: null });
         wake(attemptId);
         ensurePump(attemptId);
@@ -666,6 +733,7 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
           attempt.endpoint === endpoint &&
           !!attempt.ownerId &&
           (attempt.submitAttempted || attempt.jobId !== null) &&
+          attempt.serverStatus !== 'not_created' &&
           !(
             attempt.serverStatus !== null &&
             CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)

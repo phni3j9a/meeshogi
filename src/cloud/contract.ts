@@ -27,7 +27,7 @@ export const CLOUD_PROFILE_LABELS: Record<CloudProfileId, string> = {
 /** Compact list-row label for one attempt. */
 export function cloudAttemptLabel(attempt: {
   status: CloudAttemptStatus;
-  serverStatus: CloudJobServerStatus | null;
+  serverStatus: CloudAttemptServerStatus | null;
   serverNextPly: number;
   totalPlies: number;
   validCount: number;
@@ -82,6 +82,14 @@ export const CLOUD_RESULTS_PAGE_LIMIT = 200;
 export type CloudJobServerStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 /**
+ * `not_created` is a local marker persisted when POST /v1/jobs returned a
+ * definitive contract rejection: #21 admission is atomic, so no job exists
+ * for that request. The server never emits it in a job view — it only
+ * appears on attempts whose POST was denied.
+ */
+export type CloudAttemptServerStatus = CloudJobServerStatus | 'not_created';
+
+/**
  * Local lifecycle of one analysis attempt. `requesting` means the idempotency
  * record is persisted but no job view has been confirmed; `cancel-requested`
  * keeps polling until the server confirms cancellation or a terminal state.
@@ -126,6 +134,9 @@ export function attemptBlocksDelete(
 ): boolean {
   if (CLOUD_ACTIVE_STATUSES.includes(attempt.status)) return true;
   if (attempt.status !== 'error') return false;
+  // The server definitely created no job, or a confirmed terminal outcome
+  // settled it — nothing live remains to protect.
+  if (attempt.serverStatus === 'not_created') return false;
   if (attempt.serverStatus && CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)) {
     return false;
   }
@@ -144,6 +155,7 @@ export function attemptServerUnconfirmed(
   return (
     attempt.status === 'error' &&
     (attempt.submitAttempted || attempt.jobId !== null) &&
+    attempt.serverStatus !== 'not_created' &&
     !(
       attempt.serverStatus !== null &&
       CLOUD_SERVER_TERMINAL_STATUSES.includes(attempt.serverStatus)
@@ -209,9 +221,11 @@ export interface CloudAttempt {
   /**
    * Latest job status the server itself confirmed (job view, submit replay, or
    * cancel response). Terminal values settle the attempt even when result
-   * draining later hit a local error.
+   * draining later hit a local error. `not_created` is the local marker for a
+   * definitively rejected POST — the server confirmed it holds no job for
+   * this request.
    */
-  serverStatus: CloudJobServerStatus | null;
+  serverStatus: CloudAttemptServerStatus | null;
   /**
    * Server-reported job timestamps from job views (create/replay/GET/cancel
    * response). Never filled from the local clock; null until observed.

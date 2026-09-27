@@ -12,6 +12,7 @@ import { LocalRepository } from '../../src/storage/repository';
 import { CloudApiError } from '../../src/cloud/client';
 import {
   attemptBlocksDelete,
+  attemptServerUnconfirmed,
   cloudAttemptLabel,
   type CloudAttempt,
 } from '../../src/cloud/contract';
@@ -379,14 +380,16 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
 
   it('FP-004d: 一時/一般エラー・credential復帰・複数blockerではforgetCloudを拒否する', async () => {
     // (i) generic non-auth server error: never forgettable even with the flag.
+    // A non-contract 4xx body stays server-unconfirmed (FP-017 marks only a
+    // definitive contract rejection as not_created).
     const s1 = await setup({
       createJobError: () => {
-        throw new CloudApiError(400, 'bad_request', 'broken');
+        throw new CloudApiError(400, 'http_error', 'broken');
       },
     });
     await s1.store.getState().startCloudAnalysis(s1.game.id);
     await vi.waitFor(() => expect(attempt(s1.store).status).toBe('error'), { timeout: 3000 });
-    expect(attempt(s1.store).failureCode).toBe('bad_request');
+    expect(attempt(s1.store).failureCode).toBe('http_error');
     await expect(s1.store.getState().canForgetCloudGame(s1.game.id)).resolves.toBe(false);
     await expect(
       s1.store.getState().deleteGame(s1.game.id, { forgetCloud: true }),
@@ -495,9 +498,11 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     const wakes: (() => void)[] = [];
     const { store, credentials, game } = await setup(
       {
-        // Attempt 1 fails generically while the credential is still valid.
+        // Attempt 1 fails generically while the credential is still valid —
+        // a non-contract 4xx stays server-unconfirmed (a parsed 4xx would be
+        // 'not_created' under FP-017 and stop blocking entirely).
         createJobError: (call) => {
-          if (call === 1) throw new CloudApiError(400, 'bad_request', 'broken');
+          if (call === 1) throw new CloudApiError(400, 'http_error', 'broken');
         },
         // Attempt 2's POST reaches the server (job exists) but the response
         // is lost; the credential then disappears → credential_absent.
@@ -506,7 +511,7 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
       { sleep: () => new Promise((resolve) => wakes.push(resolve)) },
     );
     await store.getState().startCloudAnalysis(game.id);
-    await vi.waitFor(() => expect(attempt(store).failureCode).toBe('bad_request'), {
+    await vi.waitFor(() => expect(attempt(store).failureCode).toBe('http_error'), {
       timeout: 3000,
     });
     // Second attempt (precision) fails with confirmed credential absence →
@@ -1146,5 +1151,222 @@ describe('Cloud永続化の回帰（FP-001…006）', () => {
     holder.store = locked; // reads start failing now
     await expect(s3.store.getState().cloudRecoveryState(s3.game.id)).resolves.toBe('transient');
     s3.store.getState().pauseCloudJobs();
+  });
+
+  it('FP-017a: POSTの確定的拒否(400/403/409/429)はserverStatus not_createdを記録する', async () => {
+    for (const [status, code] of [
+      [403, 'profile_not_allowed'],
+      [429, 'daily_quota_exceeded'],
+      [429, 'rate_limited'],
+      [429, 'active_job_limit'],
+      [409, 'idempotency_conflict'],
+      [400, 'invalid'],
+    ] as const) {
+      const { store } = await setup({
+        createJobError: () => {
+          throw new CloudApiError(status, code, `server message ${status}`);
+        },
+      });
+      await store.getState().startCloudAnalysis(store.getState().games[0].id);
+      await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+      // The rejected POST created no job: the attempt is settled, not
+      // "server unconfirmed", and stays out of every protective guard.
+      expect(attempt(store).serverStatus).toBe('not_created');
+      expect(attempt(store).jobId).toBeNull();
+      expect(attempt(store).submitAttempted).toBe(true);
+      expect(attempt(store).failureCode).toBe(code);
+      expect(attemptBlocksDelete(attempt(store))).toBe(false);
+      expect(attemptServerUnconfirmed(attempt(store))).toBe(false);
+      await expect(
+        store.getState().cloudRecoveryState(store.getState().games[0].id),
+      ).resolves.toBe('recoverable');
+      store.getState().pauseCloudJobs();
+    }
+  });
+
+  it('FP-017b: not_createdのattemptは削除をブロックせず取消対象にもならない', async () => {
+    const { store, repository, game } = await setup({
+      createJobError: () => {
+        throw new CloudApiError(403, 'profile_not_allowed', 'allowlist entry required');
+      },
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).serverStatus).toBe('not_created');
+
+    // Cancel is a no-op on a settled attempt: nothing server-side exists.
+    const attemptId = attempt(store).attemptId;
+    await store.getState().cancelCloudAnalysis(attemptId);
+    expect(attempt(store).status).toBe('error');
+
+    // Plain delete succeeds without the local-forget escape.
+    await store.getState().deleteGame(game.id);
+    expect(store.getState().cloudAttempts).toHaveLength(0);
+    const rows = await repository.cloud.attempts();
+    expect(rows).toHaveLength(0);
+  });
+
+  it('FP-017c: not_created後の再試行は新しいattempt・keyで開始され成功する', async () => {
+    let denied = true;
+    const { store, fake, game } = await setup({
+      createJobError: () => {
+        if (denied) throw new CloudApiError(403, 'profile_not_allowed', 'denied');
+      },
+      perPollAdvance: 3,
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).serverStatus).toBe('not_created');
+
+    denied = false; // condition cleared (e.g. owner was allowlisted)
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(
+      () => expect(store.getState().cloudAttempts).toHaveLength(2),
+      { timeout: 3000 },
+    );
+    const first = attempt(store);
+    // Fresh attempt + fresh idempotency key: the rejected key is not reused.
+    expect(store.getState().cloudAttempts[1].attemptId).not.toBe(first.attemptId);
+    expect(store.getState().cloudAttempts[1].idempotencyKey).not.toBe(first.idempotencyKey);
+    await vi.waitFor(
+      () => expect(store.getState().cloudAttempts[1].status).toBe('completed'),
+      { timeout: 3000 },
+    );
+    expect(fake.calls.filter((c) => c.method === 'createJob')).toHaveLength(2);
+    expect(store.getState().cloudAttempts[1].jobId).not.toBeNull();
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-017d: 401はcredential_rejectedのまま・not_createdにならず削除をブロックする', async () => {
+    const { store, game } = await setup({
+      createJobError: () => {
+        throw new CloudApiError(401, 'unauthorized', 'Unknown credential.');
+      },
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).serverStatus).toBeNull();
+    expect(attempt(store).failureCode).toBe('credential_rejected');
+    expect(attemptServerUnconfirmed(attempt(store))).toBe(true);
+    await expect(store.getState().deleteGame(game.id)).rejects.toThrow(/Cloud/u);
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-017e: 503 enqueue_failed(ジョブ行あり)はunconfirmedのまま同一key復帰する', async () => {
+    // The job row was persisted server-side but enqueueing failed: the POST
+    // returns 503. The attempt must NOT be marked not_created — retrying the
+    // same key replays the existing job.
+    const { store, fake, game } = await setup({
+      createJobErrorAfterCreate: (call) =>
+        call === 1 ? new CloudApiError(503, 'enqueue_failed', 'could not enqueue') : null,
+      perPollAdvance: 3,
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(
+      () =>
+        expect(
+          fake.calls.filter((c) => c.method === 'createJob').length,
+        ).toBeGreaterThanOrEqual(2),
+      { timeout: 3000 },
+    );
+    await vi.waitFor(() => expect(attempt(store).status).toBe('completed'), { timeout: 3000 });
+    // Same key replayed → the original server job was adopted, not duplicated.
+    expect(fake.jobList()).toHaveLength(1);
+    expect(attempt(store).jobId).not.toBeNull();
+    store.getState().pauseCloudJobs();
+  });
+
+  it('FP-017f: 契約形式でない4xx・networkロスはunconfirmed/blockingのまま', async () => {
+    // A 4xx without the contract failure body could come from a middlebox —
+    // the API never confirmed an admission decision, so stay unconfirmed.
+    const { store, game } = await setup({
+      createJobError: () => {
+        throw new CloudApiError(400, 'http_error', '<html>Bad Request</html>');
+      },
+    });
+    await store.getState().startCloudAnalysis(game.id);
+    await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+    expect(attempt(store).serverStatus).toBeNull();
+    expect(attemptServerUnconfirmed(attempt(store))).toBe(true);
+    expect(attemptBlocksDelete(attempt(store))).toBe(true);
+    await expect(store.getState().deleteGame(game.id)).rejects.toThrow(/Cloud/u);
+    store.getState().pauseCloudJobs();
+
+    // Network loss (status 0): transient retry — attempt stays live+blocking.
+    const s2 = await setup({
+      createJobError: () => {
+        throw new CloudApiError(0, 'network', 'Cloudサーバーへ接続できませんでした。');
+      },
+    });
+    await s2.store.getState().startCloudAnalysis(s2.game.id);
+    await vi.waitFor(() => expect(attempt(s2.store).lastError).not.toBeNull(), {
+      timeout: 3000,
+    });
+    expect(attempt(s2.store).status).toBe('requesting');
+    expect(attemptBlocksDelete(attempt(s2.store))).toBe(true);
+    await expect(s2.store.getState().deleteGame(s2.game.id)).rejects.toThrow(/Cloud/u);
+    s2.store.getState().pauseCloudJobs();
+  });
+
+  it('FP-018: サーバーの契約コードは日本語メッセージに変換され英語原文は露出しない', async () => {
+    const cases: [number, string, string][] = [
+      [
+        403,
+        'profile_not_allowed',
+        '精密解析はこの端末では利用できません（サーバー側の許可が必要です）。',
+      ],
+      [
+        429,
+        'daily_quota_exceeded',
+        '本日のCloud・無料の解析回数（5回）を使い切りました。明日以降に再度お試しください。',
+      ],
+      [
+        429,
+        'rate_limited',
+        '短時間に多くの解析要求があったため制限されています。時間をおいて再度お試しください。',
+      ],
+      [
+        429,
+        'active_job_limit',
+        '実行中のCloud解析があるため新しい解析を開始できません。終了または取消してから開始してください。',
+      ],
+      [
+        409,
+        'idempotency_conflict',
+        '同じ解析要求が既に終了しています。新しい解析としてやり直してください。',
+      ],
+      [
+        400,
+        'invalid',
+        '解析要求がサーバーに拒否されました。棋譜がCloud解析の条件に合わない可能性があります。',
+      ],
+    ];
+    for (const [status, code, message] of cases) {
+      const { store } = await setup({
+        createJobError: () => {
+          throw new CloudApiError(status, code, `English detail for ${code}`);
+        },
+      });
+      const gameId = store.getState().games[0].id;
+      await store.getState().startCloudAnalysis(gameId);
+      await vi.waitFor(() => expect(attempt(store).status).toBe('error'), { timeout: 3000 });
+      expect(attempt(store).failureCode).toBe(code);
+      expect(attempt(store).failureMessage).toBe(message);
+      expect(attempt(store).lastError).toBe(message);
+      store.getState().pauseCloudJobs();
+    }
+    // Generic 5xx (transient path): Japanese message, keeps retrying.
+    const { store } = await setup({
+      createJobError: () => {
+        throw new CloudApiError(503, 'engine_error', 'Job admission could not be completed.');
+      },
+    });
+    const gameId = store.getState().games[0].id;
+    await store.getState().startCloudAnalysis(gameId);
+    await vi.waitFor(() => expect(attempt(store).lastError).not.toBeNull(), { timeout: 3000 });
+    expect(attempt(store).lastError).toBe(
+      'Cloudサーバーで一時的なエラーが発生しました。時間をおいて再度お試しください。',
+    );
+    store.getState().pauseCloudJobs();
   });
 });

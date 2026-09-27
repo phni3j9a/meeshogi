@@ -100,6 +100,9 @@ function cloudCompletion(attempt: CloudAttempt): CloudJobStatus {
     case 'cancelled':
       return 'cancelled';
     case 'error':
+    case 'not_created':
+      // A definitively rejected POST produced no job, so there is no
+      // server-side outcome to report — honest 'unknown', not 'failed'.
       return 'unknown';
   }
 }
