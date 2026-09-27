@@ -31,6 +31,9 @@ import { createTestDb, type SqliteD1 } from './testDb';
 
 const STARTPOS = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1';
 const WORKER = 'https://worker.test';
+const STAGING_JOB_VARS = (JSON.parse(readFileSync(new URL('../wrangler.staging.jsonc', import.meta.url), 'utf8')) as {
+  vars: Pick<Env, 'JOBS_ENFORCE_FREE_QUOTAS' | 'JOBS_REQUIRE_PRECISION_ALLOWLIST'>;
+}).vars;
 
 interface SessionCall {
   binding: string;
@@ -71,6 +74,7 @@ function makeJobsEnv(options: {
   queue?: { send: (message: JobQueueMessage) => Promise<void> };
   normal?: unknown;
   standard3?: unknown;
+  access?: Pick<Env, 'JOBS_ENFORCE_FREE_QUOTAS' | 'JOBS_REQUIRE_PRECISION_ALLOWLIST'>;
 }): Env {
   return {
     ANALYSIS_CONTAINER: (options.normal ?? NO_SESSION) as Env['ANALYSIS_CONTAINER'],
@@ -78,6 +82,7 @@ function makeJobsEnv(options: {
     ANALYSIS_BENCHMARK_STANDARD_3: (options.standard3 ?? NO_SESSION) as Env['ANALYSIS_BENCHMARK_STANDARD_3'],
     JOBS_DB: options.d1 as unknown as D1Database | undefined,
     JOBS_QUEUE: options.queue as unknown as Queue<JobQueueMessage> | undefined,
+    ...options.access,
   } as Env;
 }
 
@@ -285,10 +290,13 @@ describe('POST /v1/credentials', () => {
   });
 });
 
-describe('POST /v1/jobs validation and limits', () => {
+describe.each([
+  { name: 'default restricted settings', access: {} },
+  { name: 'development staging settings', access: STAGING_JOB_VARS },
+])('POST /v1/jobs invariant checks ($name)', ({ access }) => {
   it('requires authentication', async () => {
     const { d1 } = createTestDb();
-    const env = makeJobsEnv({ d1 });
+    const env = makeJobsEnv({ d1, access });
     const noAuth = await handleRequest(postJson('/v1/jobs', null, jobBody(['2g2f'])), env);
     expect(noAuth.status).toBe(401);
     const wrongCredential = await handleRequest(postJson('/v1/jobs', `mcd1_${'a'.repeat(43)}`, jobBody(['2g2f'])), env);
@@ -300,7 +308,7 @@ describe('POST /v1/jobs validation and limits', () => {
   it('creates a job for a valid game and enqueues its id', async () => {
     const { d1 } = createTestDb();
     const probe = queueProbe();
-    const env = makeJobsEnv({ d1, queue: probe.queue });
+    const env = makeJobsEnv({ d1, queue: probe.queue, access });
     const { credential } = await issueCredential(env);
     const response = await createJob(env, credential, jobBody(['2g2f', '8c8d'], { idempotencyKey: 'game-1' }));
     expect(response.status).toBe(201);
@@ -316,11 +324,13 @@ describe('POST /v1/jobs validation and limits', () => {
 
   it('rejects malformed requests and raw engine settings', async () => {
     const { d1 } = createTestDb();
-    const env = makeJobsEnv({ d1 });
+    const env = makeJobsEnv({ d1, access });
     const { credential } = await issueCredential(env);
     const cases: [Record<string, unknown> | string, number][] = [
       [jobBody(['2g2f'], { moveTimeMs: 3000 }), 400],           // arbitrary engine setting
       [jobBody(['2g2f'], { multiPV: 8 }), 400],
+      [jobBody(['2g2f'], { JOBS_ENFORCE_FREE_QUOTAS: 'false' }), 400],
+      [jobBody(['2g2f'], { JOBS_REQUIRE_PRECISION_ALLOWLIST: 'false' }), 400],
       [jobBody(['2g2f'], { profileId: 'turbo' }), 400],
       [jobBody(['2g2f'], { initialSfen: 'not a sfen' }), 400],
       [jobBody(['2g2f'], { moves: '2g2f' }), 400],
@@ -347,7 +357,9 @@ describe('POST /v1/jobs validation and limits', () => {
     });
     expect((await handleV1Request(noJson, env)).status).toBe(415);
   });
+});
 
+describe('POST /v1/jobs validation and limits', () => {
   it('accepts a game longer than a typical 150-move record', async () => {
     const { d1 } = createTestDb();
     const probe = queueProbe();
@@ -413,7 +425,7 @@ describe('POST /v1/jobs validation and limits', () => {
     expect(profileConflict.status).toBe(409);
   });
 
-  it('never exceeds the active-job limit under concurrent submissions', async () => {
+  it.each([{}, STAGING_JOB_VARS])('never exceeds the active-job limit under concurrent submissions (access %j)', async (access) => {
     const { d1 } = createTestDb();
     const batchErrors: string[] = [];
     const rawBatch = d1.batch.bind(d1);
@@ -425,7 +437,7 @@ describe('POST /v1/jobs validation and limits', () => {
         throw error;
       }
     }) as typeof d1.batch;
-    const env = makeJobsEnv({ d1, queue: queueProbe().queue });
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, access });
     const { credential } = await issueCredential(env);
     // Six concurrent POSTs for one owner: exactly one may pass the conditional INSERT.
     const responses = await Promise.all(
@@ -523,9 +535,74 @@ describe('POST /v1/jobs validation and limits', () => {
     expect((await allowed.json() as { profileId: string }).profileId).toBe('precision');
   });
 
-  it('returns not_found for other owners and isolates results', async () => {
+  it('admits more than five Free jobs in one minute with staging settings, and can restore quotas', async () => {
+    const { d1, sqlite } = createTestDb();
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, access: STAGING_JOB_VARS });
+    const { credential } = await issueCredential(env);
+    let nowMs = Date.parse('2026-09-27T14:59:59Z');
+    const deps = { now: () => nowMs };
+    const total = Math.max(JOB_LIMITS.freeDailyJobs, JOB_LIMITS.freeRateMaxJobs) + 2;
+    for (let index = 0; index < total; index += 1) {
+      const { jobId } = await createGame(env, credential, ['2g2f'], { idempotencyKey: `dev-${index}` }, deps);
+      expect((await handleV1Request(postJson(`/v1/jobs/${jobId}/cancel`, credential, {}), env, deps)).status).toBe(200);
+    }
+    const restricted = { ...env, JOBS_ENFORCE_FREE_QUOTAS: 'true' };
+    const denied = await createJob(restricted, credential, jobBody(['2g2f']), deps);
+    expect(denied.status).toBe(429);
+    expect((await denied.json() as { failure: { code: string } }).failure.code).toBe('daily_quota_exceeded');
+    // Existing jobs and their keys still work after restoring the limits.
+    const replay = await createJob(restricted, credential, jobBody(['2g2f'], { idempotencyKey: 'dev-0' }), deps);
+    expect(replay.status).toBe(200);
+    expect((await replay.json() as { idempotentReplay: boolean }).idempotentReplay).toBe(true);
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM jobs').get()).toEqual({ n: total });
+    // At midnight the daily allowance resets, but the restored rate limit still
+    // sees jobs accepted in the preceding minute while quotas were disabled.
+    nowMs += 2_000;
+    const rateDenied = await createJob(restricted, credential, jobBody(['2g2f']), deps);
+    expect(rateDenied.status).toBe(429);
+    expect((await rateDenied.json() as { failure: { code: string } }).failure.code).toBe('rate_limited');
+    nowMs += 60_000;
+    expect((await createJob(restricted, credential, jobBody(['2g2f']), deps)).status).toBe(201);
+  });
+
+  it.each(['true', 'FALSE', '0', ''])('enforces both checks unless explicitly disabled (value %j)', async (value) => {
     const { d1 } = createTestDb();
-    const env = makeJobsEnv({ d1, queue: queueProbe().queue });
+    const env = makeJobsEnv({
+      d1, queue: queueProbe().queue,
+      access: { JOBS_ENFORCE_FREE_QUOTAS: value, JOBS_REQUIRE_PRECISION_ALLOWLIST: value },
+    });
+    const { credential } = await issueCredential(env);
+    const deps = { now: () => Date.parse('2026-09-27T03:00:00Z') };
+    const precision = await createJob(env, credential, jobBody([], { profileId: 'precision' }), deps);
+    expect(precision.status).toBe(403);
+    for (let index = 0; index < JOB_LIMITS.freeDailyJobs; index += 1) {
+      const { jobId } = await createGame(env, credential, [], { idempotencyKey: `restricted-${index}` }, deps);
+      expect((await handleV1Request(postJson(`/v1/jobs/${jobId}/cancel`, credential, {}), env, deps)).status).toBe(200);
+    }
+    expect((await createJob(env, credential, jobBody([]), deps)).status).toBe(429);
+  });
+
+  it('allows Precision for a fresh staging owner without changing its allowlist, and shares the active slot with Free', async () => {
+    const { d1, sqlite } = createTestDb();
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, access: STAGING_JOB_VARS });
+    const { credential, ownerId } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f'], { profileId: 'precision' });
+    expect(sqlite.prepare('SELECT precision_allowed FROM owners WHERE owner_id = ?').get(ownerId)).toEqual({ precision_allowed: 0 });
+    const concurrent = await createJob(env, credential, jobBody(['2g2f']));
+    expect(concurrent.status).toBe(429);
+    expect((await concurrent.json() as { failure: { code: string } }).failure.code).toBe('active_job_limit');
+    expect((await handleV1Request(postJson(`/v1/jobs/${jobId}/cancel`, credential, {}), env)).status).toBe(200);
+    const restricted = { ...env, JOBS_REQUIRE_PRECISION_ALLOWLIST: 'true' };
+    const denied = await createJob(restricted, credential, jobBody(['2g2f'], { profileId: 'precision' }));
+    expect(denied.status).toBe(403);
+    expect((await denied.json() as { failure: { code: string } }).failure.code).toBe('profile_not_allowed');
+    // Both settings act independently: restoring the allowlist leaves Free usable.
+    expect((await createJob(restricted, credential, jobBody(['2g2f']))).status).toBe(201);
+  });
+
+  it.each([{}, STAGING_JOB_VARS])('returns not_found for other owners and isolates results (access %j)', async (access) => {
+    const { d1 } = createTestDb();
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, access });
     const first = await issueCredential(env);
     const second = await issueCredential(env);
     const { jobId } = await createGame(env, first.credential, ['2g2f']);

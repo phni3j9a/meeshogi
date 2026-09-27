@@ -212,7 +212,9 @@ async function handleCreateJob(request: Request, env: Env, now: () => number): P
     return invalid('Expected exactly {idempotencyKey, profileId, initialSfen, moves}; profileId must be free or precision.');
   }
   const profileId = record.profileId as JobProfileId;
-  if (profileId === 'precision' && owner.precision_allowed !== 1) {
+  const enforceFreeQuotas = env.JOBS_ENFORCE_FREE_QUOTAS !== 'false';
+  const requirePrecisionAllowlist = env.JOBS_REQUIRE_PRECISION_ALLOWLIST !== 'false';
+  if (profileId === 'precision' && requirePrecisionAllowlist && owner.precision_allowed !== 1) {
     return json(jobFailure('profile_not_allowed', 'The precision profile requires a server-side allowlist entry.'), 403);
   }
   const moves = record.moves as string[];
@@ -246,6 +248,7 @@ async function handleCreateJob(request: Request, env: Env, now: () => number): P
       isoNow: isoNow(now),
       positions,
       maxActiveJobs: JOB_LIMITS.maxActiveJobsPerOwner,
+      enforceFreeQuotas,
       freeDailyJobs: JOB_LIMITS.freeDailyJobs,
       freeRateMaxJobs: JOB_LIMITS.freeRateMaxJobs,
       freeRateWindowMs: JOB_LIMITS.freeRateWindowSeconds * 1000,
@@ -280,7 +283,7 @@ async function handleCreateJob(request: Request, env: Env, now: () => number): P
   if (counts.active >= JOB_LIMITS.maxActiveJobsPerOwner) {
     return json(jobFailure('active_job_limit', 'An active job already exists for this owner.'), 429);
   }
-  if (profileId === 'free') {
+  if (profileId === 'free' && enforceFreeQuotas) {
     if (counts.freeToday >= JOB_LIMITS.freeDailyJobs) {
       return json(jobFailure('daily_quota_exceeded', 'The daily Free job quota is exhausted.'), 429);
     }
