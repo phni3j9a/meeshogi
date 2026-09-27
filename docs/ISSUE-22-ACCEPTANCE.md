@@ -1,8 +1,7 @@
-# Issue #22 受入 — Cloud 共存（ドラフト）
+# Issue #22 受入 — Cloud 共存
 
-Issue #22「Sekirei と Cloud（Free / Precision）の一時共存」の受入手順と証跡の取り方。
-全既存フローを含む最終受入は最終 candidate で別途行う。この文書は focused run と
-Cloud 固有証跡の手順だけを扱う。
+Issue #22「Sekirei と Cloud（Free / Precision）の一時共存」の受入手順・証跡の取り方と、
+focused run・最終候補 `7d35caa` での両OSの受入結果。
 
 ## ビルド条件
 
@@ -108,6 +107,10 @@ owner に限って実施:
 
 `cloud-precision-denied` は allowlist 前、`cloud-precision-run` は allowlist 後に実行する。
 
+2026-09-27 の受入で allowlist した test owner（解除していない）: `own_9c6f1db0cca5fa3b441bfe41`、
+`own_4ab3475df041bba085c20ce8`、`own_1035ee920b4da452c3846291`、`own_046c9799647cba629d12a08c`、
+`own_4129c89c73a30cd4b170f75b`、`own_8ed94592f7ddc4be4ad0abdc`（iOS）、`own_910abdfc3c3d76485bc3e917`（Android）。
+
 ## 実施済み結果（Android focused run、candidate e6db45f 相当の製品コード）
 
 `evidence/issue22-android-20260927`（AVD emulator、Android 16、Release build）。
@@ -162,11 +165,64 @@ iOS 固有の発見:
   onPress を発火しないことがあり、Modal mount も遅延する。`cloud-export` は
   座標 tap + 長め待機で安定化済み。
 
-## 残る確認（このドラフト時点で未検証）
+## 実施済み結果（Android 最終候補 `7d35caa`）
 
-- 512手超の棋譜に対する notice（fixture 未整備のため未検証と明記）
+`evidence/issue22-android-final2-20260927`（AVD emulator、Android 16、新規 Release build・新規 install）。
+
+| 項目 | 結果 |
+|---|---|
+| 既存全フロー suite | 15/15 PASS |
+| cloud phase A（method-picker・cancel／free-start・interruptions・free-verify・branch-local・precision-denied） | 7/7 PASS。part1→part2 間に 90 秒待ち（#29 回避） |
+| 中断耐性（健全 Free job `job_72c9dd0f…`） | PASS — bg/fg・kill/relaunch・実通信遮断 60s で同一 `job_id`・attempt 数 1 のまま。**遮断中に server_next_ply 0→81 が進行**し、復帰後に 81/81 受信 |
+| Precision 403 画面（FP-017/018 修正確認） | PASS — 日本語「精密解析はこの端末では利用できません（サーバー側の許可が必要です）。」、`Cloud解析を再試行` あり、`中断した解析を取消` なし。DB は `server_status=not_created` |
+| 403 拒否後の通常削除（FP-017/019/020 修正確認） | PASS — 確認ダイアログは通常の「棋譜を削除しますか？」のみ（`ローカルだけ削除` なし）、削除後の `cloud_attempts` は 0 行 |
+| フロー修正・製品不具合疑い | なし |
+
+観測: この fixture の Free 結果は ply 37 のみ `incomplete`（受信 81・有効 80）。UI は「有効80/81」と表示し、
+欠測をゼロ評価や完了扱いにしていない（前回 run と同じ挙動）。
+
+## 実施済み結果（iOS 最終候補 `7d35caa`）
+
+`evidence/issue22-ios-final2-20260927`（iPhone 18 Pro Simulator、iOS 27.0、新規 Release-iphonesimulator build、adhoc 署名）。
+
+| 項目 | 結果 |
+|---|---|
+| 既存全フロー suite（`IOS_ACCEPTANCE_MODE=full`） | 15/15 PASS |
+| cloud phase A | 7/7 PASS（branch-local は下記フロー修正後） |
+| 中断耐性（健全 Free job `job_f9fbd55f…`） | PASS — bg/fg・kill/relaunch・pf による endpoint 限定遮断 45s で同一 `job_id`・attempt 数 1 のまま。**遮断中に server_next_ply 0→81 が進行**し、復帰後に 81/81 受信 |
+| 明示取消 | PASS（`job_ac5432dc…` → server `cancelled`） |
+| Cloud 選択中の分岐・深掘り | PASS — `分岐の評価・ローカル`・`分岐の解析結果（ローカル・Sekirei）`・`この局面を深く解析（ローカル・Sekirei）` |
+| Precision 403 画面（FP-017/018） | PASS — 日本語メッセージ、`Cloud解析を再試行` あり、取消ボタンなし、`server_status=not_created` |
+| 403 拒否後の通常削除（FP-017/019/020） | PASS — 通常の確認ダイアログのみ、削除後 `cloud_attempts` 0 行 |
+| quota 拒否（429 `daily_quota_exceeded`）時の表示 | 旧 owner で偶発的に観測 — 日本語メッセージ・`not_created`・取消ボタンなし |
+
+フロー修正（製品コード非変更）: `cloud-branch-local` の iOS 経路は、対局画面の方式行が完了 job
+レイアウトで ScrollView 深部にあり synthesized tap が発火しないため、設定画面の picker で方式を
+選ぶよう変更した（手動タップでは正常に開く）。Android の手順は同じコマンドを `platform: Android`
+ブロックへ移しただけで、この変更後の Android 再実行はしていない。
+
+iOS 固有の観測:
+- **Keychain は app uninstall 後も残る**。再 install すると `install_id` は新しくなるが、SecureStore の
+  credential が再利用され同じ owner になる（再 install で Free quota はリセットされない）。受入で新しい
+  owner が要る場合は `xcrun simctl keychain <UDID> reset` を uninstall 後に行う。
+- `CODE_SIGNING_ALLOWED=NO` のビルドは entitlement が埋め込まれず SecureStore が `KeyChainException`
+  になる。受入ビルドは `CODE_SIGN_IDENTITY=-`（adhoc）で行う。
+
+## 最終候補での扱い（両OS共通）
+
+最終候補 `7d35caa` と前回 run（Android `bd0788b`、iOS `905a907`/`c94f88b`）の製品差分は Cloud の
+4xx 拒否処理・日本語メッセージ・iOS keychain entitlement のみ。最終確認では新規 build で既存全フロー・
+cloud phase A・修正箇所（403 画面と通常削除）を再実行し、Precision 正常系 81/81・3方式 export・
+比較レポートは前回 run の証跡を引き継ぐ（該当コードは差分に含まれない）。
+
+## 残る確認（未検証）
+
+- 512手超の棋譜に対する notice（fixture 未整備のため未検証）
 - POST 応答喪失タイミングの live 再現（単体テストで代替保証）
 - 物理端末での発熱・実 network 環境（emulator/simulator のみ）
-- Android 側で「中断中に server が進行する」姿の再実施（iOS では
-  interruptions-precision で server_next_ply 1→37 を実証済み。
-  Android は対象 job が Issue #29 の retry_exhausted に当たり未観測）
+- 最終候補で変更したフロー（iOS 方式選択経路）の Android 側再実行
+- iOS の `cloud-precision-run` の job 開始タップ・`cloud-export` 末尾 assert は harness 側の a11y
+  タイミング問題で手動 GUI 操作・目視確認で補った（フロー自体の自動化は未完）
+- Android の `cloud-export` は共有先の選択でフローが止まり、export は手動回収
+- staging 側の既知問題: cancel 直後の次 Free job が `retry_exhausted` になる（#29）、
+  standard-3 / singleton container が sleepAfter 後も停止しない（#30）。いずれもアプリ起因ではない

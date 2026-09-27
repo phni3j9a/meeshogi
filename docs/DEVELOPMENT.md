@@ -14,9 +14,9 @@ Issue #21は、このstaging Workerへ公開`/v1/*`の非同期jobバックエ�
 
 アプリに「端末内（Sekirei）」「Cloud・無料」「Cloud・精密」の方式選択を追加し、既定はSekireiのままとした。Cloud解析は`cloud_attempts`/`cloud_results`/`cloud_meta`の独立テーブルで3方式の結果を分離し、POST前に永続化したidempotency keyとjobIdでアプリ終了・通信断から同一jobへ復帰する。credentialはSecureStoreにのみ保存し、キー欠落・破損・owner不一致・401を区別して復帰可否を再評価する。未確認の要求がある間は代替credentialの発行を拒否し、棋譜削除はserver終了・取消の確認まで保持する。分岐検討と深掘りはSekireiのローカル解析のまま、詰みバッジは証明済みmateProofのみを根拠とし、開発用の3方式比較export（`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`または`__DEV__`時のみ）を追加した。設計は[構成方針のIssue #22節](ARCHITECTURE.md#issue-22-アプリ側のcloud解析共存)、製品上の規則は[PRODUCT.mdの方式選択節](PRODUCT.md#解析方式の選択issue-22)を参照。
 
-現時点の検証は`npm run check`（typecheckとVitest 251 tests）・`npx expo install --check`・`git diff --check`までであり、両OSのネイティブビルド・起動・画面受入は未実施である。【受入検証: Main記入 — 実施後に両OSの結果と証拠の場所をここへ追記する】
+最終候補`7d35caa`で`npm run check`（typecheckとVitest 21ファイル・264 tests）・`npx expo install --check`・`git diff --check`が成功した。同じ候補から両OSを新規ビルドし、Devin Cloudで既存全フロー（Android 15/15、iOS full 15/15）とCloud phase A 7/7（方式picker・Free開始/完了・明示取消・Cloud選択中のローカル分岐・Precision 403）を通した。background／kill・再起動／実通信遮断では両OSとも同一jobId・attempt数不変のまま復帰し、遮断中にserverの`next_ply`が0→81へ進むことを確認した。403拒否後の画面（日本語メッセージ・取消ボタンなし）と通常削除（`cloud_attempts`0行）はスクリーンショットを開いて確認した。Precision正常系81/81と実棋譜の3方式export・比較レポートは直前の候補（Android `bd0788b`、iOS `c94f88b`系）で実測した（以後の製品差分はCloudの4xx処理・日本語メッセージ・iOS entitlementのみ）。物理端末は未検証。証跡・未検証項目・手動操作で補った箇所は[Issue #22受入](ISSUE-22-ACCEPTANCE.md)にまとめた。
 
-受入に必要な環境: 接続先はビルド時の`EXPO_PUBLIC_CLOUD_ENDPOINT`で注入し、stagingのhostnameをリポジトリへ含めない。開発用の比較exportメニューは`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`をビルド時に付ける。Precisionは`cloud/config/job-profiles.json`の既定運用どおり、operatorがowner行の`precision_allowed`を立てたcredentialのみ有効である。
+受入に必要な環境: iOS SimulatorのReleaseビルドはadhoc署名（`CODE_SIGN_IDENTITY=-`）にする。`CODE_SIGNING_ALLOWED=NO`ではkeychain entitlementが埋め込まれず、SecureStoreが失敗してCloud解析を使えない。接続先はビルド時の`EXPO_PUBLIC_CLOUD_ENDPOINT`で注入し、stagingのhostnameをリポジトリへ含めない。開発用の比較exportメニューは`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`をビルド時に付ける。Precisionは`cloud/config/job-profiles.json`の既定運用どおり、operatorがowner行の`precision_allowed`を立てたcredentialのみ有効である。
 
 ### PR #12: 解析画面と駒セット
 
@@ -101,7 +101,7 @@ meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機
 
 | セッション | 環境 | 用途 |
 | --- | --- | --- |
-| [`7cb3955c8c0a49b3ac96fa8e52137897`](https://app.devin.ai/sessions/7cb3955c8c0a49b3ac96fa8e52137897) | Devin Cloud macOS (Apple Silicon) | iOS Simulator受入（visual / full） |
+| [`8d6602ec533b498e9d85ca46f268f72c`](https://app.devin.ai/sessions/8d6602ec533b498e9d85ca46f268f72c) | Devin Cloud macOS (Apple Silicon) | iOS Simulator受入（visual / full）。2026-09-27に旧セッション`7cb3955c…`のVMが接続不能になったため置き換えた |
 | [`f9dace84ec92408da0bcacaf1c95930b`](https://app.devin.ai/sessions/f9dace84ec92408da0bcacaf1c95930b) | Devin Cloud Linux (KVM) | Android ビルド・エミュレーター・Maestro受入 |
 
 実行の流れ:
