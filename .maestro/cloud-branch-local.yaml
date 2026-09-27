@@ -78,11 +78,15 @@ env:
           timeout: 15000
 # Enter a branch from ply 0. The game screen resumes the last-viewed ply
 # (e.g. 53 after cloud-free-verify), so reset the position explicitly first.
-- tapOn:
-    id: move-first
-- extendedWaitUntil:
-    visible: '0 / 80手'
-    timeout: 15000
+# While cloud results are still syncing the playback footer remounts and eats
+# the tap, so retry until the position actually shows ply 0.
+- retry:
+    maxRetries: 4
+    interval: 1500
+    commands:
+      - tapOn:
+          id: move-first
+      - assertVisible: '0 / 80手'
 # Board square taps raced whenever analysis rows
 # were still populating (board remount eats the touches), so use the designed
 # affordance instead: a candidate row tap ("タップして分岐を検討") opens the
