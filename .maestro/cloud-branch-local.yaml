@@ -82,7 +82,6 @@ env:
 # the tap, so retry until the position actually shows ply 0.
 - retry:
     maxRetries: 4
-    interval: 1500
     commands:
       - tapOn:
           id: move-first
