@@ -50,12 +50,15 @@ ACCEPTANCE_FLOWS="cloud-method-picker,cloud-free-start,cloud-interruptions,cloud
 ## 中断証跡の取り方
 
 `scripts/ci/cloud-interruption.sh <android|ios> <run_dir>` が受入スクリプト内で
-`cloud-free-start` の直後に走る。`<run_dir>/cloud/` に次を残す:
+`cloud-free-start` の直後に走る。実行するステップと順序は `CLOUD_INTERRUPTION_STEPS`
+（既定 `bg,kill,net`）で選べ、`net` 単独指定も可能（job 開始直後に遮断するため、
+判定の基準は必ず各ステップ直前の snapshot を取り直す）。`<run_dir>/cloud/` に次を残す:
 
 - `s00-before.txt` などの `cloud_attempts` スナップショット（`endpoint` 列は意図的に
   除外し hostname を証跡へ入れない。credential は SecureStore で SQLite に無い）
-- `summary.txt` — jobId 同一性・attempt 数不変・received_count 継続・server_next_ply
-  前進の判定行
+- `summary.txt` — 判定行と末尾の `RESULT bg=…` / `RESULT kill=…` / `RESULT net=…`
+  （PASS / FAIL / UNVERIFIED / SKIPPED。選択したステップで PASS 以外があれば
+  スクリプトは非ゼロ終了）
 - 各時点の端末 screenshot（`sXX-*.png`）
 
 中断の作り方:
@@ -63,15 +66,70 @@ ACCEPTANCE_FLOWS="cloud-method-picker,cloud-free-start,cloud-interruptions,cloud
 - background: Android `input keyevent KEYCODE_HOME` / iOS `simctl openurl` で Safari を
   前面へ → AppState の `pauseCloudJobs` がポンプを止める（server は継続）
 - kill: `am force-stop` / `simctl terminate` → 再起動で永続 attempt から resume
-- 通信遮断:
+- 通信遮断（`net` ステップ）:
+  - 遮断直前に `s29-precut` を取り、`job_id` 既知・ローカル `status` 非終端・
+    `server_status` が `queued`/`running` の3条件を満たさなければ
+    `NETCUT_UNVERIFIED` を出して**遮断せず非ゼロ終了**（終端済み・job未作成への
+    遮断は証拠にならない）
   - Android: `svc wifi disable` + `svc data disable` + airplane mode。遮断は emulator
     からの `ping 8.8.8.8` 失敗で実証
-  - iOS: 実機相当の遮断は host でやるしかない。`CLOUD_ENDPOINT` のホストを解決して
-    `pf` に `block drop out quick proto tcp to <ip>` を立てる（passwordless sudo 必須。
-    なければ `SKIPPED` と明記して中断しない）。遮断中は endpoint への curl が失敗し、
-    github.com への curl が成功することを両方記録して targeted cut を証明
-  - 復帰後も同一 `jobId`・`cloud_attempts` 行数不変・server_next_ply 前進を確認。
-    遮断中の snapshot の `last_error` に `Cloudサーバーへ接続できませんでした` が
+  - iOS: 実機相当の遮断は host でやるしかない。`CLOUD_ENDPOINT` の A/AAAA を解決し、
+    IPv4 は `inet`・IPv6 は `inet6` で `proto { tcp udp }` の `pf` block を専用 anchor
+    `com.apple/meeshogi-netcut` に立てる（passwordless sudo 必須。passwordless sudo が
+    なければ `SKIPPED` と明記して中断しない）。許可する baseline を狭く定義し、
+    どれでもない場合は pf を一切触らず `SKIPPED`・非ゼロ:
+    - まず変更前に `pfctl -s rules` / `pfctl -s info` で baseline を取得。**両クエリが
+      exit 0** で、Status 行の直後の状態語が `Enabled`/`Disabled` に読めた場合のみ
+      続行（query 失敗・状態語不明は何も変更せず `SKIPPED` — 空出力を「ruleset 空」と
+      誤認して host ルールを上書きしない。経過時間 `for 0 days …`・`Debug:` 欄は
+      状態語の抽出・比較から除外する）
+    - (a) main ruleset に `anchor "com.apple/*"` 等の参照が既にある → anchor だけ使う
+    - (b) main ruleset が**query 成功かつ空**（実測: Devin VM は PF 無効・main 空で
+      起動する）→ `anchor "com.apple/meeshogi-netcut"` 1行だけの一時 main ruleset を
+      `pfctl -f` で読み、復旧時に main を空へ戻す
+    - (c) それ以外（非空で参照なし等）→ `SKIPPED`。`/etc/pf.conf` の全量読み込みや
+      `pfctl -F all` / `-d` は行わない
+    有効化は `pfctl -E` の token を stdout/stderr 両方から捕捉して保持する。責任の
+    記録は外部コマンドの**実行前**（`pf_ref_state`=`none`/`held:<token>`/`unknown`、
+    `pf_main_loaded`、`pf_anchor_loaded`）で、signal・部分失敗でも解除経路が残るよう
+    解除コマンドが成功したときだけ消す（各解除は冪等で EXIT trap が再試行する）。
+    `-E` 異常終了や token 未取得は `unknown` のまま扱い、「参照なし」と推定しない。
+    復旧は `pfctl -a <anchor> -F rules`・(b) の場合 main の `-F rules`・
+    `pfctl -X <token>` に限定する。復旧後の `-s rules`/`-s info` も exit 0 と状態語を
+    確認し、query 失敗は「復旧確認不能」= `CLEANUP_FAIL`（成功扱いしない）。main は
+    (b) なら空・(a) なら baseline と同一内容であること、Status が baseline 状態語と
+    一致することを確認して `pf restored to baseline` を記録。`unknown` 状態のまま
+    Status が baseline と違っていれば `CLEANUP_FAIL: pf reference not released
+    (token unknown)` を記録して非ゼロ（`pfctl -d` や全体 flush で代用しない）。
+    endpoint への curl 失敗と github.com への curl 成功は targeted cut の補助証拠
+    として記録するが、**最終判定はアプリ側の DB 観測が正**とする
+  - 遮断中に `s30a-cut-start` と `s30-netcut` を取り、attempt_id・job_id・行数が
+    s29 と一致し、`received_count` が両点で整数として同値、かつ `last_error` が
+    遮断中に**新たに**立ったことが PASS の前提。判定で使う全項目
+    （status・server_status・job_id・attempt_id・received_count・last_error 分類・
+    updated_at）は parser の欠落値 `-` / NULL を明示的に拒否し、欠けていれば
+    `NETCUT_UNVERIFIED`。エラーの新規性は「s29 で last_error 未設定 → 遮断中に
+    transport 出現」を主根拠とし、s29 に既に**同じ transport エラー**がある場合は
+    `updated_at` 前進だけでは新規とみなさず `NETCUT_UNVERIFIED`（別種別の古い
+    エラー→transport は `updated_at` 前進で新規と判定）。
+    判定はアプリの transport 失敗文言 `Cloudサーバーへ接続できませんでした。` または
+    dev ビルドの `Cloudサーバーへ接続できませんでした。（network）` への**完全一致**
+    でのみ成立（prefix 一致・任意 suffix 付きは他分類）。summary には文言の値ではなく
+    分類（transport/http/other/none）のみ記録し、hostname を含む生エラー文は
+    証跡へ書かない。遮断中にサーバー応答由来のエラー（503 等）が記録されれば接続が
+    生きていた証拠として `NETCUT_FAIL`、受信増加・終端到達も `NETCUT_FAIL`、
+    エラーが古い/不明なら `NETCUT_UNVERIFIED`
+  - 復帰後は最大 `CLOUD_RESUME_WAIT` 秒（既定120s）ポーリングし、同一 attempt_id・
+    job_id・attempt 数不変・`received_count` が s30 より増加（または server_status 終端
+    かつ受信数 ≥ s30）を確認。PASS 判定に使った検証済み snapshot 自体を
+    `s31-restored` として保存し、全必須項目の存在・identity・行数・受信増加を
+    再検証する（再取得値を信用しない）。`s31-restored` の保存失敗や再検証不一致は
+    cut 判定への fallback をせず必ず非 PASS・非ゼロ終了。`server_next_ply` の前進は
+    s29→s30 の遮断区間として記録
+  - 中断・異常終了の後始末: EXIT/INT/TERM/HUP trap で net 遮断状態（Android radio・
+    iOS pf anchor + enable 参照 + 一時 main ruleset）を必ず復旧に向かわせ、
+    復旧コマンドの失敗は `CLEANUP_FAIL` として非ゼロ終了（警告で流さない）
+  - 遮断中の snapshot の `last_error` に `Cloudサーバーへ接続できませんでした` が
     残ることで「アプリ側が実際に transport 失敗を観測した」証拠にもなる
 
 POST 応答喪失の厳密タイミング（submitAttempted=1 からの冪等 replay）は live では
@@ -119,7 +177,7 @@ owner に限って実施:
 |---|---|
 | 方式 picker（設定・検討）・Sekirei 既定・切替で job 非発行 | PASS（DB `cloud_attempts` が切替前後とも 0 行） |
 | Cloud Free 開始・進行・完了 UI | PASS（job 複数、81/81 完走を確認） |
-| 中断耐性（bg/fg・kill/relaunch・実通信遮断+復帰） | PASS — 全 step で同一 `job_id`・attempt 数不変・受信結果保持。遮断は `ping 8.8.8.8` 不通で実証 |
+| 中断耐性（bg/fg・kill/relaunch） | PASS — 同一 `job_id`・attempt 数不変・受信結果保持。通信遮断はこの run では job 完了後に行われており証拠にならない（FP-021、下記の再実施で判定） |
 | 完了後のグラフ・候補・PV・通常 mate 表示 | PASS |
 | Cloud 選択中の証明詰めバッジ非表示 | PASS — ply 53 で Cloud は `-M1` のみ、同一 ply で Sekirei は `後手・1手詰め ›` |
 | 分岐・深掘りがローカル Sekirei | PASS（`分岐の解析結果（ローカル・Sekirei）` 等、DB に新規 cloud job なし） |
@@ -141,7 +199,7 @@ owner に限って実施:
 | 方式 picker・Sekirei 既定・切替で job 非発行 | PASS |
 | Cloud Free 開始・進行・完了 UI | PASS（`job_88f7c806…` 81/81 完走） |
 | 明示取消 | PASS（live 中 `job_f290c653…` → server cancelled、受信 5 ply） |
-| 中断耐性（bg/fg・kill/relaunch・pf netcut 60s） | PASS — 同一 job_id・attempt 数不変。**健全 Precision job では遮断中に server_next_ply 1→37 が進行し、復帰後受信継続→完走 78/78**（Android で未観測だった「中断中の server 側進行」をこちらで実証）。pf による endpoint 限定遮断は curl fail+github.com OK で検証済み |
+| 中断耐性（bg/fg・kill/relaunch） | PASS — 同一 job_id・attempt 数不変。旧スクリプトの pf 遮断（TCP・A レコードのみ）はアプリの受信を止められておらず（遮断中も受信 19→33）、通信遮断の証拠にならない（FP-021、下記の再実施で判定） |
 | 完了後のグラフ・候補・PV・通常 mate 表示・Cloud での詰めバッジ非表示/Sekirei で表示 | PASS（ply 53 A/B 両者スクリーンショット確認済み） |
 | 分岐・深掘りがローカル Sekirei | PASS |
 | Precision allowlist 前 403 | PASS（`profile_not_allowed` + Notice + `Cloud解析を再試行`） |
@@ -173,7 +231,7 @@ iOS 固有の発見:
 |---|---|
 | 既存全フロー suite | 15/15 PASS |
 | cloud phase A（method-picker・cancel／free-start・interruptions・free-verify・branch-local・precision-denied） | 7/7 PASS。part1→part2 間に 90 秒待ち（#29 回避） |
-| 中断耐性（健全 Free job `job_72c9dd0f…`） | PASS — bg/fg・kill/relaunch・実通信遮断 60s で同一 `job_id`・attempt 数 1 のまま。**遮断中に server_next_ply 0→81 が進行**し、復帰後に 81/81 受信 |
+| 中断耐性（Free job `job_72c9dd0f…`） | bg/fg・kill/relaunch は PASS（同一 `job_id`・attempt 数 1、受信 45→81）。通信遮断は kill→relaunch の時点で job が完了済みだったため**未検証**（FP-021、下記の再実施で PASS） |
 | Precision 403 画面（FP-017/018 修正確認） | PASS — 日本語「精密解析はこの端末では利用できません（サーバー側の許可が必要です）。」、`Cloud解析を再試行` あり、`中断した解析を取消` なし。DB は `server_status=not_created` |
 | 403 拒否後の通常削除（FP-017/019/020 修正確認） | PASS — 確認ダイアログは通常の「棋譜を削除しますか？」のみ（`ローカルだけ削除` なし）、削除後の `cloud_attempts` は 0 行 |
 | フロー修正・製品不具合疑い | なし |
@@ -189,7 +247,7 @@ iOS 固有の発見:
 |---|---|
 | 既存全フロー suite（`IOS_ACCEPTANCE_MODE=full`） | 15/15 PASS |
 | cloud phase A | 7/7 PASS（branch-local は下記フロー修正後） |
-| 中断耐性（健全 Free job `job_f9fbd55f…`） | PASS — bg/fg・kill/relaunch・pf による endpoint 限定遮断 45s で同一 `job_id`・attempt 数 1 のまま。**遮断中に server_next_ply 0→81 が進行**し、復帰後に 81/81 受信 |
+| 中断耐性（Free job `job_f9fbd55f…`） | bg/fg・kill/relaunch は PASS（同一 `job_id`・attempt 数 1、受信 33→47）。通信遮断は旧 pf ルールが効かず遮断中も受信 47→81 と進んだため**未検証**（FP-021、下記の再実施で PASS） |
 | 明示取消 | PASS（`job_ac5432dc…` → server `cancelled`） |
 | Cloud 選択中の分岐・深掘り | PASS — `分岐の評価・ローカル`・`分岐の解析結果（ローカル・Sekirei）`・`この局面を深く解析（ローカル・Sekirei）` |
 | Precision 403 画面（FP-017/018） | PASS — 日本語メッセージ、`Cloud解析を再試行` あり、取消ボタンなし、`server_status=not_created` |
@@ -208,11 +266,40 @@ iOS 固有の観測:
 - `CODE_SIGNING_ALLOWED=NO` のビルドは entitlement が埋め込まれず SecureStore が `KeyChainException`
   になる。受入ビルドは `CODE_SIGN_IDENTITY=-`（adhoc）で行う。
 
+## 通信遮断の再実施（FP-021〜024、製品 `7d35caa` のビルド）
+
+Astra の最終チェックで、上記の通信遮断が「遮断直前に job が進行中」「遮断中にアプリ自身の通信が失敗」
+「復帰後に同一 job で受信再開」を確かめていなかったことが判明した（旧判定は全手順開始時の
+server_next_ply と比較していた）。判定を遮断直前・遮断中・復帰後の snapshot に基づくよう直し、
+iOS の pf を A/AAAA・TCP/UDP（QUIC）に広げて、`CLOUD_INTERRUPTION_STEPS=net CLOUD_NET_WAIT=30` で
+job 開始直後に遮断した。その後のレビューで判定の抜け（欠落値・保存失敗・前方一致の文言判定）と
+pf 後始末の問題（中断時の残留、token 取得、baseline 取得失敗の誤判定、Status 表示の経過時間）を
+直した最終版 `e3df618` で、両OSをもう一度実行した（`netcut2`）。最初の `021ff11` での実行は、
+最終版の判定条件（遮断前 server_status 非終端・last_error 未設定、遮断中に transport 文言が新規記録、
+同一 attempt/job・1 行、最終 snapshot の検証）で読み直しても成立していることを Main と Reviewer が確認した。
+
+| OS | 遮断直前 s29 | 遮断中 s30a→s30 | 復帰後 s31 | 判定 | 遮断直前 s29 | 遮断中 s30a→s30 | 復帰後 s31 | 判定 |
+|---|---|---|---|---|
+| Android（`evidence/issue22-android-netcut-20260927`、`job_017ed763…`） | running・受信 1 | 受信 1→1、`last_error` 記録（ping 不通・機内モード表示） | 同一 job・attempt 1・受信 63（server completed） | `RESULT net=PASS` |
+| iOS（`evidence/issue22-ios-netcut-20260927`、`job_a8c08a59…`） | running・受信 3 | 受信 3→3、`last_error` 記録（endpoint curl 失敗・github.com 到達） | 同一 job・attempt 1・受信 45 | `RESULT net=PASS` |
+| Android 最終版（`evidence/issue22-android-netcut2-20260927`、`job_11cd8100…`） | queued・受信 0 | 受信 0→0、transport エラーを新規記録（ping 不通） | 同一 job・attempt 1・受信 57 | `RESULT net=PASS` |
+| iOS 最終版（`evidence/issue22-ios-netcut2-20260927`、`job_c53ce112…`） | running・受信 0 | 受信 0→0、transport エラーを新規記録（endpoint curl 失敗・github.com 到達） | 同一 job・attempt 1・受信 42、`pf restored to baseline (status=Disabled)` | `RESULT net=PASS` |
+
+iOS の pf について実 macOS（Devin VM）で分かったこと: 起動時は Disabled・main ruleset 空で、
+`pfctl -E` は main ruleset を読まないため `com.apple/…` anchor は親参照が無いと評価されない。最終版は
+この状態に限り `anchor "com.apple/meeshogi-netcut"` 1 行の一時 main を読み、復旧で空に戻す。
+`pfctl -E` の `Token :` は stderr に出る。実行前後で `pfctl -s info`（Disabled）と `-s rules`（空）が
+一致することを確認した。main ruleset が空でなく参照も無いホストでは、既存ルールを変えずに SKIPPED にする。
+
+遮断中の画面は両OSとも「Cloud解析中」のままで、通信断を示す表示は出ない（エラーは attempt の
+`last_error` に記録され、復帰後に自動で受信を再開する）。完了条件は満たすが、利用者への通信断表示は
+改善候補として残す。
+
 ## 最終候補での扱い（両OS共通）
 
 最終候補 `7d35caa` と前回 run（Android `bd0788b`、iOS `905a907`/`c94f88b`）の製品差分は Cloud の
 4xx 拒否処理・日本語メッセージ・iOS keychain entitlement のみ。最終確認では新規 build で既存全フロー・
-cloud phase A・修正箇所（403 画面と通常削除）を再実行し、Precision 正常系 81/81・3方式 export・
+cloud phase A・修正箇所（403 画面と通常削除）を再実行し（通信遮断は上記の再実施で判定）、Precision 正常系 81/81・3方式 export・
 比較レポートは前回 run の証跡を引き継ぐ（該当コードは差分に含まれない）。
 
 ## 残る確認（未検証）
