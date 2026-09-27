@@ -14,6 +14,43 @@ env:
 - extendedWaitUntil:
     visible: '.*KeroPona.*'
     timeout: 30000
+# The branch screen only carries the （ローカル・Sekirei） markers when the
+# stored method is a Cloud profile; cloud-free-verify leaves Sekirei
+# persisted, so this flow re-selects Cloud・無料 before entering the game.
+# iOS selects via the settings picker, not the review screen row: on the
+# completed-job layout the method row sits deep in the ScrollView and its
+# a11y frame lags the rendered position while scroll momentum decays, so
+# synthesized taps land but never fire the Pressable (observed across plain
+# tap, doubleTapOn, and retryTapIfNoChange probes; a manual tap works).
+# Same workaround as cloud-precision-denied.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: '設定.*'
+      - extendedWaitUntil:
+          visible:
+            id: settings-screen
+          timeout: 30000
+      - scrollUntilVisible:
+          element:
+            id: analysis-method
+          direction: DOWN
+      - assertVisible:
+          id: analysis-method
+      - tapOn:
+          id: analysis-method
+      - waitForAnimationToEnd
+      - extendedWaitUntil:
+          visible: 'Cloud・無料'
+          timeout: 120000
+      - tapOn: 'Cloud・無料'
+      - waitForAnimationToEnd
+      - tapOn:
+          id: tab-games
+      - extendedWaitUntil:
+          visible: '.*KeroPona.*'
+          timeout: 30000
 - tapOn: '.*KeroPona.*'
 - extendedWaitUntil:
     visible:
@@ -23,11 +60,8 @@ env:
     element:
       id: analysis-method
     direction: DOWN
-# Precondition: a cloud method stays persisted from the earlier cloud flows
-# (cloud-free-verify switches it to Sekirei at its tail, so accept either
-# persisted value). Assert instead of tapping — the sheet item label
-# duplicates the method row's own value text, so tapping 'Cloud・無料'
-# resolves ambiguously.
+# Assert instead of tapping — on Android the sheet item label duplicates the
+# method row's own value text, so tapping 'Cloud・無料' resolves ambiguously.
 - assertVisible:
     id: analysis-method
 - runFlow:
@@ -37,34 +71,18 @@ env:
       # iOS does not expose the method row's value text in the a11y tree
       # (the row is a single '解析方式を変更' element).
       - assertVisible: '.*(端末内（Sekirei）|Cloud・無料).*'
-# The branch screen only carries the （ローカル・Sekirei） markers when the
-# stored method is a Cloud profile; cloud-free-verify leaves Sekirei
-# persisted, so re-select Cloud・無料 first. 'Cloud・無料' is unambiguous
-# here: the row value is Sekirei and nothing else on screen shows the text.
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - swipe:
-          start: 50%, 82%
-          end: 50%, 60%
-- tapOn:
-    id: analysis-method
-- extendedWaitUntil:
-    visible: 'Cloud・無料'
-    timeout: 120000
-- tapOn: 'Cloud・無料'
-- waitForAnimationToEnd
-# Android: when the persisted method is already Cloud・無料 the text tap above
-# resolves ambiguously against the row's own value and lands behind the sheet
-# (observed: sheet left open, later asserts fail). Retry the sheet row by
-# point (always the 2nd item, ~[0,1959][1080,2106] on the acceptance AVD)
-# while the sheet's 'キャンセル' row is still up. iOS keeps the text tap — its
-# row value is not exposed as a11y text, so the match is unambiguous there.
-- runFlow:
-    when:
-      platform: Android
-    commands:
+      - tapOn:
+          id: analysis-method
+      - extendedWaitUntil:
+          visible: 'Cloud・無料'
+          timeout: 30000
+      - tapOn: 'Cloud・無料'
+      - waitForAnimationToEnd
+      # Android: when the persisted method is already Cloud・無料 the text tap
+      # above resolves ambiguously against the row's own value and lands
+      # behind the sheet (observed: sheet left open, later asserts fail).
+      # Retry the sheet row by point (always the 2nd item, ~[0,1959][1080,2106]
+      # on the acceptance AVD) while the sheet's 'キャンセル' row is still up.
       - repeat:
           times: 4
           while:
@@ -79,13 +97,16 @@ env:
 # Enter a branch from ply 0. The game screen resumes the last-viewed ply
 # (e.g. 53 after cloud-free-verify), so reset the position explicitly first.
 # While cloud results are still syncing the playback footer remounts and eats
-# the tap, so retry until the position actually shows ply 0.
-- retry:
-    maxRetries: 4
+# the tap, so re-tap until the position actually shows ply 0.
+- repeat:
+    times: 4
+    while:
+      notVisible: '0 / 80手'
     commands:
       - tapOn:
           id: move-first
-      - assertVisible: '0 / 80手'
+      - waitForAnimationToEnd
+- assertVisible: '0 / 80手'
 # Board square taps raced whenever analysis rows
 # were still populating (board remount eats the touches), so use the designed
 # affordance instead: a candidate row tap ("タップして分岐を検討") opens the
@@ -196,4 +217,6 @@ env:
                 start: 50%, 55%
                 end: 50%, 82%
 - tapOn: 本譜に戻る
-- assertVisible: '0 / 80手'
+- extendedWaitUntil:
+    visible: '0 / 80手'
+    timeout: 15000
