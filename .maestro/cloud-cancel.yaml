@@ -25,9 +25,28 @@ env:
     element:
       id: analysis-method
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # iOS: the a11y tree reports this ScrollView's children while still
+      # below the fixed playback footer, so scrollUntilVisible no-ops and a
+      # by-id tap lands on the footer. Swipe inside the lower list region
+      # (below the eval graph, which would scrub the move position).
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
 - tapOn:
     id: analysis-method
 - waitForAnimationToEnd
+# The method ActionSheet can mount late (Modal mount lag observed after big
+# cloud syncs) — wait on the option itself before tapping it.
+- extendedWaitUntil:
+    visible: 'Cloud・無料'
+    timeout: 120000
 - tapOn: Cloud・無料
 - waitForAnimationToEnd
 - tapOn:

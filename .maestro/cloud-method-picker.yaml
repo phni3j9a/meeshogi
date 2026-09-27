@@ -52,6 +52,21 @@ env:
     element:
       id: analysis-method
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # iOS: this ScrollView keeps all children in the a11y tree, so
+      # scrollUntilVisible no-ops while the row is still below the fixed
+      # playback footer and a by-id tap lands on the footer controls.
+      # Swipe inside the lower list region (starting below the eval graph,
+      # which would scrub the move position instead of scrolling).
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
 - takeScreenshot: c04-game-cloud-free
 # Fresh install: 'この棋譜はCloud未解析です'. Re-run after a finished job: the
 # stored terminal label instead. Either way, no active-state label may appear
@@ -67,6 +82,9 @@ env:
 - tapOn:
     id: analysis-method
 - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: '端末内（Sekirei）'
+    timeout: 120000
 - assertVisible: 端末内（Sekirei）
 - tapOn: 端末内（Sekirei）
 - waitForAnimationToEnd

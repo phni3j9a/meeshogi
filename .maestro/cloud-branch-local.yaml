@@ -42,6 +42,17 @@ env:
     element:
       id: candidate-0
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # iOS: the a11y tree reports this ScrollView's children while still
+      # below the fixed playback footer, so scrollUntilVisible no-ops and a
+      # by-id tap lands on the footer. Swipe inside the lower list region
+      # (below the eval graph, which would scrub the move position).
+      - swipe:
+          start: 50%, 82%
+          end: 50%, 60%
 - tapOn:
     id: candidate-0
 - extendedWaitUntil:
@@ -54,6 +65,16 @@ env:
     element:
       id: analysis-status
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
 - extendedWaitUntil:
     visible: '分岐の解析結果（ローカル・Sekirei）'
     timeout: 180000
@@ -63,6 +84,16 @@ env:
     element:
       text: '分岐の評価・ローカル'
     direction: UP
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 55%
+                end: 50%, 82%
 - assertVisible: '分岐の評価・ローカル'
 - takeScreenshot: c30b-branch-eval-local
 # Deep-analysis button label must carry the local-Sekirei marker too.
@@ -70,6 +101,16 @@ env:
     element:
       id: analysis-focus
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
 - assertVisible: 'この局面を深く解析（ローカル・Sekirei）'
 - tapOn:
     id: analysis-focus
@@ -86,5 +127,15 @@ env:
     element:
       text: 本譜に戻る
     direction: UP
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 55%
+                end: 50%, 82%
 - tapOn: 本譜に戻る
 - assertVisible: '0 / 80手'

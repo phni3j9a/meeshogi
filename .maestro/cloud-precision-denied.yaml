@@ -24,9 +24,26 @@ env:
     element:
       id: analysis-method
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # iOS: the a11y tree reports this ScrollView's children while still
+      # below the fixed playback footer, so scrollUntilVisible no-ops and a
+      # by-id tap lands on the footer. Swipe inside the lower list region
+      # (below the eval graph, which would scrub the move position).
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
 - tapOn:
     id: analysis-method
 - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: 'Cloud・精密'
+    timeout: 120000
 - tapOn: Cloud・精密
 - waitForAnimationToEnd
 - assertVisible: この棋譜はCloud未解析です
@@ -47,9 +64,22 @@ env:
     element:
       id: analysis-method
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
 - tapOn:
     id: analysis-method
 - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: '端末内（Sekirei）'
+    timeout: 120000
 - tapOn: 端末内（Sekirei）
 - waitForAnimationToEnd
 - takeScreenshot: c52-back-to-sekirei

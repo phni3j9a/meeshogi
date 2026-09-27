@@ -24,6 +24,20 @@ env:
     element:
       id: analysis-status
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # iOS: the a11y tree reports this ScrollView's children while still
+      # below the fixed playback footer, so scrollUntilVisible no-ops and a
+      # by-id tap lands on the footer. Swipe inside the lower list region
+      # (below the eval graph, which would scrub the move position).
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
 # The Free job (81 plies x ~1 s server-side) plus interruption delays: allow
 # up to 10 minutes for the terminal label.
 - extendedWaitUntil:
@@ -35,6 +49,16 @@ env:
     element:
       id: evaluation-chart
     direction: UP
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 55%
+                end: 50%, 82%
 - assertVisible:
     id: evaluation-chart
 - assertVisible:
@@ -93,6 +117,13 @@ env:
     element:
       id: candidate-0
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - swipe:
+          start: 50%, 82%
+          end: 50%, 60%
 - assertVisible:
     id: candidate-0
 - takeScreenshot: c24-cloud-candidates
@@ -139,15 +170,38 @@ env:
     element:
       id: analysis-method
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
 - tapOn:
     id: analysis-method
 - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: '端末内（Sekirei）'
+    timeout: 120000
 - tapOn: 端末内（Sekirei）
 - waitForAnimationToEnd
 - scrollUntilVisible:
     element:
       id: analysis-status
     direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 82%
+                end: 50%, 55%
 # Wait for a local end-state label. The partial state shows
 # '解析済み N / 81局面' + a '解析を再開' button — neither matches the
 # '局面を解析済み' wording, so that label must be an alternative here.
@@ -164,6 +218,16 @@ env:
           element:
             id: analysis-start
           direction: DOWN
+      - runFlow:
+          when:
+            platform: iOS
+          commands:
+            - repeat:
+                times: 3
+                commands:
+                  - swipe:
+                      start: 50%, 82%
+                      end: 50%, 55%
       - tapOn:
           id: analysis-start
       - extendedWaitUntil:
@@ -174,5 +238,15 @@ env:
     element:
       text: '後手・1手詰め ›'
     direction: UP
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: 50%, 55%
+                end: 50%, 82%
 - assertVisible: '後手・1手詰め ›'
 - takeScreenshot: c26-sekirei-badge-ply53
