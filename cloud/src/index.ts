@@ -32,6 +32,9 @@ export interface Env {
   ANALYSIS_BENCHMARK_STANDARD_3: DurableObjectNamespace<BenchmarkStandard3Container>;
   JOBS_DB?: D1Database;
   JOBS_QUEUE?: Queue<JobQueueMessage>;
+  /** Only the literal "false" disables these admission checks. Missing values enforce them. */
+  JOBS_ENFORCE_FREE_QUOTAS?: string;
+  JOBS_REQUIRE_PRECISION_ALLOWLIST?: string;
 }
 
 export interface JobQueueMessage {

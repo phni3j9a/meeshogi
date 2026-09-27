@@ -242,13 +242,28 @@ The credential is `mcd1_<43 url-safe characters>` (32 random bytes, unpadded bas
 
 Admission is atomic in D1: the job row and its ply-indexed position rows insert in one batch whose `INSERT ... SELECT ... WHERE` guards re-check the limits at insert time, and `UNIQUE(owner_id, idempotency_key)` protects replays. Idempotency is keyed on the canonical initial SFEN — the replayed position's `position.sfen` — so equivalent spellings (e.g. `/81/` vs `/9/`, reordered hand pieces) replay to the same job while a different move list or profile under the same key is still a conflict. Resubmitting the same key with the same canonical input returns the existing job (`idempotentReplay: true`, HTTP 200) without consuming quota or an active slot; the same key with a different input is a 409 `idempotency_conflict`. A different key creates a separate job. If the job row persists but the Queue send fails, the API returns 503 `enqueue_failed` honestly rather than reporting success; resubmitting the same key retries the enqueue.
 
-Usage limits live with the profiles in `cloud/config/job-profiles.json` and are staging defaults, not permanent product limits: Free is 5 jobs per owner per Asia/Tokyo calendar day and 5 new jobs per trailing 60 seconds, and each owner may have 1 active job (queued or running) across both profiles. Cancelled jobs still count toward the daily quota. Precision additionally requires a server-side allowlist flag on the owner row:
+The quota thresholds live with the profiles in `cloud/config/job-profiles.json`: when enabled, Free is 5 jobs per owner per Asia/Tokyo calendar day and 5 new jobs per trailing 60 seconds. Each owner may always have 1 active job (queued or running) across both profiles. Development staging disables Free quotas and the Precision allowlist as described below. When the allowlist is enabled, an operator grants Precision access on the owner row:
 
 ```sh
 cd cloud
 ./node_modules/.bin/wrangler d1 execute meeshogi-jobs-staging --remote \
   --command "UPDATE owners SET precision_allowed = 1 WHERE owner_id = 'own_<24 hex>'"
 ```
+
+### Development staging access (Issue #34)
+
+Staging is currently used only for development. Its checked-in `wrangler.staging.jsonc` sets these **Worker vars**:
+
+| Variable | Development staging value | When omitted or set to `"true"` |
+| --- | --- | --- |
+| `JOBS_ENFORCE_FREE_QUOTAS` | `"false"`: no daily or trailing-window Free job quota | Enforce the 5 jobs/JST day and 5 jobs/60 seconds thresholds |
+| `JOBS_REQUIRE_PRECISION_ALLOWLIST` | `"false"`: any authenticated owner can use Precision | Require `owners.precision_allowed = 1` |
+
+Only the exact string `"false"` disables a check; other values keep it enabled. The two switches are independent and apply to both existing and newly issued credentials. They do not modify owner allowlist flags or delete usage records. All created Free jobs, including failed and cancelled jobs and those created while quotas were disabled, count when quotas are re-enabled. Idempotent replays do not create a new job or consume additional quota.
+
+To test restricted behavior, set the relevant var to `"true"` (or remove it) in the template and redeploy with the existing staging deployment workflow. Restore `"false"` and redeploy after that test. The config renderer preserves these vars in normal and benchmark configurations. Exporting a same-named shell variable alone does **not** change the Worker setting. These are server-side settings; no request field, app setting, per-device development registration, or app rebuild is required. Production access and billing policy remain future work in Issue #24.
+
+Anonymous authentication, owner isolation, one active job per owner across both profiles, 512 moves / 32 KiB input limits, idempotency, Free/Precision search conditions and Container lifecycle remain unchanged. `cloud-precision-denied` mobile acceptance requires the allowlist switch enabled and an owner without a grant; the usual development config instead supports `cloud-precision-run` without a grant.
 
 ### Queue consumer
 
@@ -269,12 +284,15 @@ cd cloud
 ./node_modules/.bin/wrangler queues create meeshogi-jobs-staging-dlq
 ```
 
-`deploy-staging.sh` renders `JOBS_D1_DATABASE_ID` into the config and applies `cloud/migrations/` after deploy and the secret upload. The job smoke issues a throwaway credential in memory, then verifies: a Free job created and replayed idempotently (same `jobId`, `idempotentReplay`), a second concurrent job rejected with 429 `active_job_limit`, owner isolation (404), precision rejected for a non-allowlisted owner, progress advancing under GET-only polling (client-disconnect equivalence), partial results via `afterPly` observed only while the job is non-terminal with `nextPly < totalPlies` (rows from a completed job never count), per-result profile conditions/identity/`engineLaunch` evidence, and a cancellation that stays cancelled with frozen `nextPly`/result counts. A check that cannot be observed is reported as `UNVERIFIED` and exits 3 instead of 0; HTTP status is reported in a dedicated `httpStatus` key so it is never confused with a job's `status` field. The daily Free quota is not exercised: each run creates a fresh owner — to check it manually, keep one credential and POST five jobs with distinct idempotency keys; the sixth must return 429 `daily_quota_exceeded`:
+`deploy-staging.sh` renders `JOBS_D1_DATABASE_ID` into the config and applies `cloud/migrations/` after deploy and the secret upload. The job smoke issues a throwaway credential in memory, then verifies: a Free job created and replayed idempotently (same `jobId`, `idempotentReplay`), a second concurrent job rejected with 429 `active_job_limit`, owner isolation (404), progress advancing under GET-only polling (client-disconnect equivalence), partial results via `afterPly` observed only while the job is non-terminal with `nextPly < totalPlies` (rows from a completed job never count), per-result profile conditions/identity/`engineLaunch` evidence, and a cancellation that stays cancelled with frozen `nextPly`/result counts. A check that cannot be observed is reported as `UNVERIFIED` and exits 3 instead of 0; HTTP status is reported in a dedicated `httpStatus` key so it is never confused with a job's `status` field. `--precision` runs the Precision flow with a fresh, non-allowlisted owner under development settings. Use `--require-precision-allowlist` only after enabling that Worker check; it verifies rejection and retains the former two-pass owner-grant procedure for `--precision`. The script does not exhaust daily quotas. To test quotas manually, enable them, keep one credential, and create then cancel five jobs with distinct keys; the sixth must return 429 `daily_quota_exceeded`. With development settings, the sixth should be accepted:
 
 ```sh
 export ANALYSIS_STAGING_URL='https://<deployed-worker-subdomain>.workers.dev'
 python3 cloud/scripts/smoke-jobs-staging.py            # Free profile
-python3 cloud/scripts/smoke-jobs-staging.py --precision  # two-pass allowlist flow described by the script
+python3 cloud/scripts/smoke-jobs-staging.py --precision  # fresh owner, no manual grant
+# Only after setting JOBS_REQUIRE_PRECISION_ALLOWLIST="true" and redeploying:
+python3 cloud/scripts/smoke-jobs-staging.py --require-precision-allowlist
+python3 cloud/scripts/smoke-jobs-staging.py --precision --require-precision-allowlist  # two-pass grant flow
 ```
 
 ### 2026-09-26 staging verification (candidate b5f339e)

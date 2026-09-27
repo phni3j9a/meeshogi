@@ -5,7 +5,8 @@ Issues a throwaway anonymous credential, submits a Free job, then verifies:
 progress visible from GET alone (client disconnect equivalence), partial
 results via afterPly while running, idempotent resubmission, the one-active-job
 limit, owner isolation, cancellation that stays cancelled, per-result
-conditions/identity/engineLaunch evidence, and the precision allowlist gate.
+conditions/identity/engineLaunch evidence. With --require-precision-allowlist,
+also verifies that a fresh owner is denied Precision access.
 
 HTTP status is always kept in a dedicated ``httpStatus`` key so it can never
 be confused with a job payload's ``status`` field.
@@ -15,18 +16,22 @@ become readable while non-terminal) are reported as UNVERIFIED: the script
 prints "smoke passed with UNVERIFIED items" and exits 3 instead of 0, so a
 green run always means every check was actually observed.
 
-Daily quota exhaustion is intentionally not exercised: each run consumes two
-of five daily Free jobs for its owner and every run issues a new owner. To
-verify the quota manually, keep ONE credential (e.g. save the one this script
-issues in-memory via a small wrapper) and POST five jobs with distinct
-idempotency keys for that owner; the sixth POST must return HTTP 429 with
-failure.code == "daily_quota_exceeded".
+Daily quota exhaustion is intentionally not exercised. Development staging
+disables Free quotas and the Precision allowlist. To test the restrictions,
+enable JOBS_ENFORCE_FREE_QUOTAS / JOBS_REQUIRE_PRECISION_ALLOWLIST in the
+Worker config and redeploy. With quotas enabled, five created (even cancelled)
+Free jobs exhaust one owner's daily allowance; the sixth must return HTTP
+429 with failure.code == "daily_quota_exceeded".
 
 Usage:
     ANALYSIS_STAGING_URL=https://<worker>.workers.dev python3 smoke-jobs-staging.py
 
-    # Optional precision pass (two runs; the owner file survives between them):
+    # Development staging: a fresh owner can use Precision immediately.
     python3 smoke-jobs-staging.py --precision
+
+    # Only against a Worker with JOBS_REQUIRE_PRECISION_ALLOWLIST="true":
+    python3 smoke-jobs-staging.py --require-precision-allowlist
+    python3 smoke-jobs-staging.py --precision --require-precision-allowlist
     # -> run the printed wrangler d1 execute command, then re-run the same
     #    command; the saved credential's owner is reused. The credential is
     #    stored mode-0600 and never printed.
@@ -34,6 +39,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -204,7 +210,7 @@ def verify_results(results: list[dict[str, Any]], profile: str) -> None:
     expect(len(launches) == 1, f"results came from multiple engine launches: {sorted(launches)}")
 
 
-def run_job_flow(base_url: str, owner: dict[str, str], profile: str) -> None:
+def run_job_flow(base_url: str, owner: dict[str, str], profile: str, *, require_precision_allowlist: bool = False) -> None:
     key = f"smoke-{profile}-{int(time.time())}"
     print(f"creating {profile} job ({len(GAME_MOVES)} moves, {TOTAL_PLIES} plies)")
     created = post_job(base_url, owner["credential"], profile, key, GAME_MOVES)
@@ -233,10 +239,15 @@ def run_job_flow(base_url: str, owner: dict[str, str], profile: str) -> None:
     expect(foreign["httpStatus"] == 404, f"owner isolation failed: second owner read the job (HTTP {foreign['httpStatus']})")
     print("owner isolation: second owner sees 404")
 
-    # Precision is allowlist-gated; a fresh owner is never allowlisted.
-    denied = post_job(base_url, other["credential"], "precision", f"{key}-precision-denied", GAME_MOVES)
-    expect(denied["httpStatus"] == 403, f"precision was not rejected for a non-allowlisted owner: HTTP {denied['httpStatus']} {denied['body']!r}")
-    print("precision gate: non-allowlisted owner rejected with 403")
+    if require_precision_allowlist:
+        denied = post_job(base_url, other["credential"], "precision", f"{key}-precision-denied", GAME_MOVES)
+        # If run against development settings by mistake, cancel the unexpected
+        # job before failing instead of leaving an unattended full-game analysis.
+        if denied["httpStatus"] == 201:
+            api(base_url, "POST", f"/v1/jobs/{denied['body']['jobId']}/cancel", other["credential"], {})
+        expect(denied["httpStatus"] == 403 and denied["body"].get("failure", {}).get("code") == "profile_not_allowed",
+               f"precision was not rejected for a non-allowlisted owner: HTTP {denied['httpStatus']} {denied['body']!r}")
+        print("precision gate: non-allowlisted owner rejected with 403")
 
     # Client-disconnect equivalence: observe progress via GET only.
     print("polling progress (GET only, no /results reads):")
@@ -292,13 +303,16 @@ def run_cancel_flow(base_url: str, owner: dict[str, str]) -> list[str]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--precision", action="store_true", help="Run the Precision profile instead of Free.")
+    parser.add_argument("--require-precision-allowlist", action="store_true",
+                        help="Expect the Worker to enforce the Precision allowlist (not the development default).")
+    args = parser.parse_args()
     base_url = os.environ.get("ANALYSIS_STAGING_URL", "").rstrip("/")
     if not base_url:
         print("Set ANALYSIS_STAGING_URL to the deployed Worker origin.", file=sys.stderr)
         return 2
-    precision = "--precision" in sys.argv
-
-    if precision:
+    if args.precision and args.require_precision_allowlist:
         if PRECISION_OWNER_FILE.exists():
             owner = json.loads(PRECISION_OWNER_FILE.read_text(encoding="utf-8"))
             print(f"reusing owner {owner['ownerId']} from {PRECISION_OWNER_FILE} (mode-0600)")
@@ -312,13 +326,17 @@ def main() -> int:
                 f"--command \"UPDATE owners SET precision_allowed = 1 WHERE owner_id = '{owner['ownerId']}'\""
             )
             return 2
-        run_job_flow(base_url, owner, "precision")
+        run_job_flow(base_url, owner, "precision", require_precision_allowlist=True)
         print("smoke ok: precision profile for an allowlisted owner")
         return 0
 
     owner = issue_credential(base_url)
     print(f"issued credential for owner {owner['ownerId']} (credential held in memory only)")
-    run_job_flow(base_url, owner, "free")
+    profile = "precision" if args.precision else "free"
+    run_job_flow(base_url, owner, profile, require_precision_allowlist=args.require_precision_allowlist)
+    if args.precision:
+        print("smoke ok: precision profile for a fresh owner without an allowlist entry")
+        return 0
     # The cancel flow also performs the running-state partial results read:
     # it waits for committed rows via afterPly, then cancels and verifies the
     # job stays cancelled with no further progress.
@@ -328,7 +346,7 @@ def main() -> int:
         print(f"smoke passed with UNVERIFIED items: {', '.join(unverified)}")
         return 3
     print("smoke ok: all checks passed (free profile, progress, idempotent replay, "
-          "active-job limit, owner isolation, precision gate, partial results, cancel)")
+          "active-job limit, owner isolation, partial results, cancel)")
     return 0
 
 

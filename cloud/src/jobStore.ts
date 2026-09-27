@@ -101,6 +101,7 @@ export interface AdmitJobParams {
   isoNow: string;
   positions: { ply: number; sfen: string; terminal: 'checkmate' | 'no-legal-moves' | null }[];
   maxActiveJobs: number;
+  enforceFreeQuotas: boolean;
   freeDailyJobs: number;
   freeRateMaxJobs: number;
   freeRateWindowMs: number;
@@ -153,7 +154,7 @@ export class JobStore {
               SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?
               WHERE
                 (SELECT COUNT(*) FROM jobs a WHERE a.owner_id = ? AND a.status IN ('queued', 'running')) < ?
-                AND (? <> 'free' OR (
+                AND (? = 0 OR ? <> 'free' OR (
                   (SELECT COUNT(*) FROM jobs d WHERE d.owner_id = ? AND d.profile_id = 'free' AND d.jst_day = ?) < ?
                   AND (SELECT COUNT(*) FROM jobs r WHERE r.owner_id = ? AND r.profile_id = 'free' AND r.created_ms > ?) < ?
                 ))`,
@@ -162,6 +163,7 @@ export class JobStore {
           params.profileId, params.initialSfen, params.movesJson, params.totalPlies,
           params.jstDay, params.createdMs, params.isoNow, params.isoNow,
           params.ownerId, params.maxActiveJobs,
+          params.enforceFreeQuotas ? 1 : 0,
           params.profileId,
           params.ownerId, params.jstDay, params.freeDailyJobs,
           params.ownerId, windowStart, params.freeRateMaxJobs,

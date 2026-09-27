@@ -40,6 +40,7 @@ function admitParams(overrides: Partial<AdmitJobParams> = {}): AdmitJobParams {
       { ply: 1, sfen: AFTER_2G2F, terminal: null },
     ],
     maxActiveJobs: 1,
+    enforceFreeQuotas: true,
     freeDailyJobs: 5,
     freeRateMaxJobs: 5,
     freeRateWindowMs: 60_000,

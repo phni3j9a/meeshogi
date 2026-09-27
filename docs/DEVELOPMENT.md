@@ -10,6 +10,10 @@ Issue #20はこのgatewayから同じprivate imageを使うserial benchmarkの�
 
 Issue #21は、このstaging Workerへ公開`/v1/*`の非同期jobバックエンドを追加した。`POST /v1/credentials`がインストール単位の匿名credential（`mcd1_`形式、D1はSHA-256 hashのみ保存）を発行し、`POST /v1/jobs`が1局を1つの永続jobとして受け付けてQueueへ送る。consumerはdriver `POST /session`のストリームをcursor `next_ply`から継続し、局面ごとの検証済み結果をD1へ条件付きで書き込む。`GET /v1/jobs/:id`（進捗・再接続）、`GET /v1/jobs/:id/results`（永続結果のcursor付き取得）、`POST /v1/jobs/:id/cancel`（原子的な取消と遅延結果ガード）を提供する。利用制限（Free 5局/JST日・5局/60秒・同時active 1）とprofile値は`cloud/config/job-profiles.json`に集約し、`precision`はoperatorがD1のowner行でallowlistする場合のみ有効。エンジン条件・benchmark条件は公開APIへ露出しない。検証は実SQLite上の永続層・admission・guardテストとfake session streamによるconsumer振る舞いテストに加え、2026-09-26にstaging実環境（candidate `b5f339e`、digest-pinned image `sha256:0c9543b4…`）で同期smoke・Free/Precision非同期smoke・daily quota（429 `daily_quota_exceeded`）・1 engine process再利用証跡（`engineLaunch` 27行一意）を実測済み。初回runでは、deploy後もContainer instanceが旧imageを返す事象を観測し（当時は停止・再開を実証しておらず、休眠固有の問題とは確定していない）、対象app3件のdelete→再deployで是正した。当時はDLQ到達・continuationの実経路・job経路のidle停止と再起動が未検証だった。idle停止の後続検証はIssue #30として別途記録する。アプリへの接続はIssue #22（SecureStoreへのcredential保存）、本番切替はIssue #24であり、Issue #20のベンチマーク実測はこの非同期経路の性能・コスト測定ではない。詳細は[`cloud/README.md`](../cloud/README.md)の「Issue #21 asynchronous job backend」を参照する。
 
+### Issue #34: 開発専用stagingの利用制限
+
+開発中の繰り返し検証のため、stagingのWorker varsでFreeの回数制限とPrecisionの個別許可を無効にする。既存・新規の匿名IDで両方式を使え、端末登録UIやownerごとの開発フラグは追加しない。匿名認証・所有者分離・同時active 1局・512手・探索条件は維持する。設定を`"true"`へ戻すか省略すると従来の上限・個別許可が有効になる。設定・smoke手順は[cloud README](../cloud/README.md#development-staging-access-issue-34)を参照。過去のIssue #21/#22受入にある5局上限・Precision拒否は、その時点の制限付き設定での結果である。今回の変更はサーバー側に限り、両OSアプリの再ビルド・画面受入は実施対象に含めない。
+
 ### Issue #30: Containerの停止不良
 
 2026-09-27、SIGTERMを受けても終了しないPython PID 1と、consumerの未解放応答を修正した。`sleepAfter=5m`、Free/Precision条件、利用制限、構成を維持する。ローカルの実HTTP・子プロセス・workerd回帰検証とstaging受入の証拠、deploy時の旧image対処、使用量の確認方法は[Container停止レポート](CLOUD-CONTAINER-LIFECYCLE.md)を参照する。ユーザーの今後の方針はCloudのみだが、深掘り・分岐の詳細は未決であり、今回Sekirei撤去や構成最適化は行わない。
