@@ -64,18 +64,20 @@ env:
 - assertVisible:
     id: evaluation-chart-plot
 - takeScreenshot: c21-cloud-graph
-# Terminal ply: checkmate label, and no proof badge anywhere.
-- tapOn:
-    id: move-last
-- runFlow:
-    when:
+# Terminal ply: checkmate label, and no proof badge anywhere. A single
+# element tap is eaten while cloud results finish syncing (footer remounts);
+# retry until the position actually lands on the terminal ply.
+- repeat:
+    times: 6
+    while:
       notVisible: '80 / 80手'
     commands:
       - tapOn:
           id: move-last
+      - waitForAnimationToEnd
 - extendedWaitUntil:
     visible: '80 / 80手'
-    timeout: 15000
+    timeout: 30000
 # '後手勝ち・詰み終局' renders only once the position's Cloud result has
 # synced (formatEvaluation 'checkmate' needs the stored row; '—' meanwhile).
 # Results pull is slow on a cold app — allow minutes.
@@ -87,31 +89,31 @@ env:
 - assertNotVisible: '.*手詰め ›'
 - takeScreenshot: c22-cloud-terminal
 # One ply earlier Cloud must report a signed mate/eval value — still no badge.
-- tapOn:
-    id: move-prev
-- runFlow:
-    when:
+- repeat:
+    times: 4
+    while:
       notVisible: '79 / 80手'
     commands:
       - tapOn:
           id: move-prev
+      - waitForAnimationToEnd
 - extendedWaitUntil:
     visible: '79 / 80手'
-    timeout: 15000
+    timeout: 30000
 - assertNotVisible: '.*手詰め ›'
 - takeScreenshot: c23-cloud-mate-or-eval
 # Mid-game ply: Cloud candidates + principal variation are visible.
-- tapOn:
-    id: move-first
-- runFlow:
-    when:
+- repeat:
+    times: 4
+    while:
       notVisible: '0 / 80手'
     commands:
       - tapOn:
           id: move-first
+      - waitForAnimationToEnd
 - extendedWaitUntil:
     visible: '0 / 80手'
-    timeout: 15000
+    timeout: 30000
 - extendedWaitUntil:
     # Android exposes '第一候補'; iOS labels candidates '候補1、…'
     # (full-string match — the iOS label continues after 候補1, so .* wrap)

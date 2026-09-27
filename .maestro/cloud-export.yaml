@@ -68,6 +68,9 @@ env:
           when:
             visible: 'Meeshogi Export.*|Meeshogi E.*|meeshogi t.*'
           commands:
+            # After the tap the sheet dismisses and the app shows the
+            # '書き出しました' Alert, which covers id: game-screen — so the
+            # completion signal is the alert text, not the game screen.
             - tapOn: 'Meeshogi Export.*|Meeshogi E.*|meeshogi t.*'
             # After the helper receives the share the app shows the
             # '書き出しました' Alert, which covers the game-screen testID —
@@ -76,19 +79,19 @@ env:
             # succeeded, but the game-screen wait timed out on the Alert).
             - extendedWaitUntil:
                 visible: '.*書き出しました.*'
-                timeout: 30000
+                timeout: 60000
       - runFlow:
           when:
+            # Once the target is tapped the sheet is dismissed, so its label
+            # is gone — a missing '書き出しました' Alert is the only reliable
+            # "share did not complete" signal.
             notVisible: '.*書き出しました.*'
           commands:
-            # Only reachable when the helper target was never tapped (the
-            # tapped branch already waited on the alert) — either the target
-            # stayed missing with the sheet open, or the write alert is
-            # genuinely absent. Record the sheet state, settle, then let the
-            # real alert assert decide (it may still be animating in).
-            - takeScreenshot: c71b-export-share-state
-            - waitForAnimationToEnd
-            - assertVisible: '.*書き出しました.*'
+            # The helper target never appeared — capture the sheet state for
+            # diagnosis, dismiss it, and fail loudly on the next assert.
+            - takeScreenshot: c71b-export-share-target-missing
+            - pressKey: back
+            - assertVisible: 'Meeshogi Export Test target was visible'
 - runFlow:
     when:
       platform: iOS

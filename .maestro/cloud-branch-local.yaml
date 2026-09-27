@@ -55,6 +55,27 @@ env:
     timeout: 120000
 - tapOn: 'Cloud・無料'
 - waitForAnimationToEnd
+# Android: when the persisted method is already Cloud・無料 the text tap above
+# resolves ambiguously against the row's own value and lands behind the sheet
+# (observed: sheet left open, later asserts fail). Retry the sheet row by
+# point (always the 2nd item, ~[0,1959][1080,2106] on the acceptance AVD)
+# while the sheet's 'キャンセル' row is still up. iOS keeps the text tap — its
+# row value is not exposed as a11y text, so the match is unambiguous there.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - repeat:
+          times: 4
+          while:
+            visible: 'キャンセル'
+          commands:
+            - tapOn:
+                point: 50%,85%
+            - waitForAnimationToEnd
+      - extendedWaitUntil:
+          notVisible: 'キャンセル'
+          timeout: 15000
 # Enter a branch from ply 0. The game screen resumes the last-viewed ply
 # (e.g. 53 after cloud-free-verify), so reset the position explicitly first.
 - tapOn:
