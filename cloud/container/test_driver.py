@@ -86,6 +86,8 @@ for command in iter(commands.get, None):
         print("id name Fake USI Engine", flush=True)
         for name in ["Threads", "USI_Hash", "MultiPV", "EvalDir", "FV_SCALE", "USI_Ponder", "USI_OwnBook", "BookFile", "GenerateAllLegalMoves"]:
             print(f"option name {name} type string default test", flush=True)
+        if scenario != "no-pvinterval":
+            print("option name PvInterval type spin default 300 min 0 max 100000", flush=True)
         print("usiok", flush=True)
     elif command == "isready":
         print("readyok", flush=True)
@@ -111,6 +113,18 @@ for command in iter(commands.get, None):
         if scenario == "bad-bestmove":
             emit_info()
             print("bestmove bogus", flush=True)
+            continue
+        if scenario == "bound-final":
+            # Complete exact blocks for depths 1-3, then only a rank-1
+            # upperbound at depth 4 (an interrupted aspiration re-search).
+            print("info depth 1 multipv 1 score cp 30 nodes 100 time 5 pv 7g7f 3c3d", flush=True)
+            print("info depth 1 multipv 2 score cp -5 nodes 100 time 5 pv 2g2f 8c8d", flush=True)
+            print("info depth 2 multipv 1 score cp 32 nodes 200 time 10 pv 7g7f 3c3d", flush=True)
+            print("info depth 2 multipv 2 score cp -8 nodes 200 time 10 pv 2g2f 8c8d", flush=True)
+            print("info depth 3 multipv 1 score cp 34 nodes 300 time 15 pv 7g7f 3c3d", flush=True)
+            print("info depth 3 multipv 2 score cp -10 nodes 300 time 15 pv 2g2f 8c8d", flush=True)
+            print("info depth 4 multipv 1 score cp 40 upperbound nodes 400 time 20 pv 7g7f 8c8d", flush=True)
+            print("bestmove 7g7f", flush=True)
             continue
         if scenario == "shortfall":
             print("info depth 2 multipv 1 score cp 42 nodes 1000 time 12 pv 7g7f 3c3d", flush=True)
@@ -308,6 +322,39 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(result["candidates"], [])
         self.assertIsNone(result["meta"]["completedDepth"])
 
+    def test_pv_interval_is_required_and_sent_as_zero(self) -> None:
+        code, result = self.request(self.service())
+        self.assertEqual(code, 200)
+        self.assertEqual(result["status"], "success")
+        commands = self.commands_path.read_text(encoding="ascii").splitlines()
+        self.assertEqual(
+            commands.index("setoption name PvInterval value 0"),
+            commands.index("setoption name MultiPV value 3") + 1,
+        )
+
+    def test_engine_missing_pv_interval_fails_the_handshake(self) -> None:
+        code, result = self.request(self.service("no-pvinterval"))
+        self.assertEqual(code, 502)
+        self.assertEqual(result["status"], "failure")
+        self.assertEqual(result["failure"]["code"], "engine_error")
+        self.assertIn("PvInterval", result["failure"]["message"])
+
+    def test_bound_final_info_line_keeps_last_completed_depth(self) -> None:
+        # A stop landing inside an aspiration re-search only prints a bound
+        # line: the last fully confirmed depth must still be adopted (Issue #36).
+        for legal_move_count, expected_candidates in ((1, 1), (2, 2)):
+            with self.subTest(legal_move_count=legal_move_count):
+                code, result = self.request(self.service("bound-final"), legal_move_count=legal_move_count)
+                self.assertEqual(code, 200)
+                self.assertEqual(result["status"], "success")
+                self.assertEqual(result["meta"]["completedDepth"], 3)
+                self.assertEqual(len(result["candidates"]), expected_candidates)
+                self.assertEqual(result["candidates"][0]["move"], "7g7f")
+                self.assertEqual(result["candidates"][0]["score"], {"kind": "cp", "value": 34})
+                if expected_candidates == 2:
+                    self.assertEqual(result["candidates"][1]["move"], "2g2f")
+                    self.assertEqual(result["candidates"][1]["score"], {"kind": "cp", "value": -10})
+
     def test_bestmove_resign_has_no_fabricated_candidate(self) -> None:
         code, result = self.request(self.service("resign"))
         self.assertEqual(code, 200)
@@ -441,6 +488,7 @@ class DriverTests(unittest.TestCase):
         self.assertFalse(health["verifyStopEngineOnceConsumed"])
         self.assertEqual(health["driverVersion"], "test-driver")
         self.assertEqual(health["contractVersion"], "test-contract")
+        self.assertEqual(health["sessions"], {"active": False, "started": 0, "cancelled": 0, "preempted": 0})
         self.assertEqual(health["identityDigests"]["engineSha256"], self.manifest["engineSha256"])
         self.assertFalse(self.counter_path.exists(), "health must not spawn the engine")
 

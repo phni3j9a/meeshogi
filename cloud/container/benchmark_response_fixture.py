@@ -27,6 +27,7 @@ for line in sys.stdin:
         print("id name Other Engine" if scenario == "identity_mismatch" else "id name Fake USI Engine", flush=True)
         for name in ("Threads", "USI_Hash", "MultiPV", "EvalDir", "FV_SCALE", "USI_Ponder", "USI_OwnBook", "BookFile", "GenerateAllLegalMoves"):
             print(f"option name {name} type spin default 1 min 1 max 128", flush=True)
+        print("option name PvInterval type spin default 300 min 0 max 100000", flush=True)
         print("usiok", flush=True)
     elif command.startswith("setoption name MultiPV value "):
         multi_pv = int(command.rsplit(" ", 1)[1])

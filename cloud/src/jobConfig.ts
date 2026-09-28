@@ -22,6 +22,8 @@ export type JobConsumerConfig = {
   tailMarginMs: number;
   /** Standard Queue retries after the first delivery; total deliveries = maxRetries + 1. Must match wrangler.staging.jsonc queues.consumers[].max_retries. */
   maxRetries: number;
+  /** Base delay between redeliveries; multiplied by the attempt number so a wedged driver session can drain before the next try. */
+  retryDelaySeconds: number;
 };
 
 function isPositiveInteger(value: unknown): value is number {
@@ -66,7 +68,8 @@ function loadLimits(): JobLimits {
 function loadConsumer(): JobConsumerConfig {
   const consumer = manifest.consumer as Record<string, unknown>;
   if (!isPositiveInteger(consumer.budgetMs) || !isPositiveInteger(consumer.tailMarginMs)
-    || !isPositiveInteger(consumer.maxRetries) || consumer.tailMarginMs >= consumer.budgetMs) {
+    || !isPositiveInteger(consumer.maxRetries) || !isPositiveInteger(consumer.retryDelaySeconds)
+    || consumer.tailMarginMs >= consumer.budgetMs) {
     throw new Error('job-profiles.json: consumer config is missing or invalid');
   }
   return consumer as unknown as JobConsumerConfig;

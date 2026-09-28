@@ -45,17 +45,29 @@ interface SessionCall {
     conditions: Record<string, unknown>;
     positions: { ply: number; sfen: string; legalMoveCount: number }[];
     deadlineMs: number;
+    /** Only present on /session/cancel calls. */
+    sessionId?: unknown;
   };
 }
 
 type SessionScript = (body: SessionCall['body']) => string | Response;
 
-function sessionBinding(name: string, calls: SessionCall[], script: SessionScript) {
+type CancelScript = (body: SessionCall['body']) => Response | Promise<Response>;
+
+function sessionBinding(name: string, calls: SessionCall[], script: SessionScript, onCancel?: CancelScript) {
   return {
     getByName: (stubName: string) => ({
       fetch: async (request: Request) => {
+        const path = new URL(request.url).pathname;
         const body = await request.json() as SessionCall['body'];
-        calls.push({ binding: name, name: stubName, path: new URL(request.url).pathname, body });
+        calls.push({ binding: name, name: stubName, path, body });
+        if (path === '/session/cancel') {
+          if (onCancel) return onCancel(body);
+          return new Response(JSON.stringify({ schemaVersion: 1, cancelled: true }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
         const output = script(body);
         return typeof output === 'string'
           ? new Response(output, { headers: { 'content-type': 'application/x-ndjson' } })
@@ -155,7 +167,7 @@ async function createGame(env: Env, credential: string, moves: string[], overrid
 function sessionLines(
   positions: { ply: number; sfen: string }[],
   profileId: JobProfileId,
-  options: { stopAfter?: number; end?: 'complete' | 'deadline' | 'error'; omitEnd?: boolean } = {},
+  options: { stopAfter?: number; end?: 'complete' | 'deadline' | 'error'; omitEnd?: boolean; sessionId?: string } = {},
 ): string {
   const conditions = JOB_PROFILES[profileId].conditions;
   const lines: unknown[] = [{
@@ -166,6 +178,7 @@ function sessionLines(
     driverBootId: 'a'.repeat(32),
     engineLaunch: 1,
     identity: EXPECTED_IDENTITY,
+    ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
   }];
   for (const position of positions.slice(0, options.stopAfter ?? positions.length)) {
     lines.push({ type: 'result', ply: position.ply, engineLaunch: 1, result: validResult(position.sfen, conditions) });
@@ -232,6 +245,7 @@ function sessionWithDriverFailures(
 interface FakeMessage extends Message<JobQueueMessage> {
   acked: boolean;
   retried: boolean;
+  retryOptions?: { delaySeconds?: number };
 }
 
 function fakeBatch(bodies: JobQueueMessage[], attempts = 1): { batch: MessageBatch<JobQueueMessage>; messages: FakeMessage[] } {
@@ -242,8 +256,12 @@ function fakeBatch(bodies: JobQueueMessage[], attempts = 1): { batch: MessageBat
     attempts,
     acked: false,
     retried: false,
+    retryOptions: undefined as FakeMessage['retryOptions'],
     ack(this: FakeMessage) { this.acked = true; },
-    retry(this: FakeMessage) { this.retried = true; },
+    retry(this: FakeMessage, options?: { delaySeconds?: number }) {
+      this.retried = true;
+      this.retryOptions = options;
+    },
   })) as FakeMessage[];
   const batch = {
     queue: 'meeshogi-jobs-staging',
@@ -652,15 +670,15 @@ describe('GET /v1/jobs/:id/results parameters', () => {
 });
 
 describe('queue consumer', () => {
-  function consumerEnv(script: SessionScript, profile: JobProfileId = 'free') {
+  function consumerEnv(script: SessionScript, profile: JobProfileId = 'free', onCancel?: CancelScript) {
     const { d1 } = createTestDb();
     const probe = queueProbe();
     const calls: SessionCall[] = [];
     const env = makeJobsEnv({
       d1,
       queue: probe.queue,
-      normal: sessionBinding('ANALYSIS_CONTAINER', calls, script),
-      standard3: sessionBinding('ANALYSIS_BENCHMARK_STANDARD_3', calls, script),
+      normal: sessionBinding('ANALYSIS_CONTAINER', calls, script, onCancel),
+      standard3: sessionBinding('ANALYSIS_BENCHMARK_STANDARD_3', calls, script, onCancel),
     });
     void profile;
     return { d1, env, calls, sent: probe.sent };
@@ -1025,6 +1043,256 @@ describe('queue consumer', () => {
     };
     expect(job.status).toBe('failed');
     expect(job.failure.code).toBe('contract_violation');
+  });
+
+  /** Cancels the job through the public API once its persisted cursor reaches atPly. */
+  function cancelJobAfterPly(
+    env: Env,
+    credential: string,
+    jobId: string,
+    d1: SqliteD1,
+    sqlite: ReturnType<typeof createTestDb>['sqlite'],
+    atPly = 1,
+  ): { done: () => boolean } {
+    const state = { cancelled: false };
+    const originalBatch = d1.batch.bind(d1);
+    d1.batch = (async (statements: Parameters<typeof originalBatch>[0]) => {
+      const out = await originalBatch(statements);
+      if (!state.cancelled) {
+        const row = sqlite.prepare('SELECT next_ply FROM jobs WHERE job_id = ?').get(jobId) as { next_ply?: number } | undefined;
+        if (row && typeof row.next_ply === 'number' && row.next_ply >= atPly) {
+          state.cancelled = true;
+          const cancel = await handleV1Request(postJson(`/v1/jobs/${jobId}/cancel`, credential, {}), env);
+          expect(cancel.status).toBe(200);
+        }
+      }
+      return out;
+    }) as typeof d1.batch;
+    return { done: () => state.cancelled };
+  }
+
+  it('cancels its driver session when the job is cancelled mid-stream, so the next job completes (Issue #29)', async () => {
+    const { d1, sqlite } = createTestDb();
+    const probe = queueProbe();
+    const calls: SessionCall[] = [];
+    const sessionIdA = 'ab'.repeat(16);
+    const cancels: unknown[] = [];
+    let servedA = false;
+    const env = makeJobsEnv({
+      d1,
+      queue: probe.queue,
+      normal: sessionBinding('ANALYSIS_CONTAINER', calls, (body) => {
+        if (!servedA) {
+          servedA = true;
+          return sessionLines(body.positions, 'free', { sessionId: sessionIdA });
+        }
+        // Like the wedged production session, the fake driver stays busy until
+        // the orphaned session's /session/cancel arrives.
+        if (cancels.length === 0) {
+          return new Response(
+            JSON.stringify({ status: 'failure', failure: { code: 'busy', message: 'An analysis is already running.' } }),
+            { status: 409 },
+          );
+        }
+        return sessionLines(body.positions, 'free', { sessionId: 'cd'.repeat(16) });
+      }, (body) => {
+        cancels.push(body.sessionId);
+        return new Response(JSON.stringify({ schemaVersion: 1, cancelled: true }), { status: 200 });
+      }),
+    });
+    const { credential } = await issueCredential(env);
+    const { jobId: jobA } = await createGame(env, credential, ['2g2f', '8c8d']);
+    const cancelHook = cancelJobAfterPly(env, credential, jobA, d1, sqlite);
+
+    const first = fakeBatch([{ v: 1, jobId: jobA }]);
+    await handleJobBatch(first.batch, env);
+    // The cancelled job's delivery still acks, and the abandonment asked the
+    // driver to stop session A.
+    expect(cancelHook.done()).toBe(true);
+    expect(first.messages[0].acked).toBe(true);
+    expect(first.messages[0].retried).toBe(false);
+    expect(cancels).toEqual([sessionIdA]);
+    const jobAView = await (await handleV1Request(get(`/v1/jobs/${jobA}`, credential), env)).json() as { status: string };
+    expect(jobAView.status).toBe('cancelled');
+
+    // Job B's first delivery then completes on the freed container.
+    const { jobId: jobB } = await createGame(env, credential, ['2g2f']);
+    const second = fakeBatch([{ v: 1, jobId: jobB }]);
+    await handleJobBatch(second.batch, env);
+    expect(second.messages[0].acked).toBe(true);
+    expect(second.messages[0].retried).toBe(false);
+    const jobBView = await (await handleV1Request(get(`/v1/jobs/${jobB}`, credential), env)).json() as { status: string };
+    expect(jobBView.status).toBe('completed');
+    expect(calls.map((call) => call.path)).toEqual(['/session', '/session/cancel', '/session']);
+  });
+
+  it('retries with delaySeconds instead of an immediate retry when there is no sessionId to cancel', async () => {
+    const { d1, sqlite } = createTestDb();
+    const probe = queueProbe();
+    const calls: SessionCall[] = [];
+    const cancels: unknown[] = [];
+    let servedA = false;
+    const env = makeJobsEnv({
+      d1,
+      queue: probe.queue,
+      normal: sessionBinding('ANALYSIS_CONTAINER', calls, (body) => {
+        if (!servedA) {
+          servedA = true;
+          // An old driver image has no sessionId in its header.
+          return sessionLines(body.positions, 'free');
+        }
+        return new Response(
+          JSON.stringify({ status: 'failure', failure: { code: 'busy', message: 'An analysis is already running.' } }),
+          { status: 409 },
+        );
+      }, (body) => {
+        cancels.push(body.sessionId);
+        return new Response(JSON.stringify({ schemaVersion: 1, cancelled: false }), { status: 200 });
+      }),
+    });
+    const { credential } = await issueCredential(env);
+    const { jobId: jobA } = await createGame(env, credential, ['2g2f', '8c8d']);
+    const cancelHook = cancelJobAfterPly(env, credential, jobA, d1, sqlite);
+
+    const first = fakeBatch([{ v: 1, jobId: jobA }]);
+    await handleJobBatch(first.batch, env);
+    expect(cancelHook.done()).toBe(true);
+    expect(first.messages[0].acked).toBe(true);
+    // Without a sessionId there is nothing to cancel; the wedged driver stays busy.
+    expect(cancels).toEqual([]);
+
+    const { jobId: jobB } = await createGame(env, credential, ['2g2f']);
+    const second = fakeBatch([{ v: 1, jobId: jobB }]);
+    await handleJobBatch(second.batch, env);
+    expect(second.messages[0].retried).toBe(true);
+    expect(second.messages[0].acked).toBe(false);
+    expect(second.messages[0].retryOptions).toEqual({ delaySeconds: JOB_CONSUMER.retryDelaySeconds });
+    const jobBView = await (await handleV1Request(get(`/v1/jobs/${jobB}`, credential), env)).json() as { status: string };
+    expect(jobBView.status).toBe('running');
+    expect(calls.map((call) => call.path)).toEqual(['/session', '/session']);
+  });
+
+  it('completes against a driver whose header has no sessionId and never cancels', async () => {
+    const cancels: unknown[] = [];
+    const { env } = consumerEnv((body) => sessionLines(body.positions, 'free'), undefined, (body) => {
+      cancels.push(body.sessionId);
+      return new Response(JSON.stringify({ schemaVersion: 1, cancelled: false }), { status: 200 });
+    });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(batch, env);
+    expect(messages[0].acked).toBe(true);
+    expect(cancels).toEqual([]);
+    const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as { status: string };
+    expect(job.status).toBe('completed');
+  });
+
+  it('fails the job when the session header sessionId is malformed', async () => {
+    const { env } = consumerEnv((body) => sessionLines(body.positions, 'free', { sessionId: 'not-a-session-id' }));
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(batch, env);
+    expect(messages[0].acked).toBe(true);
+    const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as {
+      status: string; failure: { code: string };
+    };
+    expect(job.status).toBe('failed');
+    expect(job.failure.code).toBe('contract_violation');
+  });
+
+  it('cancels the driver session when the consumer deadline cuts the stream', async () => {
+    let fakeNow = 1_700_000_000_000;
+    const { d1 } = createTestDb();
+    const probe = queueProbe();
+    const calls: SessionCall[] = [];
+    const sessionId = 'ef'.repeat(16);
+    const cancels: unknown[] = [];
+    const env = makeJobsEnv({
+      d1,
+      queue: probe.queue,
+      normal: sessionBinding('ANALYSIS_CONTAINER', calls,
+        (body) => new Response(sessionLines(body.positions, 'free', { sessionId })),
+        (body) => {
+          cancels.push(body.sessionId);
+          return new Response(JSON.stringify({ schemaVersion: 1, cancelled: true }), { status: 200 });
+        }),
+    });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f', '8c8d', '2f2e']);
+    // Expire the budget as the first result commit lands (same pattern as the
+    // buffered-lines deadline test above).
+    const originalBatch = d1.batch.bind(d1);
+    let bumped = false;
+    d1.batch = (async (statements: Parameters<typeof originalBatch>[0]) => {
+      const result = await originalBatch(statements);
+      if (!bumped) {
+        bumped = true;
+        fakeNow += JOB_CONSUMER.budgetMs + 60_000;
+      }
+      return result;
+    }) as typeof d1.batch;
+    const first = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(first.batch, env, { now: () => fakeNow });
+    expect(first.messages[0].acked).toBe(true);
+    expect(cancels).toEqual([sessionId]);
+    // Admission plus the continuation send both precede the ack.
+    expect(probe.sent).toEqual([{ v: 1, jobId }, { v: 1, jobId }]);
+    const partial = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as Record<string, unknown>;
+    expect(partial.status).toBe('running');
+    expect(partial.nextPly).toBe(1);
+  });
+
+  it.each<[string, CancelScript]>([
+    ['rejects', async () => { throw new Error('transport down'); }],
+    ['non-200', async () => new Response('busy', { status: 500 })],
+    ['hangs', () => new Promise<Response>(() => {})],
+  ])('ignores a session cancel that %s, leaving the outcome unchanged', async (_name, onCancel) => {
+    const { d1, sqlite } = createTestDb();
+    const probe = queueProbe();
+    const calls: SessionCall[] = [];
+    const sessionId = 'ab'.repeat(16);
+    const env = makeJobsEnv({
+      d1,
+      queue: probe.queue,
+      normal: sessionBinding('ANALYSIS_CONTAINER', calls,
+        (body) => sessionLines(body.positions, 'free', { sessionId }),
+        onCancel),
+    });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f', '8c8d']);
+    const cancelHook = cancelJobAfterPly(env, credential, jobId, d1, sqlite);
+    const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(batch, env, { sessionCancelTimeoutMs: 25 });
+    expect(cancelHook.done()).toBe(true);
+    // The cancelled job acks DONE regardless of how the cancel fetch behaved.
+    expect(messages[0].acked).toBe(true);
+    expect(messages[0].retried).toBe(false);
+    expect(calls.map((call) => call.path)).toEqual(['/session', '/session/cancel']);
+  });
+
+  it('delays standard retries by attempt and still exhausts into a failed job', async () => {
+    const { env } = consumerEnv(() => new Response('driver unavailable', { status: 503 }));
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const first = fakeBatch([{ v: 1, jobId }], 1);
+    await handleJobBatch(first.batch, env);
+    expect(first.messages[0].retried).toBe(true);
+    expect(first.messages[0].retryOptions).toEqual({ delaySeconds: JOB_CONSUMER.retryDelaySeconds });
+    const retriable = fakeBatch([{ v: 1, jobId }], JOB_CONSUMER.maxRetries);
+    await handleJobBatch(retriable.batch, env);
+    expect(retriable.messages[0].retried).toBe(true);
+    expect(retriable.messages[0].retryOptions).toEqual({ delaySeconds: JOB_CONSUMER.retryDelaySeconds * JOB_CONSUMER.maxRetries });
+    const exhausted = fakeBatch([{ v: 1, jobId }], JOB_CONSUMER.maxRetries + 1);
+    await handleJobBatch(exhausted.batch, env);
+    expect(exhausted.messages[0].acked).toBe(true);
+    expect(exhausted.messages[0].retried).toBe(false);
+    const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as {
+      status: string; failure: { code: string };
+    };
+    expect(job.status).toBe('failed');
+    expect(job.failure.code).toBe('retry_exhausted');
   });
 
   it('acks malformed messages and unknown jobs without a session', async () => {

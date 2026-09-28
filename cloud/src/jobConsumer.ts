@@ -25,6 +25,9 @@ import type { AnalysisContainer, BenchmarkStandard3Container, Env, JobQueueMessa
 
 const SESSION_CONTRACT = 'analysis-session-v1';
 const SESSION_PATH = '/session';
+const SESSION_CANCEL_PATH = '/session/cancel';
+const SESSION_CANCEL_TIMEOUT_MS = 5000;
+const SESSION_ID_PATTERN = /^[0-9a-f]{32}$/u;
 const MAX_SESSION_LINE_BYTES = 64 * 1024;
 /** The driver rejects sessions above this position count; extra positions are processed by a later session in the same delivery. */
 const MAX_SESSION_POSITIONS = 512;
@@ -55,6 +58,8 @@ const RETRY: Outcome = { kind: 'retry' };
 export interface JobConsumerDeps {
   now?: () => number;
   waitUntil?: (task: Promise<unknown>) => void;
+  /** Bound for the best-effort /session/cancel fetch; overridable so tests stay fast. */
+  sessionCancelTimeoutMs?: number;
 }
 
 function iso(now: number): string {
@@ -89,6 +94,70 @@ async function cancelBody(response: Response): Promise<void> {
   }
 }
 
+/**
+ * Container POST whose response always has an owner (Issue #30 rules): the
+ * request carries the caller's AbortController signal, a response that arrives
+ * after the consumer stopped waiting gets its body cancelled, and the pending
+ * fetch is tied to waitUntil so it can still settle. Returns the Response,
+ * SESSION_TIMEOUT when the deadline elapsed first, or null when the fetch
+ * rejected.
+ */
+async function ownedContainerPost(
+  container: RoutedContainer,
+  path: string,
+  body: unknown,
+  controller: AbortController,
+  timeoutMs: number,
+  waitUntil?: JobConsumerDeps['waitUntil'],
+): Promise<Response | typeof SESSION_TIMEOUT | null> {
+  let abandoned = false;
+  try {
+    const pending = container.fetch(new Request(`http://analysis-container${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify(body),
+    })).then(async (lateResponse) => {
+      if (abandoned) await cancelBody(lateResponse);
+      return lateResponse;
+    });
+    waitUntil?.(pending.then(() => undefined, () => undefined));
+    const response = await beforeDeadline(pending, timeoutMs);
+    if (response === SESSION_TIMEOUT) {
+      abandoned = true;
+      controller.abort();
+      return SESSION_TIMEOUT;
+    }
+    return response;
+  } catch {
+    abandoned = true;
+    controller.abort();
+    return null;
+  }
+}
+
+/**
+ * Best-effort stop of a driver session that was left without its `end` line.
+ * Never throws and never changes the delivery outcome: a missed cancel is
+ * covered by the next /session superseding the orphaned one.
+ */
+async function cancelDriverSession(
+  container: RoutedContainer,
+  sessionId: string,
+  timeoutMs: number,
+  waitUntil?: JobConsumerDeps['waitUntil'],
+): Promise<void> {
+  try {
+    const controller = new AbortController();
+    const response = await ownedContainerPost(
+      container, SESSION_CANCEL_PATH, { sessionId }, controller, timeoutMs, waitUntil,
+    );
+    if (response !== null && response !== SESSION_TIMEOUT) await cancelBody(response);
+  } catch {
+    // Best-effort cleanup never fails the delivery.
+  }
+}
+
 function terminalResult(sfen: string, terminal: 'checkmate' | 'no-legal-moves', profile: JobProfile): Record<string, unknown> {
   return {
     schemaVersion: 1,
@@ -110,17 +179,21 @@ function sessionContainer(env: Env, profile: JobProfile): RoutedContainer {
   return getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, JOB_CONTAINER_NAMES['standard-2']);
 }
 
-function isSessionHeader(value: unknown, job: JobRow, profile: JobProfile): boolean {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+/** Returns the driver's session id (absent on old images), or null when the header violates the contract. */
+function parseSessionHeader(value: unknown, job: JobRow, profile: JobProfile): { sessionId: string | null } | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const line = value as Record<string, unknown>;
-  if (line.type !== 'session' || line.contract !== SESSION_CONTRACT || line.profileId !== job.profile_id) return false;
-  if (!Number.isSafeInteger(line.engineLaunch) || (line.engineLaunch as number) < 1) return false;
-  if (typeof line.driverBootId !== 'string' || !/^[0-9a-f]{32}$/u.test(line.driverBootId)) return false;
-  if (!hasExpectedIdentity(line.identity)) return false;
+  if (line.type !== 'session' || line.contract !== SESSION_CONTRACT || line.profileId !== job.profile_id) return null;
+  if (!Number.isSafeInteger(line.engineLaunch) || (line.engineLaunch as number) < 1) return null;
+  if (typeof line.driverBootId !== 'string' || !/^[0-9a-f]{32}$/u.test(line.driverBootId)) return null;
+  if (!hasExpectedIdentity(line.identity)) return null;
   const conditions = line.conditions;
-  if (typeof conditions !== 'object' || conditions === null || Array.isArray(conditions)) return false;
+  if (typeof conditions !== 'object' || conditions === null || Array.isArray(conditions)) return null;
   const record = conditions as Record<string, unknown>;
-  return Object.entries(profile.conditions).every(([key, expected]) => record[key] === expected);
+  if (!Object.entries(profile.conditions).every(([key, expected]) => record[key] === expected)) return null;
+  const sessionId = line.sessionId;
+  if (sessionId !== undefined && (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId))) return null;
+  return { sessionId: sessionId ?? null };
 }
 
 async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
@@ -139,44 +212,29 @@ async function runSession(
   positions: { ply: number; sfen: string; legalMoveCount: number }[],
   sessionDeadline: number,
   now: () => number,
-  waitUntil?: JobConsumerDeps['waitUntil'],
+  deps: JobConsumerDeps = {},
 ): Promise<Outcome> {
+  const waitUntil = deps.waitUntil;
+  const cancelTimeoutMs = deps.sessionCancelTimeoutMs ?? SESSION_CANCEL_TIMEOUT_MS;
   const container = sessionContainer(env, profile);
   const deadlineMs = sessionDeadline - now();
   const controller = new AbortController();
-  let abandoned = false;
-  let response: Response;
-  try {
-    const pending = container.fetch(new Request(`http://analysis-container${SESSION_PATH}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        contract: SESSION_CONTRACT,
-        profileId: job.profile_id,
-        conditions: profile.conditions,
-        positions,
-        deadlineMs,
-      }),
-    })).then(async (lateResponse) => {
-      // Abort can race headers (or be ignored by a transport). The response
-      // still has an owner after the consumer has returned RETRY.
-      if (abandoned) await cancelBody(lateResponse);
-      return lateResponse;
-    });
-    waitUntil?.(pending.then(() => undefined, () => undefined));
-    const started = await beforeDeadline(pending, deadlineMs);
-    if (started === SESSION_TIMEOUT) {
-      abandoned = true;
-      controller.abort();
-      return RETRY;
-    }
-    response = started;
-  } catch {
-    abandoned = true;
-    controller.abort();
-    return RETRY;
-  }
+  const started = await ownedContainerPost(
+    container,
+    SESSION_PATH,
+    {
+      contract: SESSION_CONTRACT,
+      profileId: job.profile_id,
+      conditions: profile.conditions,
+      positions,
+      deadlineMs,
+    },
+    controller,
+    deadlineMs,
+    waitUntil,
+  );
+  if (started === null || started === SESSION_TIMEOUT) return RETRY;
+  const response = started;
   if (!response.ok) {
     controller.abort();
     await cancelBody(response);
@@ -197,6 +255,7 @@ async function runSession(
   const decoder = new TextDecoder();
   let buffer = '';
   let headerSeen = false;
+  let sessionId: string | null = null;
   let received = 0;
   let progress = 0;
   let endReason: string | null = null;
@@ -248,10 +307,12 @@ async function runSession(
         return { kind: 'fail', code: 'contract_violation', message: 'Session line is not valid JSON.' };
       }
       if (!headerSeen) {
-        if (!isSessionHeader(line, job, profile)) {
+        const header = parseSessionHeader(line, job, profile);
+        if (!header) {
           return { kind: 'fail', code: 'contract_violation', message: 'Invalid session header.' };
         }
         headerSeen = true;
+        sessionId = header.sessionId;
         continue;
       }
       const record = line as Record<string, unknown>;
@@ -320,6 +381,12 @@ async function runSession(
     controller.abort();
     await cancelReader(reader);
     reader.releaseLock();
+    // Leaving without the driver's `end` line orphans the session: the driver
+    // keeps its busy guard until something stops it (Issue #29). Ask it to
+    // stop our session so the next job does not burn its retries on 409 busy.
+    if (sessionId !== null && endReason === null) {
+      await cancelDriverSession(container, sessionId, cancelTimeoutMs, waitUntil);
+    }
   }
 
   if (endReason === 'complete' && received === positions.length) return RESUME;
@@ -335,7 +402,7 @@ async function driveJob(
   jobId: string,
   budgetDeadline: number,
   now: () => number,
-  waitUntil?: JobConsumerDeps['waitUntil'],
+  deps: JobConsumerDeps,
 ): Promise<Outcome> {
   for (;;) {
     if (budgetDeadline - now() <= 0) return CONTINUE;
@@ -382,7 +449,7 @@ async function driveJob(
     if (sessionDeadline - now() <= 0) return RETRY;
     await store.markRunning(jobId, iso(now()));
 
-    const outcome = await runSession(env, store, job, profile, positions, sessionDeadline, now, waitUntil);
+    const outcome = await runSession(env, store, job, profile, positions, sessionDeadline, now, deps);
     if (outcome.kind !== 'resume') return outcome;
   }
 }
@@ -397,6 +464,11 @@ async function persistFailed(store: JobStore, jobId: string, code: string, messa
   }
 }
 
+/** Backoff between redeliveries (Issue #29): a wedged driver session needs time to release the container's busy guard before the next delivery arrives. */
+function retryMessage(message: Message<JobQueueMessage>): void {
+  message.retry({ delaySeconds: JOB_CONSUMER.retryDelaySeconds * message.attempts });
+}
+
 async function retryOrFinish(
   store: JobStore,
   message: Message<JobQueueMessage>,
@@ -408,10 +480,10 @@ async function retryOrFinish(
   // attempts === maxRetries + 1 is the final one.
   if (message.attempts > JOB_CONSUMER.maxRetries) {
     if (await persistFailed(store, jobId, 'retry_exhausted', 'The delivery reached the configured retry limit.', now)) message.ack();
-    else message.retry();
+    else retryMessage(message);
     return;
   }
-  message.retry();
+  retryMessage(message);
 }
 
 export async function handleJobBatch(
@@ -430,7 +502,7 @@ export async function handleJobBatch(
     if (!env.JOBS_DB) {
       // Nothing can be persisted, so the delivery is never confirmed: let the
       // standard retry exhaust into the dead-letter queue instead of acking.
-      message.retry();
+      retryMessage(message);
       continue;
     }
     const store = new JobStore(new D1RawDb(env.JOBS_DB));
@@ -450,7 +522,7 @@ export async function handleJobBatch(
     const budgetDeadline = now() + JOB_CONSUMER.budgetMs;
     let outcome: Outcome;
     try {
-      outcome = await driveJob(env, store, jobId, budgetDeadline, now, deps.waitUntil);
+      outcome = await driveJob(env, store, jobId, budgetDeadline, now, deps);
     } catch {
       outcome = RETRY;
     }
@@ -478,7 +550,7 @@ export async function handleJobBatch(
         break;
       case 'fail':
         if (await persistFailed(store, jobId, outcome.code, outcome.message, now)) message.ack();
-        else message.retry();
+        else retryMessage(message);
         break;
     }
   }
