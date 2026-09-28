@@ -16,6 +16,10 @@ Issue #21は、このstaging Workerへ公開`/v1/*`の非同期jobバックエ�
 
 2026-09-27に`3e6aaa6`をWorkerだけdeployし、version `5e06897d-010f-4ebc-ba9d-cd970ca386ee`で両制限の無効化を確認した。同一ownerで6.433秒間にFreeを6局受け付け（終局局面を使用した受付・取消検証）、未許可の新規ownerでPrecision 27/27局面、別の新規ownerでFree 27/27局面の実エンジン解析が完了した。認証・所有者分離・同時active制限・513手拒否・実行中の部分結果・取消後20秒の結果不変も確認済み。既存imageとsecretを維持し、Container更新・DB migrationは行っていない。Cloud型検査・Vitest 101 tests・Python 95 tests、アプリ共通の型検査・264 testsを通過し、GitHub CIでも同候補の全チェックが成功した（[PR #35](https://github.com/phni3j9a/meeshogi/pull/35)）。
 
+### Issue #29 / #36: 取消直後のjob失敗とPvInterval
+
+2026-09-28、取消直後の次jobが`retry_exhausted`になる問題と、短時間探索の`incomplete`を修正した。driverは取り残されたsessionを`/session/cancel`または次の`/session`で止め、consumerは再配送を遅らせる。エンジンは`PvInterval 0`で動かす。`8e46077`をstagingへdeployし、取消直後（0.1ms未満）に作った次jobがFree 3/3・Precision 1/1で完走した。実戦3局では、Free（1000ms）のincompleteが変更前2回の計10件から0件になった。Precisionの所要時間とincomplete 0は変わらない。Precisionのnodes中央値は約12%低かったが、原因は確認していない。`driverVersion`は据え置いた。Cloud型検査・Vitest 111 tests・Python 107 tests、アプリ264 testsを通過した。モバイルは変更しておらず、両OSの受入は行っていない。詳細は[Issue #29/#36レポート](CLOUD-SESSION-AND-PVINTERVAL.md)を参照する。
+
 ### Issue #30: Containerの停止不良
 
 2026-09-27、SIGTERMを受けても終了しないPython PID 1と、consumerの未解放応答を修正した。`sleepAfter=5m`、Free/Precision条件、利用制限、構成を維持する。ローカルの実HTTP・子プロセス・workerd回帰検証とstaging受入の証拠、deploy時の旧image対処、使用量の確認方法は[Container停止レポート](CLOUD-CONTAINER-LIFECYCLE.md)を参照する。ユーザーの今後の方針はCloudのみだが、深掘り・分岐の詳細は未決であり、今回Sekirei撤去や構成最適化は行わない。

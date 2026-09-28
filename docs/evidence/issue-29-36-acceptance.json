@@ -1,0 +1,727 @@
+{
+  "schemaVersion": 1,
+  "environment": "meeshogi-analysis-mvp-staging",
+  "issues": [
+    29,
+    36
+  ],
+  "codeCommit": "8e460778a2143a3d662c4c31d2f6f4ea11a69112",
+  "imageDigest": "sha256:876f0ab97db8a9376e6c156f321a4bfe4b5b0ecfb489db27518194d64c541791",
+  "imageBuildId": "a82748548c28431aae50a415aba06cfb",
+  "workerVersionServing": "28ed799e-2bb5-4f82-a14c-9daf9f6e1e6d",
+  "deploy": {
+    "predeployRecordedAt": "2026-09-28T15:14:28.004177+00:00",
+    "predeployActiveJobs": 0,
+    "predeployInstances": {
+      "freeApp": "inactive",
+      "standard3App": "inactive"
+    },
+    "firstHealthBuildId": "2e01f7f16caf46a98701cef50f437108",
+    "afterIdleWaitHealthBuildId": "a82748548c28431aae50a415aba06cfb",
+    "note": "Right after deploy /internal/health still returned the previous build; after ~6 minutes without requests it returned the new build. No instance was destroyed."
+  },
+  "issue29CancelThenImmediateNextJob": [
+    {
+      "trial": "free-1",
+      "outcome": "pass",
+      "cancelledJob": {
+        "jobId": "job_b137bc4c707c5fa5cce02ab9",
+        "createdAt": "2026-09-28T15:25:58.091034+00:00",
+        "nextPlyAtCancel": 3,
+        "cancelSentAt": "2026-09-28T15:26:06.162040+00:00",
+        "cancelConfirmedAt": "2026-09-28T15:26:06.379467+00:00"
+      },
+      "nextJob": {
+        "jobId": "job_54bbc0ae58c781e2bf572a65",
+        "createdAt": "2026-09-28T15:26:06.379556+00:00",
+        "finishedAt": "2026-09-28T15:26:37.952Z",
+        "status": "completed",
+        "nextPly": 27,
+        "totalPlies": 27,
+        "resultCounts": {
+          "success": 27
+        }
+      },
+      "driverSessionsBefore": {
+        "active": false,
+        "started": 0,
+        "cancelled": 0,
+        "preempted": 0
+      },
+      "driverSessionsAfter": {
+        "active": false,
+        "started": 2,
+        "cancelled": 1,
+        "preempted": 0
+      }
+    },
+    {
+      "trial": "free-2",
+      "outcome": "pass",
+      "cancelledJob": {
+        "jobId": "job_d18c65061289418164275938",
+        "createdAt": "2026-09-28T15:26:39.257142+00:00",
+        "nextPlyAtCancel": 3,
+        "cancelSentAt": "2026-09-28T15:26:45.769844+00:00",
+        "cancelConfirmedAt": "2026-09-28T15:26:45.922321+00:00"
+      },
+      "nextJob": {
+        "jobId": "job_d0e4de58923146e10e522d6f",
+        "createdAt": "2026-09-28T15:26:45.922405+00:00",
+        "finishedAt": "2026-09-28T15:27:16.814Z",
+        "status": "completed",
+        "nextPly": 27,
+        "totalPlies": 27,
+        "resultCounts": {
+          "success": 27
+        }
+      },
+      "driverSessionsBefore": {
+        "active": false,
+        "started": 2,
+        "cancelled": 1,
+        "preempted": 0
+      },
+      "driverSessionsAfter": {
+        "active": false,
+        "started": 4,
+        "cancelled": 2,
+        "preempted": 0
+      }
+    },
+    {
+      "trial": "free-3",
+      "outcome": "pass",
+      "cancelledJob": {
+        "jobId": "job_7f27f9aa397dc2ded27ca3c5",
+        "createdAt": "2026-09-28T15:27:18.544983+00:00",
+        "nextPlyAtCancel": 3,
+        "cancelSentAt": "2026-09-28T15:27:24.765790+00:00",
+        "cancelConfirmedAt": "2026-09-28T15:27:24.928770+00:00"
+      },
+      "nextJob": {
+        "jobId": "job_56c684f231006e25bfa9181f",
+        "createdAt": "2026-09-28T15:27:24.928867+00:00",
+        "finishedAt": "2026-09-28T15:27:55.348Z",
+        "status": "completed",
+        "nextPly": 27,
+        "totalPlies": 27,
+        "resultCounts": {
+          "success": 27
+        }
+      },
+      "driverSessionsBefore": {
+        "active": false,
+        "started": 4,
+        "cancelled": 2,
+        "preempted": 0
+      },
+      "driverSessionsAfter": {
+        "active": false,
+        "started": 6,
+        "cancelled": 3,
+        "preempted": 0
+      }
+    },
+    {
+      "trial": "precision-p1",
+      "outcome": "pass",
+      "cancelledJob": {
+        "jobId": "job_c079772728ce985148e25049",
+        "createdAt": "2026-09-28T15:27:57.185945+00:00",
+        "nextPlyAtCancel": 1,
+        "cancelSentAt": "2026-09-28T15:28:08.873566+00:00",
+        "cancelConfirmedAt": "2026-09-28T15:28:09.032215+00:00"
+      },
+      "nextJob": {
+        "jobId": "job_b2639d234b9f7306d6d73378",
+        "createdAt": "2026-09-28T15:28:09.032297+00:00",
+        "finishedAt": "2026-09-28T15:28:41.430Z",
+        "status": "completed",
+        "nextPly": 5,
+        "totalPlies": 5,
+        "resultCounts": {
+          "success": 5
+        }
+      },
+      "driverSessionsBefore": null,
+      "driverSessionsAfter": null
+    }
+  ],
+  "issue36": {
+    "hostPvIntervalAB": {
+      "positions": "cloud/bench/dataset/positions.json every 3rd entry (20 public positions)",
+      "host": "Core i5-8500B 6 cores",
+      "runs": [
+        {
+          "profile": "free",
+          "pvInterval": 300,
+          "positions": 20,
+          "incomplete": 1,
+          "lastPvLineBound": 2,
+          "infoLinesMedian": 6.0,
+          "infoLinesMax": 8,
+          "infoBytesMedian": 1025.5,
+          "infoBytesMax": 1517,
+          "parseMsMedian": 0.172,
+          "parseMsMax": 0.233,
+          "wallMsMedian": 1000.7,
+          "wallMsMax": 1001.7,
+          "completedDepthMedian": 17
+        },
+        {
+          "profile": "free",
+          "pvInterval": 0,
+          "positions": 20,
+          "incomplete": 0,
+          "lastPvLineBound": 2,
+          "infoLinesMedian": 36.0,
+          "infoLinesMax": 60,
+          "infoBytesMedian": 5088.5,
+          "infoBytesMax": 10104,
+          "parseMsMedian": 0.882,
+          "parseMsMax": 1.615,
+          "wallMsMedian": 1000.5,
+          "wallMsMax": 1001.3,
+          "completedDepthMedian": 16.5
+        },
+        {
+          "profile": "precision",
+          "pvInterval": 300,
+          "positions": 20,
+          "incomplete": 0,
+          "lastPvLineBound": 3,
+          "infoLinesMedian": 21.0,
+          "infoLinesMax": 33,
+          "infoBytesMedian": 4183.5,
+          "infoBytesMax": 6649,
+          "parseMsMedian": 0.534,
+          "parseMsMax": 0.813,
+          "wallMsMedian": 5000.4,
+          "wallMsMax": 5001.2,
+          "completedDepthMedian": 20.5
+        },
+        {
+          "profile": "precision",
+          "pvInterval": 0,
+          "positions": 20,
+          "incomplete": 0,
+          "lastPvLineBound": 0,
+          "infoLinesMedian": 66.0,
+          "infoLinesMax": 123,
+          "infoBytesMedian": 10261.5,
+          "infoBytesMax": 18257,
+          "parseMsMedian": 1.525,
+          "parseMsMax": 2.81,
+          "wallMsMedian": 5000.4,
+          "wallMsMax": 5002.1,
+          "completedDepthMedian": 20.5
+        }
+      ],
+      "precisionNodesRerun": [
+        {
+          "profile": "precision",
+          "pvInterval": 300,
+          "positions": 20,
+          "incomplete": 0,
+          "lastPvLineBound": 4,
+          "infoLinesMedian": 21.0,
+          "infoLinesMax": 36,
+          "infoBytesMedian": 3868.0,
+          "infoBytesMax": 6437,
+          "parseMsMedian": 0.51,
+          "parseMsMax": 0.849,
+          "wallMsMedian": 5000.2,
+          "wallMsMax": 5001.4,
+          "completedDepthMedian": 20.0,
+          "maxNodesMedian": 6574572.0,
+          "lastEngineTimeMsMedian": 5000.0,
+          "adoptedNodesMedian": 5663098.5
+        },
+        {
+          "profile": "precision",
+          "pvInterval": 0,
+          "positions": 20,
+          "incomplete": 0,
+          "lastPvLineBound": 3,
+          "infoLinesMedian": 66.0,
+          "infoLinesMax": 129,
+          "infoBytesMedian": 10244.0,
+          "infoBytesMax": 19101,
+          "parseMsMedian": 1.425,
+          "parseMsMax": 2.885,
+          "wallMsMedian": 5000.3,
+          "wallMsMax": 5002.0,
+          "completedDepthMedian": 20.0,
+          "maxNodesMedian": 6574274.0,
+          "lastEngineTimeMsMedian": 5000.0,
+          "adoptedNodesMedian": 5601802.5
+        }
+      ]
+    },
+    "stagingBeforeAfter": {
+      "afterCutoffUtc": "2026-09-28T15:00:00Z",
+      "games": "3 private user games already used in docs/ANALYSIS-METHOD-STUDY.md (identified by index only)",
+      "perJob": [
+        {
+          "job": "job_5c293a6c",
+          "profile": "free",
+          "game": 0,
+          "phase": "before",
+          "created": "2026-09-28T11:06:43",
+          "plies": 97,
+          "incomplete": 2,
+          "success": 94,
+          "elapsedMsMedian": 1051.0,
+          "elapsedMsMax": 1054,
+          "depthMedian": 18.0,
+          "nodesMedian": 741459.0
+        },
+        {
+          "job": "job_3bad1847",
+          "profile": "free",
+          "game": 1,
+          "phase": "before",
+          "created": "2026-09-28T11:08:33",
+          "plies": 102,
+          "incomplete": 1,
+          "success": 100,
+          "elapsedMsMedian": 1051,
+          "elapsedMsMax": 1055,
+          "depthMedian": 18.0,
+          "nodesMedian": 807232
+        },
+        {
+          "job": "job_20b8d481",
+          "profile": "free",
+          "game": 2,
+          "phase": "before",
+          "created": "2026-09-28T11:10:23",
+          "plies": 126,
+          "incomplete": 1,
+          "success": 124,
+          "elapsedMsMedian": 1051,
+          "elapsedMsMax": 1053,
+          "depthMedian": 18.0,
+          "nodesMedian": 778040
+        },
+        {
+          "job": "job_91aaed2d",
+          "profile": "precision",
+          "game": 0,
+          "phase": "before",
+          "created": "2026-09-28T11:17:24",
+          "plies": 97,
+          "incomplete": 0,
+          "success": 96,
+          "elapsedMsMedian": 5051.0,
+          "elapsedMsMax": 5053,
+          "depthMedian": 21.0,
+          "nodesMedian": 7802744.5
+        },
+        {
+          "job": "job_14d57c6e",
+          "profile": "free",
+          "game": 0,
+          "phase": "before",
+          "created": "2026-09-28T11:50:24",
+          "plies": 97,
+          "incomplete": 1,
+          "success": 95,
+          "elapsedMsMedian": 1051.0,
+          "elapsedMsMax": 1055,
+          "depthMedian": 17,
+          "nodesMedian": 769751.5
+        },
+        {
+          "job": "job_f0c5f3bb",
+          "profile": "free",
+          "game": 1,
+          "phase": "before",
+          "created": "2026-09-28T11:52:14",
+          "plies": 102,
+          "incomplete": 3,
+          "success": 98,
+          "elapsedMsMedian": 1051,
+          "elapsedMsMax": 1055,
+          "depthMedian": 18.0,
+          "nodesMedian": 804898
+        },
+        {
+          "job": "job_4c11b748",
+          "profile": "free",
+          "game": 2,
+          "phase": "before",
+          "created": "2026-09-28T11:54:04",
+          "plies": 126,
+          "incomplete": 2,
+          "success": 123,
+          "elapsedMsMedian": 1051,
+          "elapsedMsMax": 1052,
+          "depthMedian": 18,
+          "nodesMedian": 768131
+        },
+        {
+          "job": "job_651b09b0",
+          "profile": "precision",
+          "game": 0,
+          "phase": "before",
+          "created": "2026-09-28T11:56:19",
+          "plies": 97,
+          "incomplete": 0,
+          "success": 96,
+          "elapsedMsMedian": 5051.0,
+          "elapsedMsMax": 5053,
+          "depthMedian": 21.0,
+          "nodesMedian": 7529199.0
+        },
+        {
+          "job": "job_72803efb",
+          "profile": "precision",
+          "game": 1,
+          "phase": "before",
+          "created": "2026-09-28T12:11:36",
+          "plies": 102,
+          "incomplete": 0,
+          "success": 101,
+          "elapsedMsMedian": 5051,
+          "elapsedMsMax": 5054,
+          "depthMedian": 21,
+          "nodesMedian": 7566578
+        },
+        {
+          "job": "job_1623234e",
+          "profile": "precision",
+          "game": 2,
+          "phase": "before",
+          "created": "2026-09-28T12:19:51",
+          "plies": 126,
+          "incomplete": 0,
+          "success": 125,
+          "elapsedMsMedian": 5051,
+          "elapsedMsMax": 5052,
+          "depthMedian": 20,
+          "nodesMedian": 7447986
+        },
+        {
+          "job": "job_46299b7e",
+          "profile": "free",
+          "game": 0,
+          "phase": "after",
+          "created": "2026-09-28T15:30:54",
+          "plies": 97,
+          "incomplete": 0,
+          "success": 96,
+          "elapsedMsMedian": 1051.0,
+          "elapsedMsMax": 1052,
+          "depthMedian": 18.0,
+          "nodesMedian": 768756.0
+        },
+        {
+          "job": "job_88fa4467",
+          "profile": "free",
+          "game": 1,
+          "phase": "after",
+          "created": "2026-09-28T15:32:37",
+          "plies": 102,
+          "incomplete": 0,
+          "success": 101,
+          "elapsedMsMedian": 1051,
+          "elapsedMsMax": 1052,
+          "depthMedian": 18,
+          "nodesMedian": 849898
+        },
+        {
+          "job": "job_fc0609c7",
+          "profile": "free",
+          "game": 2,
+          "phase": "after",
+          "created": "2026-09-28T15:34:24",
+          "plies": 126,
+          "incomplete": 0,
+          "success": 125,
+          "elapsedMsMedian": 1051,
+          "elapsedMsMax": 1052,
+          "depthMedian": 18,
+          "nodesMedian": 739384
+        },
+        {
+          "job": "job_96cebb81",
+          "profile": "precision",
+          "game": 0,
+          "phase": "after",
+          "created": "2026-09-28T15:36:32",
+          "plies": 97,
+          "incomplete": 0,
+          "success": 96,
+          "elapsedMsMedian": 5051.0,
+          "elapsedMsMax": 5053,
+          "depthMedian": 20.0,
+          "nodesMedian": 6623260.0
+        },
+        {
+          "job": "job_88197058",
+          "profile": "precision",
+          "game": 1,
+          "phase": "after",
+          "created": "2026-09-28T15:44:38",
+          "plies": 102,
+          "incomplete": 0,
+          "success": 101,
+          "elapsedMsMedian": 5051,
+          "elapsedMsMax": 5052,
+          "depthMedian": 21,
+          "nodesMedian": 6694242
+        },
+        {
+          "job": "job_7df04eed",
+          "profile": "precision",
+          "game": 2,
+          "phase": "after",
+          "created": "2026-09-28T15:52:50",
+          "plies": 126,
+          "incomplete": 0,
+          "success": 125,
+          "elapsedMsMedian": 5051,
+          "elapsedMsMax": 5053,
+          "depthMedian": 19,
+          "nodesMedian": 6604062
+        }
+      ],
+      "totals": [
+        {
+          "profile": "free",
+          "phase": "before",
+          "jobs": 6,
+          "positions": 644,
+          "incomplete": 10,
+          "elapsedMsMedian": 1051.0,
+          "elapsedMsP90": 1052.0,
+          "elapsedMsMax": 1055,
+          "depthMedian": 18.0,
+          "nodesMedian": 784185.5
+        },
+        {
+          "profile": "free",
+          "phase": "after",
+          "jobs": 3,
+          "positions": 322,
+          "incomplete": 0,
+          "elapsedMsMedian": 1051.0,
+          "elapsedMsP90": 1051.0,
+          "elapsedMsMax": 1052,
+          "depthMedian": 18.0,
+          "nodesMedian": 804400.0
+        },
+        {
+          "profile": "precision",
+          "phase": "before",
+          "jobs": 4,
+          "positions": 418,
+          "incomplete": 0,
+          "elapsedMsMedian": 5051.0,
+          "elapsedMsP90": 5052.0,
+          "elapsedMsMax": 5054,
+          "depthMedian": 21.0,
+          "nodesMedian": 7535933.5
+        },
+        {
+          "profile": "precision",
+          "phase": "after",
+          "jobs": 3,
+          "positions": 322,
+          "incomplete": 0,
+          "elapsedMsMedian": 5051.0,
+          "elapsedMsP90": 5052.0,
+          "elapsedMsMax": 5053,
+          "depthMedian": 20.0,
+          "nodesMedian": 6622977.5
+        }
+      ],
+      "freeIncompletePlies": [
+        {
+          "game": 0,
+          "incompletePliesBefore": [
+            75,
+            85
+          ],
+          "afterStatus": [
+            [
+              "success",
+              "success"
+            ]
+          ]
+        },
+        {
+          "game": 1,
+          "incompletePliesBefore": [
+            74,
+            75,
+            91,
+            92
+          ],
+          "afterStatus": [
+            [
+              "success",
+              "success",
+              "success",
+              "success"
+            ]
+          ]
+        },
+        {
+          "game": 2,
+          "incompletePliesBefore": [
+            54,
+            57,
+            60
+          ],
+          "afterStatus": [
+            [
+              "success",
+              "success",
+              "success"
+            ]
+          ]
+        }
+      ],
+      "bestMoveAgreement": [
+        {
+          "profile": "free",
+          "game": 0,
+          "pair": "before#0-before#1",
+          "common": 94,
+          "sameBest": 68,
+          "rate": 0.723,
+          "cpAbsDiffMedian": 33
+        },
+        {
+          "profile": "free",
+          "game": 0,
+          "pair": "before#0-after#2",
+          "common": 94,
+          "sameBest": 68,
+          "rate": 0.723,
+          "cpAbsDiffMedian": 30.0
+        },
+        {
+          "profile": "free",
+          "game": 0,
+          "pair": "before#1-after#2",
+          "common": 95,
+          "sameBest": 69,
+          "rate": 0.726,
+          "cpAbsDiffMedian": 30.5
+        },
+        {
+          "profile": "free",
+          "game": 1,
+          "pair": "before#0-before#1",
+          "common": 97,
+          "sameBest": 67,
+          "rate": 0.691,
+          "cpAbsDiffMedian": 43.5
+        },
+        {
+          "profile": "free",
+          "game": 1,
+          "pair": "before#0-after#2",
+          "common": 100,
+          "sameBest": 67,
+          "rate": 0.67,
+          "cpAbsDiffMedian": 50
+        },
+        {
+          "profile": "free",
+          "game": 1,
+          "pair": "before#1-after#2",
+          "common": 98,
+          "sameBest": 73,
+          "rate": 0.745,
+          "cpAbsDiffMedian": 35
+        },
+        {
+          "profile": "free",
+          "game": 2,
+          "pair": "before#0-before#1",
+          "common": 122,
+          "sameBest": 81,
+          "rate": 0.664,
+          "cpAbsDiffMedian": 31.0
+        },
+        {
+          "profile": "free",
+          "game": 2,
+          "pair": "before#0-after#2",
+          "common": 124,
+          "sameBest": 85,
+          "rate": 0.685,
+          "cpAbsDiffMedian": 32
+        },
+        {
+          "profile": "free",
+          "game": 2,
+          "pair": "before#1-after#2",
+          "common": 123,
+          "sameBest": 76,
+          "rate": 0.618,
+          "cpAbsDiffMedian": 29.0
+        },
+        {
+          "profile": "precision",
+          "game": 0,
+          "pair": "before#0-before#1",
+          "common": 96,
+          "sameBest": 72,
+          "rate": 0.75,
+          "cpAbsDiffMedian": 28
+        },
+        {
+          "profile": "precision",
+          "game": 0,
+          "pair": "before#0-after#2",
+          "common": 96,
+          "sameBest": 67,
+          "rate": 0.698,
+          "cpAbsDiffMedian": 30
+        },
+        {
+          "profile": "precision",
+          "game": 0,
+          "pair": "before#1-after#2",
+          "common": 96,
+          "sameBest": 69,
+          "rate": 0.719,
+          "cpAbsDiffMedian": 31.5
+        },
+        {
+          "profile": "precision",
+          "game": 1,
+          "pair": "before#0-after#1",
+          "common": 101,
+          "sameBest": 64,
+          "rate": 0.634,
+          "cpAbsDiffMedian": 31.0
+        },
+        {
+          "profile": "precision",
+          "game": 2,
+          "pair": "before#0-after#1",
+          "common": 125,
+          "sameBest": 82,
+          "rate": 0.656,
+          "cpAbsDiffMedian": 26
+        }
+      ]
+    }
+  },
+  "postrun": {
+    "recordedAt": "2026-09-28T16:10:10Z",
+    "quietWindowSeconds": 375,
+    "activeJobs": 0,
+    "instances": {
+      "freeApp": "inactive",
+      "standard3App": "inactive"
+    }
+  }
+}
