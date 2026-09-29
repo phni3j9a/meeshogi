@@ -35,7 +35,7 @@
 
 Webではナビゲーション・セーフエリアと、ネイティブのアクセシビリティ属性を対応するaria属性へ変換している。保存・失敗の画面確認にはlocalStorageの検証用アダプターを使い、実際のSQLite保存テストと区別する。文字拡大はWebの近似であり、ネイティブのスクリーンリーダー確認を代替しない。
 
-統合コミット`7f877a2`と修正後コミット`ba6c6df`のReleaseビルドをAndroid emulatorとiOS Simulatorにインストール・起動し、4セットの選択・盤上・持駒・盤反転・詰み手順・明暗・再起動後の保存を実操作で確認した。OS文字拡大も両OSで撮影した。初回にiOSの詰み手数カウンターが右端で切れる問題を見つけ、折り返し修正後は最大文字で全文を確認した。最終証拠は[Android修正後レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-android-fix-20260923/evidence/report.md)と[iOS修正後レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-ios-fix-20260923/report.md)を参照。実iPhone・実Android端末での操作と性能は未検証である。
+統合コミット`7f877a2`と修正後の`ba6c6df`を両OSでビルド・起動し、4セットの選択、盤上・持駒・反転・詰み手順、明暗、再起動後の保存を確認した。iOSの詰み手数カウンターは折り返し修正後、最大文字で全文を確認した。経緯と結果は [PR #12](https://github.com/phni3j9a/meeshogi/pull/12) を参照。旧evidenceブランチは2026-09-30に整理した。実機の操作・性能は未検証。
 
 | 選択画面 | ダーク |
 | --- | --- |
