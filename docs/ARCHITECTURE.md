@@ -2,7 +2,7 @@
 
 ## 方針の確度
 
-製品要件は `PRODUCT.md` を正本とする。無料版の実装ではExpo SDK 57.0.24 / React Native 0.86.3 / React 19.2.3 / TypeScript 6.0.3を採用し、npmのlockfileで固定する。Expo Routerによる画面、SQLiteによる端末保存、ローカルExpo Moduleを介したRust解析を統合する。各OSでの検証状態は `DEVELOPMENT.md` を参照する。
+製品要件は `PRODUCT.md` を正本とする。無料版の実装ではExpo SDK 57.0.26 / React Native 0.86.3 / React 19.2.3 / TypeScript 6.0.3を採用し、npmのlockfileで固定する。Expo Routerによる画面、SQLiteによる端末保存、ローカルExpo Moduleを介したRust解析を統合する。各OSでの検証状態は `DEVELOPMENT.md` を参照する。
 
 ## 責務
 
