@@ -1,28 +1,45 @@
 name: CI
 on:
   push:
-    branches: ['main', 'feat/**']
+    branches: [main]
+    paths: &checks
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - '!.maestro/**'
+      - '!scripts/ci/**'
+      - 'scripts/ci/android-release.py'
+      - 'scripts/ci/test_android_release.py'
   pull_request:
+    paths: *checks
 permissions:
   contents: read
 concurrency:
-  # Late push events must not cancel a newer commit's checks.
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   CI: '1'
   EXPO_NO_TELEMETRY: '1'
   NODE_VERSION: '22.23.2'
   RUSTUP_TOOLCHAIN: '1.96.0'
 jobs:
-  # Fast shared checks stay on GitHub Actions. Emulator/Simulator acceptance
-  # runs on the persistent Devin Cloud validation sessions; see
-  # docs/DEVELOPMENT.md ("Devin Cloudのモバイル検証").
   logic:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
+    outputs:
+      android: ${{ steps.changes.outputs.android }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Detect Android build changes across the whole push
+        if: github.event_name == 'push'
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          python3 scripts/ci/android-release.py changed "$BASE_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -33,7 +50,14 @@ jobs:
         run: |
           npm ci --prefix cloud
           npm run check --prefix cloud
-      - run: npx expo install --check
-      - run: python3 scripts/ci/test_devin_cloud.py
+      - run: python3 scripts/ci/test_android_release.py
       - run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
       - run: cargo test --manifest-path native/sekirei/Cargo.toml --locked
+  android:
+    needs: logic
+    if: github.event_name == 'push' && needs.logic.outputs.android == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/android-release.yml
+    secrets:
+      EXPO_PUBLIC_CLOUD_ENDPOINT: ${{ secrets.EXPO_PUBLIC_CLOUD_ENDPOINT }}

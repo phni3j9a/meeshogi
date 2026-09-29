@@ -15,8 +15,8 @@ mkdir -p "$maestro_dir" "$video_dir"
 
 # Focused runs: ACCEPTANCE_FLOWS="analysis-review,candidate-review" runs only
 # those flows, in the normal order, after the licenses/import setup flows.
-# Later flows reuse app state from earlier ones, so a focused run is iteration
-# evidence, not acceptance; leave it unset for the full run.
+# Select the flows needed for the change, including any prerequisite flows.
+# Leave it unset only when a full regression run is needed.
 known_flows=",licenses-review,import-review,player-names,player-names-kiou,analysis-review,analysis-partial-review,candidate-review,file-import,management-review,appearance-review,appearance-dark,export-review,background-review,large-text-review,search-delete-review,cloud-method-picker,cloud-free-start,cloud-interruptions,cloud-free-verify,cloud-branch-local,cloud-cancel,cloud-precision-denied,cloud-precision-run,cloud-export,"
 if [[ -n "${ACCEPTANCE_FLOWS:-}" ]]; then
   IFS=, read -r -a requested_flows <<< "$ACCEPTANCE_FLOWS"
@@ -92,8 +92,10 @@ record_loop() {
     [[ -e "$record_stop" ]] && break
   done
 }
-record_loop &
-record_loop_pid=$!
+if [[ "${ACCEPTANCE_RECORD_VIDEO:-0}" == 1 ]]; then
+  record_loop &
+  record_loop_pid=$!
+fi
 
 cleanup() {
   local status=$?
@@ -105,11 +107,14 @@ cleanup() {
   # Stop the remote recorder without killing the host adb process. The loop
   # must receive its normal exit, finalize the MP4, and pull it before wait.
   for _ in {1..30}; do
+    [[ -n "$record_loop_pid" ]] || break
     kill -0 "$record_loop_pid" 2>/dev/null || break
     adb shell pkill -INT screenrecord 2>/dev/null || true
     sleep 0.2
   done
-  wait "$record_loop_pid" 2>/dev/null || true
+  if [[ -n "$record_loop_pid" ]]; then
+    wait "$record_loop_pid" 2>/dev/null || true
+  fi
   if [[ -s "$record_state" ]]; then
     mapfile -t recording_state < "$record_state" || true
     remote=${recording_state[0]:-}
@@ -126,7 +131,9 @@ cleanup() {
     rm -f "$record_state"
   fi
   rm -f "$record_state.tmp" "$record_stop"
-  adb logcat -d -v threadtime > "$run_dir/logcat.txt" || true
+  if [[ "$status" != 0 ]]; then
+    adb logcat -d -t 3000 -v threadtime > "$run_dir/logcat.txt" || true
+  fi
   adb exec-out screencap -p > "$run_dir/final.png" || true
   exit "$status"
 }

@@ -1,103 +1,43 @@
-# 構成方針
+# 構成
 
-## 方針の確度
+Expo / React Nativeの共有アプリと、端末内Sekirei・Cloud解析の2経路で構成する。現在の依存はpackage／Cargoのlockfile、機能上の規則は [PRODUCT.md](PRODUCT.md) を正本とする。
 
-製品要件は `PRODUCT.md` を正本とする。無料版の実装ではExpo SDK 57.0.26 / React Native 0.86.3 / React 19.2.3 / TypeScript 6.0.3を採用し、npmのlockfileで固定する。Expo Routerによる画面、SQLiteによる端末保存、ローカルExpo Moduleを介したRust解析を統合する。各OSでの検証状態は `DEVELOPMENT.md` を参照する。
+## コードの配置
 
-## 責務
-
-| 層 | 担当 |
+| 場所 | 責務 |
 | --- | --- |
-| React Native / Expo UI | 3タブ、盤面表示・入力、グラフ、候補手、取り込み、設定 |
-| 棋譜・将棋の共通ロジック | KIFの解釈、局面再生、合法手、手番・勝敗、戦型分類 |
-| 共有のネイティブ解析経路 | Sekireiとweightの読み込み、通常探索、短手数の詰み証明、停止・進捗 |
-| 端末内ストレージ | 本譜、対局情報、ユーザーの設定、解析結果、手動修正 |
-| OSアダプター | クリップボード、ファイル共有、アプリライフサイクル、ネイティブ組み込み |
+| `app/`・`src/ui/` | 3タブと詳細画面、盤面、グラフ、候補手 |
+| `src/domain/` | tsshogiによるKIF解釈・局面再生・合法手・勝敗・戦型 |
+| `src/storage/`・`src/store/` | SQLite保存・Zustand状態・解析の進行 |
+| `src/analysis/`・`modules/sekirei/`・`native/sekirei/` | 端末内解析の契約・Expo Module・Rust |
+| `src/cloud/`・`src/store/cloud-controller.ts` | 匿名credential・Cloud API・永続jobへの再接続 |
+| `src/comparison/` | 開発用の解析方式比較export |
+| `cloud/` | Worker・D1・Queue・private engine Container |
 
-棋譜取り込みと盤面入力はMITライセンスのtsshogi 2.3.4を使用する。パーサーの読み込み成功に加え、元の駒表記・手数と全手の合法性を再検証する。探索と詰み証明はSekireiの合法手生成を使い、iOS・Androidとも同じRustを呼ぶ。端末内解析ではUI操作と探索に異なるライブラリが関わるため、SFEN / USIの境界で結果の合法性を照合する。Cloud結果の検証分担は後述のIssue #22節に従う。保存はexpo-sqlite、アプリ内状態はZustandとし、設定と既存棋譜の帰属更新をtransactionでまとめる。
+OSプロジェクトはExpo CNGで生成する。生成物をGit管理せず、変更元はapp config・local Expo Module・Rustソースとlockfile。UIの将棋処理はMITのtsshogi、保存はexpo-sqliteを使う。新しいエンジンやLLM・同期用の汎用基盤は先行実装しない。
 
-meetermのネイティブターミナル描画要件をこのアプリへ転用する必要はない。盤面の描画方式は将棋アプリとして判断する。
+## 端末内解析と保存
 
-駒セットのIDは既存の設定JSONに保存する。設定未指定・未知のIDは黄楊へ戻し、他の設定項目は従来の検証を維持する。保存が成功してから表示を更新し、ルートの共通Contextを通じて盤上・持駒・詰み手順に反映する。素材は静的に同梱し、駒セット変更に通信・棋譜の書き換え・解析の再起動を必要としない。
+Sekirei v0.3.37と自作weightを固定し、ResidualMaterialで探索する。モデルの来歴・identity・研究条件との差は [ENGINE.md](ENGINE.md) を参照する。研究側のweight品質目標とモバイルの性能条件は分ける。
 
-## 解析との接続
+- 全局・深掘り・分岐を区別し、古い要求の結果を現在の局面に表示しない。解析は直列で行う。
+- 結果はSFEN・engineId・modelId・nodes・候補数の完全一致と`status=complete`を確認して再利用する。契約・評価方式・探索patchを変えたらidentityも更新する。
+- native境界で検証済みの初回反復の予算不足だけを局面単位でスキップする。不正payload・保存失敗・キャンセルは処理を停止する。今回の不足理由は保存せず、再起動後に推定しない。
+- 設定変更や背景移行で端末内解析を中断する。generation／write guardで古い条件の結果保存を防ぐ。
+- 元KIF、本譜、原本結果を保持し、手動結果・戦型を分離する。設定と対局の帰属更新はtransactionでまとめ、戦型の片側修正は最新行へ適用する。
+- 駒セットは設定JSONに保存し、不明なIDは黄楊へ戻す。保存成功後に表示を変え、解析を再起動しない。対戦構図は両者の有効な戦型から導出する。
 
-- UIを止めない実行経路で解析し、局面ごとの進捗と結果を受け渡す。
-- 最小限、局面識別子、解析要求ID、評価値の視点、候補手・読み筋、探索条件、完了／中断／失敗を明確にする。
-- 本譜の全局解析、選択局面の深掘り、分岐の解析を識別する。局面切替後に届いた古い結果を現在の局面へ表示しない。
-- グラフと候補手の評価値は、[採用デザイン](design/README.md)に合わせて先手視点へ正規化する。正は先手有利、負は後手有利。エンジンの手番側スコアと混同せず、盤面の表示方向を変えても符号は反転しない。
-- 表示変換は先手視点へ正規化済み候補だけを受け、盤面方向を受け取らない。通常探索のmateは候補欄・グラフで±1500へ写像し、未解析などの欠測はnullへ写像する。合法手ゼロかつ王手中の終局は独立した`terminal-checkmate`表示種別とし、SFENの手番が先手なら後手勝ち/-1500、後手なら先手勝ち/+1500とする。王手なしの合法手ゼロは`no-legal-moves`として欠測にし、上部評価・候補手・グラフで同じ変換を使う。証明済みの1手／3手詰めは`mateProof`の別結果だけを根拠にする。
-- 初期は1つの解析経路を共有し、全局解析と操作中の局面の優先順位を制御する。並列探索で端末資源を使い切る構成にしない。
-- バックグラウンド移行時は結果を保存し、必要なら解析を中断する。OSによる継続実行を前提にせず、復帰後に再開できる形を検証する。
-- 保存結果にはエンジン・weightの識別子と解析条件を付ける。ファイル破損やweight未読込を有効な解析結果として扱わない。初回の探索反復を完了していない`incomplete`結果は診断用の合法fallbackを含んでも保存・グラフ反映しない。完了済み反復を保持した`complete`結果は、後続予算で`budgetReached=true`になっても有効な解析として扱う。
-- 全局解析では、native境界で整合性を検証した「初回反復の予算不足」だけを専用の型で局面単位に扱い、その局面を欠測のまま次へ進む。不正payload、native障害、保存失敗、キャンセルは同じ型へ変換せず、従来どおり処理を停止する。
-- 一回の開始・再開で各未解析局面を最大一度だけ試す。走査終了時に不足局面が残れば、今回実行中だけの不足ply情報を持つ`partial`状態を表示するが、ジョブやfallback詳細はSQLiteへ保存しない。再起動後は現行identity・条件に一致する保存結果の件数と欠測だけを表示し、不足理由を履歴から推定しない。
+初期予算は10,000 nodes・2候補、深掘りは設定の5倍（上限1,000,000）。bridgeのTTは16 MiBで、過去の対局履歴は渡さない。値は端末性能の達成目標ではない。
 
-解析結果のidentityはupstream revisionだけでなく、meeshogi bridge契約と評価方式（ResidualMaterialの係数・bias・clipを含む）を含める。payloadの意味、終局判定、合法PV検証、探索または詰み証明のpatch、評価mode、weightの解釈を変更した場合はidentityを更新し、旧結果を現在の表示対象から除外する。局面・`engineId`・`modelId`・nodes・候補数の完全一致をキャッシュの成立条件とする。
+## Cloud解析
 
-## weight開発との境界
+方式は`sekirei`・`cloud-free`・`cloud-precision`。接続先はビルド時の`EXPO_PUBLIC_CLOUD_ENDPOINT`、credentialはSecureStoreに保存する。Cloud結果の合法PV・合法手数・終局はサーバーが検証し、端末は形式・局面・identity・profile・評価値・実効候補数を検証する。読み込み時の全合法手生成や全PV再生は繰り返さない。
 
-`sekirei-weight`は棋譜解析に実用になるweightを自前で開発・評価する。meeshogiは採用したweightを端末内で動かし、待ち時間・メモリ・発熱・パッケージング・両OSの挙動を検証する。
+- `cloud_attempts`・`cloud_results`・`cloud_meta`に要求・結果・契約epochを保存する。POST前にidempotency keyと送信回数を永続化し、応答ロスト後も同じjobへ復帰する。
+- server確認cursorと受信cursorを分け、結果をatomic commitし、終端確認後も未回収の結果を取得してからpollを止める。
+- credential喪失・不正・owner不一致・401を区別する。未確認の要求がある間は代替credentialを発行しない。
+- 初回POSTへの確定的な契約4xxだけを`not_created`とする。応答不明や再送拒否では対応を保持する。棋譜削除の例外はPRODUCT.mdに従う。
 
-取り込み時点のweight候補・形式・利用条件を上流で確認し、採用するものを明示する。研究リポジトリのREADMEにある現時点の候補を、将来も固定の製品版と扱わない。
+サーバーは1棋譜を1 jobとしてD1へ保存し、Queue consumerがdriverの`/session`を読み、局面単位に検証して書き込む。条件付き書き込みで取消後の遅延結果・重複配信を排除する。consumerは同時実行1、約12分の予算で継続し、標準Queue再配達を使う。driverはsessionごとにengine processを再利用し、取消／取り残されたsessionを停止する。全経路で`PvInterval 0`を指定する。
 
-採用する現行モデルを同梱し、未読込・破損・ネイティブモジュール不在では解析エラーを表示する。評価値や候補手を固定のデモ結果へ置き換えない。エンジンとモデルの識別子、探索条件を結果ごとに保存する。
-
-## Issue #19 staging技術ゲート
-
-Issue #19のCloudflare Worker / Containerは、認証・private engine image・同期解析のstaging技術検証に限り、2026-09-25に実環境でsmokeとtimeout/recoveryを確認済み。Containerに必要なclass、binding、SQLite migrationと標準lifecycleだけを使い、独自のDO storage・調停・alarm・retry・recoveryを追加しない。モバイルの解析経路や無料初期版の利用条件には接続せず、production・同期・ログイン機能の採用を意味しない。実装と検証結果・運用条件は[`cloud/README.md`](../cloud/README.md)に記録する。
-
-Issue #20の比較ベンチマークでは、同一Container appの`instance_type`切替後に設定とruntimeが一致しない実測があったため、benchmark専用のstandard-2 / standard-3 class・binding・appを固定して使う。通常APIは既存のstandard-2 singleton class / binding / appのままにし、通常deployでも測定用class定義とSQLite migrationを整合して残すが、benchmark routeとallowlistは無効にする。これは再現可能なstaging測定経路であり、モバイル製品やproduction採用ではない。VM再利用を不一致の確定原因とは扱わず、各classのruntime readinessを測定前に検証する。測定定義にapp用storage、Queue、scheduler、独自のDO状態管理は追加しない。詳細は[`cloud/README.md`](../cloud/README.md)を参照。
-
-## Issue #21 非同期jobバックエンド
-
-同じstaging Workerに公開`/v1/*`の非同期解析APIを追加した。`/internal/*`は変更しない。取り込んだ1局を1つの永続jobとし、`POST /v1/jobs`がSFENと全指し手をtsshogiで再生検証してD1に保存し、job IDをQueueへ送る。consumer（batch 1・同時実行1・再試行3回+DLQ）は保存済みcursor `next_ply`から継続し、driverの`POST /session`ストリームで残り局面を順に解析する。1セッションが残り全局面を運ぶため、driverは1回の実行でengine processを使い回し、Workerは局面ごとにidentity・条件・合法PVを再検証して結果を永続化する。結果のコミットは「jobがactiveかつcursorがそのply」の条件付きbatchだけが行い、キャンセル確定後の遅延結果や重複配達は書き込まれない。15分のQueue実行上限に対しconsumer予算は約12分（tail margin 20秒）とし、残りがあればack前に継続メッセージをdurably送る。一般的な復旧基盤や独自schedulerは追加せず、標準のQueue再配達を使う。
-
-匿名identityは発行時だけ返す`mcd1_`形式のcredentialで、D1はSHA-256 hashだけを保持する。raw credentialは永続化・記録しない。Issue #22でアプリがSecureStoreに保存して提示するまでの引き渡し境界であり、端末を跨ぐ復旧やアカウント機能は持たない。profileは`free`と`precision`だけを受け付け、movetime・Threads・Hash・MultiPVやbenchmark条件は公開APIへ露出しない。profile値と制限有効時の上限（Free 5局/日・Asia/Tokyo、5局/60秒、同時active 1）は`cloud/config/job-profiles.json`に集約する。Issue #34で、stagingのWorker varsに`JOBS_ENFORCE_FREE_QUOTAS="false"`と`JOBS_REQUIRE_PRECISION_ALLOWLIST="false"`を設定し、開発中は回数制限・Precision個別許可を無効化した。各変数は文字列`"false"`の場合だけ該当チェックを無効にし、省略・`"true"`・その他の値では従来の制限を有効にする。回数制限の切替はD1の原子的INSERTとAPIの拒否理由の両方に適用し、同時active 1局は常に維持する。個別許可を有効にした場合はowner行の`precision_allowed=1`を要求する。開発設定でowner行のフラグは変更せず、認証・所有者分離・入力検証・冪等性は維持する。sessionの経路は、freeが`/internal/analyze`と同じ`analysis-mvp-singleton`インスタンスを共有し（max_instances=1で別名を増やせず、busy競合はtransient retryで処理）、precisionが既存のstandard-3 benchmark app上の専用名`analysis-jobs-standard-3`を使う。precision jobとbenchmark計測は同じappの単一要求ガードを共用するため、benchmark modeはprecision job利用と同時に走らせない。各局面は`legalMoveCount`を送り、driverの実効MultiPVは`min(profile.multiPV, legalMoveCount)`となる。これはモバイル接続（Issue #22）・本番切替（Issue #24）の前段であり、stagingの技術ゲートの範囲を出ない。
-
-Issue #29では、取消・例外で離れたconsumerのsessionがdriverのbusy guardを持ち続け、次のjobが待ち時間なしの再試行を数秒で使い切っていた。driverはsessionごとに`sessionId`を発行し、`/session/cancel`で指定sessionを止める。新しい`/session`は、残ったsessionを取り残されたものとして中断してから開始する（consumerの`max_concurrency: 1`が前提）。consumerは`end`を受け取らずにsessionを離れるときcancelを送り、Queueの再配送は`retryDelaySeconds`×配送回数だけ遅らせる。Issue #36では、全エンジンで`PvInterval 0`を設定し、途中の深さの確定値を採用できるようにした。結果の契約と`driverVersion`は変えていない。判断理由と実測は[Issue #29/#36レポート](CLOUD-SESSION-AND-PVINTERVAL.md)にある。
-
-## Issue #22 アプリ側のCloud解析共存
-
-アプリは`sekirei`・`cloud-free`・`cloud-precision`の明示的な3方式を持ち（汎用のmulti-engine frameworkは作らない）、`settings.analysisMethod`で選択する。Cloud関連は`src/cloud/`に閉じる。
-
-- `client.ts`: 公開`/v1/*`の型付き呼出し。HTTP statusとerror codeを`CloudApiError`として区別し、401を`credential_rejected`へ写像する。
-- `config.ts`: 接続先は`EXPO_PUBLIC_CLOUD_ENDPOINT`をビルド時に読むだけで、stagingのhostnameはリポジトリへ含めない。
-- `contract.ts`: attemptの語彙・共有predicate・表示ラベル・512手上限。UI・store・controllerが同じ判定を使う。
-- `credentials.ts` / `secure-store.ts`: credentialはSecureStoreにのみ保存し、SQLiteへはownerId・installIdだけを残す。`probe()`はキー欠落（absent）・破損/形状不正（unusable）・読み取り例外（呼び出し側へ伝播）を区別する。
-- `results.ts`: サーバー検証済み結果の形式・局面・identity・profile・評価値の整合性確認と表示用結果への変換（mateProofは生成しない）。候補とPVはUSI形式・長さ・先頭一致・候補重複を確認するが、全合法手の生成・全PVの再生・終局の再判定は行わない。実効MultiPVはprofileの範囲内の正整数とし、successの候補数がその値に一致することを確認する。合法手数によるMultiPV制限、候補/PVの合法性、終局判定はサーバーが担当する。保存結果の読み込み・件数集計・比較exportも同じ分担に従う。盤面の指し手適用時には既存の合法性確認を行い、不正な手を適用しない。
-- `src/storage/cloud-repository.ts`: `cloud_attempts`（attemptId・gameIdentity・profile・endpoint・ownerId・idempotencyKey・jobId・`submit_attempted`・`submit_count`・`server_status`・`server_created_at`・`server_finished_at`・cursor・error）、`cloud_results`（局面結果行）、`cloud_meta`（契約epochのfingerprint）の独立テーブル。棋譜削除には`ON DELETE CASCADE`で追随し、既存DBへの列追加はguarded ALTERで行い`user_version`は据置き。契約epochが変わると`validCount`を現行契約で再計算する。
-- `src/store/cloud-controller.ts`: `requesting→queued/running→終端`と`cancel-requested`を進めるポンプ。idempotency keyと送信回数はPOSTの前に永続化し（`submit_attempted`・`submit_count`）、応答を失っても同じkey・同じ入力の再POSTで同一jobへ復帰しjobIdを確定する。初回POSTへの確定的な契約4xx拒否だけを`server_status='not_created'`＋error終了として単一書き込みで記録し（削除をブロックしない・取消も再送も不要）、再送への拒否や応答不明のままの場合は未確認として対応を保持する。受信cursor（drain済み行数）とserver確認cursor（`server_status`/next_ply）を分け、結果は検証してからatomic commitし、server終端はdrain完了後にpollを止める。未確認の要求が残る間は`doEnsureCredential`が代替credential発行を拒否し、同owner credentialが戻れば新しいattempt・keyを作らず同じ要求へ復帰する。
-- Sekirei側の全局runは`GameRecord.analysisRun`に今回の実行が測定した事実（runId・conditions・wall時計・cache再利用数・終了状態）だけを記録し、行は`callElapsedMs`と生成`runId`を持つ。再利用行の由来は追跡しない（比較側の分類契約は[ANALYSIS-COMPARISON.md](ANALYSIS-COMPARISON.md)）。
-- 開発用の3方式比較exportは`src/comparison/`（export・schema・validate・aggregate・report）にあり、`exportComparison`が書き出し前にschema検証する。UI入口は`__DEV__`またはビルド時の`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`のときだけ出る。
-
-Cloud jobはserver側で継続するため、アプリのバックグラウンド移行・終了・通信断はpollを止めるだけでjobを消さない。credential喪失時の限定「ローカルだけ削除」例外と確定取消までの保持規則はPRODUCT.mdの方式選択節を正本とする。
-
-## 詰みと戦型
-
-短手数の詰みは通常評価とは別の確定結果として扱う。1手・3手の範囲で合法手・王手回避・打ち歩詰めなどの規則を含めて検証し、手順表示の結果と証明の結果を区別する。Sekireiに必要なAPIがあるかは実装前に調べ、不足する場合は共通ロジックとして実装する。
-
-戦型分類は局面履歴に対する明示的なルールを基本とする。自動分類、ルール版、手動修正を区別する。LLMを無料版の分類に必要としない。
-
-保存済みの戦型修正は、書き込み順序が来た時点の最新棋譜へ片側だけを反映する。先手・後手を続けて修正しても、もう片側の手動修正を古い画面状態で上書きしない。
-
-対戦構図は両者の有効な戦型（手動修正を優先）から毎回導出する。両者が居飛車なら相居飛車、片方が居飛車でもう片方が振り飛車なら対抗形、両者が振り飛車なら相振り飛車、片方でも未分類なら未分類とする。取り込み・対局情報に構図を表示し、戦績では選択中の期間・先後・サービスに一致する自分の対局だけを構図別に集計する。派生値を別に保存せず、戦型の手動修正や原本復帰に追従させる。
-
-会話中に登場したbioshogiや他の将棋ソフトは実現例であり、依存として採用済みではない。コード・判定データ・weightの利用条件を確認して採用を決める。GPL系コードの組み込みを前提にしない方針を維持する。
-
-## 採用した境界と暫定条件
-
-1. Expo CNGで両OSのプロジェクトを生成し、生成ディレクトリをGit管理しない。変更元はapp config、local Expo module、Rustソースとlockfile。
-2. Sekirei v0.3.37（commit `7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac`）に自作weightを組み合わせ、`ResidualMaterial`を明示的に選ぶ。研究時のv0.3.4系runtimeから変更したことを識別子に残す。詳細は `ENGINE.md`。
-3. 元KIFと検証済み本譜を保持し、検討分岐は画面内だけに置く。KIF書き出しは元テキストのUTF-8 `.kifu` としてOSの共有UIへ渡す。
-   対局結果の手動修正は `manualResult` に保存し、元KIFからの `result`・本譜・重複判定IDを変更しない。一覧・戦績・戦型詳細には手動結果を優先し、取り込み／対局情報で原本結果へ戻せる。修正結果と書き出す原本の違いを画面に表示する。
-   重複確認では日時の区切りと月日のゼロ埋めを正規化し、同じ日時・対局者・初期局面・全指し手・原本結果・終局理由を同一局とする。原本の日時表記と保存済みIDは保持する。同じ日時・対局者でも内容が異なる場合は、既存棋譜を開くか別局として保存するかを確認する。
-4. 初期設定は1局面10,000 nodes・2候補、選択局面の追加解析は設定の5倍（上限1,000,000 nodes）。これは暫定のアプリ設定であり端末性能の達成目標ではない。解析は直列に実行し、背景移行時は中断する。復帰後は保存済み局面を再利用して再開できる。
-   保存済みの結果は局面・`engineId`・`modelId`・nodes・候補数の全一致と`status=complete`で判定し、グラフ、候補手、詰み、完了件数にも同じ判定を適用する。完了済み反復を保持した`complete`結果は`budgetReached=true`でも表示対象に含める。条件が異なる結果や初回反復未完了の`incomplete`結果は保存を維持したまま表示対象から外し、再解析の案内を出す。解析条件の設定保存が成功した時点で進行中の全局／追加解析を中断し、旧条件の結果が後から保存されることを防ぐ。
-   全局処理の進捗は、互換性のある保存結果と今回の予算不足スキップを合わせた走査済み件数で表す。一方、`completed`と一覧の「解析済み」は有効な保存結果だけを数える。後続局面の有効な結果は不足局面の前後にあっても表示し、グラフの不足点は欠測のまま残す。
-
-## 研究条件との差
-
-研究側の静的評価参照はSekirei v0.3.4系、製品アプリはv0.3.37である。研究runnerのTTは64 MiB、製品bridgeのTTは16 MiBで、nativeへ過去の対局履歴は渡さず現在局面から探索する。公開SFENで静的評価の整数値が一致しても、探索全体の完全再現、同じ探索強さ、モバイル性能、棋力向上を意味しない。
-
-将来の課金やLLMのプロバイダー、価格、クラウド基盤は今の技術選定の前提にしない。
+profile・上限は`cloud/config/job-profiles.json`に集約し、探索条件を公開APIへ露出しない。stagingの開発設定・deploy・Container構成は [cloud/README.md](../cloud/README.md)、変更理由と実測は各Issue・PRを参照する。production切替とSekirei撤去は未完了。

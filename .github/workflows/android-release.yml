@@ -1,18 +1,13 @@
 name: Android APK release
 
 on:
-  workflow_run:
-    workflows: [CI]
-    branches: [main]
-    types: [completed]
+  workflow_call:
+    secrets:
+      EXPO_PUBLIC_CLOUD_ENDPOINT:
+        required: true
 
 permissions:
   contents: read
-
-# Keep every successful main commit, even if another merge arrives mid-build.
-concurrency:
-  group: android-release-${{ github.event.workflow_run.head_sha }}
-  cancel-in-progress: false
 
 env:
   CI: '1'
@@ -23,24 +18,21 @@ env:
 
 jobs:
   build:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       version_code: ${{ steps.version.outputs.version_code }}
     env:
-      BUILD_SHA: ${{ github.event.workflow_run.head_sha }}
+      BUILD_SHA: ${{ github.sha }}
       EXPO_PUBLIC_CLOUD_ENDPOINT: ${{ secrets.EXPO_PUBLIC_CLOUD_ENDPOINT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.BUILD_SHA }}
-          fetch-depth: 0
           persist-credentials: false
+      - name: Fetch only this commit's history for the update number
+        run: git fetch --no-tags --filter=blob:none --unshallow origin "$BUILD_SHA"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -83,7 +75,7 @@ jobs:
         run: python3 scripts/ci/android-release.py verify
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: android-apk-${{ github.event.workflow_run.head_sha }}
+          name: android-apk-${{ github.sha }}
           path: dist/android/
           if-no-files-found: error
           retention-days: 7
@@ -98,16 +90,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: android-apk-${{ github.event.workflow_run.head_sha }}
+          name: android-apk-${{ github.sha }}
           path: dist/android
       - name: Publish development APK
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          BUILD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BUILD_SHA: ${{ github.sha }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
           VERSION_CODE: ${{ needs.build.outputs.version_code }}
-          CI_URL: ${{ github.event.workflow_run.html_url }}
+          CI_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           cd dist/android
           sha256sum --check SHA256SUMS
@@ -120,7 +112,7 @@ jobs:
           - 共通CI: ${CI_URL}
           - 署名: 既存評価版と共通のExpo開発用署名。ストア配布用ではありません。
           - 確認範囲: 共通CI、Releaseビルド、署名、bundle・native同梱検査。
-            Devin Cloudの両OS操作受入や実機確認をこの結果で代替しません。
+            操作・実機性能の確認結果は対象PRを参照してください。
 
           APKと同じ署名の既存アプリへ上書きインストールできます。
           ダウンロード後の検証には \`SHA256SUMS\` を使用してください。

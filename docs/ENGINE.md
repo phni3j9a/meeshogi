@@ -197,7 +197,7 @@ bash scripts/engine/build-android.sh
 bash scripts/engine/build-ios.sh
 ```
 
-`static_eval_probe` は診断専用のCargo exampleで、アプリのライブラリ・iOS framework・Android libraryへ含めない。Linuxでの `cargo test` や静的cross-checkは、iOS/Androidのビルド・起動・実機操作の証拠ではない。両OSの受入結果は `docs/DEVELOPMENT.md` と実際のスクリーンショット・ログで別に報告する。
+`static_eval_probe` は診断専用のCargo exampleで、アプリのライブラリ・iOS framework・Android libraryへ含めない。Linuxでの `cargo test` や静的cross-checkは、iOS/Androidのビルド・起動・実機操作の証拠ではない。検証した範囲と結果は対象PRに記載する。
 
 ## Supporting upstream evidence
 
