@@ -1,5 +1,7 @@
 # 開発の進め方
 
+Android APKの自動配布は `android-release.yml` で実行します。`main` の既存CIが成功したコミットからRelease APKを生成し、GitHub Pre-releaseへ掲載します。配布ビルドの検査と、以下のDevin Cloudで行う操作受入は別です。[配布・更新手順](ANDROID_RELEASES.md)。
+
 ## 現在地
 
 2026-09-29、Fold7で精密解析中に操作が重くなる報告を受け、Cloud結果の端末側での全合法手生成・全PV再生・終局再判定を撤去した。これらはサーバーが結果を保存する前に担当し、端末では形式・局面・identity・profile・評価値・実効候補数を確認する。既存の盤面操作時の合法性確認は維持する。共通コードなのでAndroid/iOSの両方に適用される。`npm run check`（型検査・21ファイル285 tests）は成功した。CIのExpo互換性チェックが推奨パッチ版との差で失敗したため、Expo 57.0.26・Constants 57.0.20・DocumentPicker 57.0.3・Router 57.0.24へ更新し、lockfileとライセンス表示を同期した。ユーザー指定により追加の修正前後の性能比較と両OSのビルド・操作受入は省略しており、依存パッチ更新を含めFold7での改善効果や画面の成功は未確認である。

@@ -1,5 +1,7 @@
 # meeshogi
 
+Android 開発版は [GitHub Releases](https://github.com/phni3j9a/meeshogi/releases) の **Assets → `meeshogi.apk`** からダウンロードできます。`main` のCI成功後に自動生成します。[配布・更新手順](docs/ANDROID_RELEASES.md)。
+
 ミーアキャットをマスコットにした、iOS・Android向け棋譜解析・戦績管理アプリ。
 
 現行アプリは端末内解析とCloud解析に対応しています。今後はCloudのみへ移行する方針です。深掘り・分岐の詳細仕様は検討中で、Sekirei撤去は後続作業です。将来の有料LLM解説・助言は別途検討します。
