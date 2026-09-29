@@ -14,7 +14,7 @@
 | 端末内ストレージ | 本譜、対局情報、ユーザーの設定、解析結果、手動修正 |
 | OSアダプター | クリップボード、ファイル共有、アプリライフサイクル、ネイティブ組み込み |
 
-棋譜取り込みと盤面入力はMITライセンスのtsshogi 2.3.4を使用する。パーサーの読み込み成功に加え、元の駒表記・手数と全手の合法性を再検証する。探索と詰み証明はSekireiの合法手生成を使い、iOS・Androidとも同じRustを呼ぶ。UI操作と探索に異なるライブラリが関わるため、SFEN / USIの境界で結果の合法性を照合する。保存はexpo-sqlite、アプリ内状態はZustandとし、設定と既存棋譜の帰属更新をtransactionでまとめる。
+棋譜取り込みと盤面入力はMITライセンスのtsshogi 2.3.4を使用する。パーサーの読み込み成功に加え、元の駒表記・手数と全手の合法性を再検証する。探索と詰み証明はSekireiの合法手生成を使い、iOS・Androidとも同じRustを呼ぶ。端末内解析ではUI操作と探索に異なるライブラリが関わるため、SFEN / USIの境界で結果の合法性を照合する。Cloud結果の検証分担は後述のIssue #22節に従う。保存はexpo-sqlite、アプリ内状態はZustandとし、設定と既存棋譜の帰属更新をtransactionでまとめる。
 
 meetermのネイティブターミナル描画要件をこのアプリへ転用する必要はない。盤面の描画方式は将棋アプリとして判断する。
 
@@ -65,7 +65,7 @@ Issue #29では、取消・例外で離れたconsumerのsessionがdriverのbusy 
 - `config.ts`: 接続先は`EXPO_PUBLIC_CLOUD_ENDPOINT`をビルド時に読むだけで、stagingのhostnameはリポジトリへ含めない。
 - `contract.ts`: attemptの語彙・共有predicate・表示ラベル・512手上限。UI・store・controllerが同じ判定を使う。
 - `credentials.ts` / `secure-store.ts`: credentialはSecureStoreにのみ保存し、SQLiteへはownerId・installIdだけを残す。`probe()`はキー欠落（absent）・破損/形状不正（unusable）・読み取り例外（呼び出し側へ伝播）を区別する。
-- `results.ts`: 永続行の再検証と表示用結果への変換（mateProofは生成しない）。
+- `results.ts`: サーバー検証済み結果の形式・局面・identity・profile・評価値の整合性確認と表示用結果への変換（mateProofは生成しない）。候補とPVはUSI形式・長さ・先頭一致・候補重複を確認するが、全合法手の生成・全PVの再生・終局の再判定は行わない。実効MultiPVはprofileの範囲内の正整数とし、successの候補数がその値に一致することを確認する。合法手数によるMultiPV制限、候補/PVの合法性、終局判定はサーバーが担当する。保存結果の読み込み・件数集計・比較exportも同じ分担に従う。盤面の指し手適用時には既存の合法性確認を行い、不正な手を適用しない。
 - `src/storage/cloud-repository.ts`: `cloud_attempts`（attemptId・gameIdentity・profile・endpoint・ownerId・idempotencyKey・jobId・`submit_attempted`・`submit_count`・`server_status`・`server_created_at`・`server_finished_at`・cursor・error）、`cloud_results`（局面結果行）、`cloud_meta`（契約epochのfingerprint）の独立テーブル。棋譜削除には`ON DELETE CASCADE`で追随し、既存DBへの列追加はguarded ALTERで行い`user_version`は据置き。契約epochが変わると`validCount`を現行契約で再計算する。
 - `src/store/cloud-controller.ts`: `requesting→queued/running→終端`と`cancel-requested`を進めるポンプ。idempotency keyと送信回数はPOSTの前に永続化し（`submit_attempted`・`submit_count`）、応答を失っても同じkey・同じ入力の再POSTで同一jobへ復帰しjobIdを確定する。初回POSTへの確定的な契約4xx拒否だけを`server_status='not_created'`＋error終了として単一書き込みで記録し（削除をブロックしない・取消も再送も不要）、再送への拒否や応答不明のままの場合は未確認として対応を保持する。受信cursor（drain済み行数）とserver確認cursor（`server_status`/next_ply）を分け、結果は検証してからatomic commitし、server終端はdrain完了後にpollを止める。未確認の要求が残る間は`doEnsureCredential`が代替credential発行を拒否し、同owner credentialが戻れば新しいattempt・keyを作らず同じ要求へ復帰する。
 - Sekirei側の全局runは`GameRecord.analysisRun`に今回の実行が測定した事実（runId・conditions・wall時計・cache再利用数・終了状態）だけを記録し、行は`callElapsedMs`と生成`runId`を持つ。再利用行の由来は追跡しない（比較側の分類契約は[ANALYSIS-COMPARISON.md](ANALYSIS-COMPARISON.md)）。
