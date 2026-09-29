@@ -1,10 +1,10 @@
-import { applyUsi, isInCheck, legalMoves } from '../domain';
 import type { AnalysisCandidate } from '../domain/model';
 import {
   CLOUD_EXPECTED_IDENTITY,
   CLOUD_PROFILES,
   type CloudProfileId,
   type CloudResultRow,
+  type CloudSearchConditions,
   type CloudWireRow,
 } from './contract';
 
@@ -55,23 +55,19 @@ function decodeScore(value: unknown): { scoreCp: number | null; mate: number | n
   return null;
 }
 
-function decodePv(value: unknown): string[] | null {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 256) return null;
-  if (!value.every((move) => typeof move === 'string')) return null;
-  return value as string[];
+/** Syntax only: the server validates move legality before publishing a row. */
+function isUsiMove(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length === (value.endsWith('+') ? 5 : 4) &&
+    /^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$/u.test(value)
+  );
 }
 
-function pvIsLegal(initialSfen: string, pv: string[]): boolean {
-  try {
-    let sfen = initialSfen;
-    for (const move of pv) {
-      if (!legalMoves(sfen).includes(move)) return false;
-      sfen = applyUsi(sfen, move);
-    }
-    return true;
-  } catch {
-    return false;
-  }
+function decodePv(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 256) return null;
+  if (!value.every(isUsiMove)) return null;
+  return value as string[];
 }
 
 function requestedMatch(requested: unknown, profileId: CloudProfileId): boolean {
@@ -89,22 +85,24 @@ function conditionsMatch(
   requested: unknown,
   actual: unknown,
   profileId: CloudProfileId,
-  legalCount: number,
-): boolean {
+): actual is CloudSearchConditions {
   const profile = CLOUD_PROFILES[profileId];
   if (!requestedMatch(requested, profileId) || !object(actual)) return false;
   return (
     actual.threads === profile.threads &&
     actual.hashMb === profile.hashMb &&
     actual.moveTimeMs === profile.moveTimeMs &&
-    actual.multiPV === Math.min(profile.multiPV, legalCount)
+    positiveInteger(actual.multiPV) &&
+    actual.multiPV <= profile.multiPV
   );
 }
 
 /**
- * Validate one committed result row against the expected position, the pinned
- * engine/model identity, and the approved profile conditions. Returns null for
- * anything that does not pass so invalid rows are never displayed or reused.
+ * Check a server-validated row's shape, position, pinned identity and profile.
+ * The server owns PV legality, terminal adjudication and the legal-move limit
+ * on MultiPV. Never replay PVs or generate legal moves on the app's JS thread
+ * here (including when reopening stored results). Interactive board moves
+ * still go through the domain's move validation when applied.
  */
 export function validateCloudResult(
   row: CloudWireRow,
@@ -123,14 +121,6 @@ export function validateCloudResult(
   if (!member(result.status, ['success', 'incomplete', 'terminal'])) return null;
   if (!object(result.conditions) || !object(result.conditions.requested)) return null;
 
-  let legalCount: number;
-  let legal: string[];
-  try {
-    legal = legalMoves(expectedSfen);
-    legalCount = legal.length;
-  } catch {
-    return null;
-  }
   const status = result.status as 'success' | 'incomplete' | 'terminal';
 
   if (status === 'terminal') {
@@ -138,9 +128,6 @@ export function validateCloudResult(
     if (!Array.isArray(result.candidates) || result.candidates.length !== 0) return null;
     if (!requestedMatch(result.conditions.requested, profileId)) return null;
     if (result.conditions.actual !== null) return null;
-    if (legalCount !== 0) return null;
-    const terminal = result.terminal as 'checkmate' | 'no-legal-moves';
-    if ((terminal === 'checkmate') !== isInCheck(expectedSfen)) return null;
     const meta = result.meta;
     if (
       !object(meta) ||
@@ -153,8 +140,8 @@ export function validateCloudResult(
     return { ply: row.ply, sfen: row.sfen, status, engineLaunch: row.engineLaunch, result };
   }
 
-  if (!conditionsMatch(result.conditions.requested, result.conditions.actual, profileId, legalCount))
-    return null;
+  const actual = result.conditions.actual;
+  if (!conditionsMatch(result.conditions.requested, actual, profileId)) return null;
   if (result.terminal !== null) return null;
   if (!Array.isArray(result.candidates)) return null;
 
@@ -176,7 +163,7 @@ export function validateCloudResult(
       nodes === null ||
       completedDepth === null ||
       elapsedMs === null ||
-      result.candidates.length !== Math.min(CLOUD_PROFILES[profileId].multiPV, legalCount)
+      result.candidates.length !== actual.multiPV
     ) {
       return null;
     }
@@ -188,10 +175,9 @@ export function validateCloudResult(
   const seenMoves = new Set<string>();
   for (const candidate of result.candidates) {
     if (!object(candidate)) return null;
-    if (typeof candidate.move !== 'string' || !legal.includes(candidate.move)) return null;
+    if (!isUsiMove(candidate.move)) return null;
     const pv = decodePv(candidate.pv);
     if (!pv || pv[0] !== candidate.move) return null;
-    if (!pvIsLegal(expectedSfen, pv)) return null;
     if (decodeScore(candidate.score) === null) return null;
     if (seenMoves.has(candidate.move)) return null;
     seenMoves.add(candidate.move);
