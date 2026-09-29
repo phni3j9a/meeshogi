@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from fnmatch import fnmatchcase
 
 APP = "meeshogi"
 PACKAGE = "com.meeshogi.app"
@@ -17,10 +18,27 @@ LIBRARY = "libmeeshogi_sekirei.so"
 # Fail instead of silently making an APK that cannot update existing installs.
 CERTIFICATE = "fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c"
 OUT = Path("dist/android")
+BUILD_PATHS = (
+    "app/*", "src/*", "modules/*", "native/*", "assets/*", "scripts/engine/*",
+    "package.json", "package-lock.json", "app.json", "app.config.*",
+    "tsconfig*.json", "babel.config.*", "metro.config.*", "react-native.config.*",
+    "index.*", "expo-env.d.ts", ".npmrc", ".nvmrc", ".node-version",
+    "scripts/generate-notices.mjs", "scripts/ci/android-release.py",
+    ".github/workflows/android-release.yml",
+)
 
 
 def output(*args):
     return subprocess.check_output(args, text=True).strip()
+
+
+def android_changes(base):
+    # Compare the entire push, including merges, deletions and earlier commits.
+    if base == "0" * 40:
+        names = output("git", "ls-tree", "-r", "--name-only", "-z", "HEAD")
+    else:
+        names = output("git", "diff", "--no-renames", "--name-only", "-z", base, "HEAD")
+    return any(fnmatchcase(name, pattern) for name in names.split("\0") for pattern in BUILD_PATHS)
 
 
 def prepare():
@@ -79,5 +97,7 @@ if __name__ == "__main__":
         prepare()
     elif sys.argv[1:] == ["verify"]:
         verify()
+    elif len(sys.argv) == 3 and sys.argv[1] == "changed":
+        print(f"android={str(android_changes(sys.argv[2])).lower()}")
     else:
-        raise SystemExit("usage: android-release.py prepare|verify")
+        raise SystemExit("usage: android-release.py prepare|verify|changed <base-sha>")

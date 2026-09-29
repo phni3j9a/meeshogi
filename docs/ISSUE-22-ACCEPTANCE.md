@@ -1,5 +1,7 @@
 # Issue #22 受入 — Cloud 共存
 
+この文書は当時の受入記録。通常の変更に必要な検証は [DEVELOPMENT.md](DEVELOPMENT.md) に従い、この全手順や証拠ブランチ運用を繰り返す必要はない。
+
 Issue #22「Sekirei と Cloud（Free / Precision）の一時共存」の受入手順・証跡の取り方と、
 focused run・最終候補 `7d35caa` での両OSの受入結果。
 

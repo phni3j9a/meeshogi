@@ -24,8 +24,8 @@ mkdir -p "$maestro_dir"
 
 # Focused runs: ACCEPTANCE_FLOWS="analysis-review,candidate-review" runs only
 # those flows, in the normal order, after the licenses/import setup flows.
-# Later flows reuse app state from earlier ones, so a focused run is iteration
-# evidence, not acceptance; leave it unset for the full run.
+# Select the flows needed for the change, including any prerequisite flows.
+# Leave it unset only when a full regression run is needed.
 known_flows=",licenses-review,import-review,ios-visual-review,player-names,player-names-kiou,analysis-review,analysis-partial-review,candidate-review,file-import,management-review,appearance-review,appearance-dark,export-review-ios,background-review,large-text-review,search-delete-review,cloud-method-picker,cloud-free-start,cloud-interruptions,cloud-free-verify,cloud-branch-local,cloud-cancel,cloud-precision-denied,cloud-precision-run,cloud-export,"
 if [[ -n "${ACCEPTANCE_FLOWS:-}" ]]; then
   IFS=, read -r -a requested_flows <<< "$ACCEPTANCE_FLOWS"
@@ -104,7 +104,9 @@ cleanup() {
     wait "$record_pid" 2>/dev/null || true
   fi
   xcrun simctl io "$device" screenshot "$run_dir/final.png" || true
-  xcrun simctl spawn "$device" log show --last 10m --style compact --predicate 'process == "meeshogi" OR process == "MeeshogiFixtures"' > "$run_dir/simulator.log" || true
+  if [[ "$status" != 0 ]]; then
+    xcrun simctl spawn "$device" log show --last 3m --style compact --predicate 'process == "meeshogi" OR process == "MeeshogiFixtures"' > "$run_dir/simulator.log" || true
+  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -126,8 +128,10 @@ if xcrun simctl spawn "$device" defaults write com.apple.keyboard.preferences \
 else
   trace keyboard-introduction.suppress-failed
 fi
-xcrun simctl io "$device" recordVideo "$run_dir/flow.mov" > "$run_dir/recording.log" 2>&1 &
-record_pid=$!
+if [[ "${ACCEPTANCE_RECORD_VIDEO:-0}" == 1 ]]; then
+  xcrun simctl io "$device" recordVideo "$run_dir/flow.mov" > "$run_dir/recording.log" 2>&1 &
+  record_pid=$!
+fi
 xcrun simctl status_bar "$device" override --time 9:41 --batteryState charged --batteryLevel 100
 trace app.install.start
 xcrun simctl install "$device" "$RUNNER_TEMP/meeshogi-ios/Build/Products/Release-iphonesimulator/meeshogi.app"

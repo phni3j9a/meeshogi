@@ -1,95 +1,42 @@
 # meeshogi
 
-Android 開発版は [GitHub Releases](https://github.com/phni3j9a/meeshogi/releases) の **Assets → `meeshogi.apk`** からダウンロードできます。`main` のCI成功後に自動生成します。[配布・更新手順](docs/ANDROID_RELEASES.md)。
+ミーアキャットがマスコットの、iOS・Android向け棋譜解析・戦績管理アプリです。
 
-ミーアキャットをマスコットにした、iOS・Android向け棋譜解析・戦績管理アプリ。
+将棋ウォーズ・棋桜のKIFを貼り付け／ファイルから取り込み、端末に保存して、盤面・評価値グラフ・候補手で振り返れます。KIF共有、自由な分岐検討、戦績・代表戦型の集計、4種類の駒セットに対応します。
 
-現行アプリは端末内解析とCloud解析に対応しています。今後はCloudのみへ移行する方針です。深掘り・分岐の詳細仕様は検討中で、Sekirei撤去は後続作業です。将来の有料LLM解説・助言は別途検討します。
+## 現在の状態
 
-## 状態
-
-無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)はマージ済みです。Issue #7の解析正しさ修正は[PR #13](https://github.com/phni3j9a/meeshogi/pull/13)で統合済みです。Sekirei v0.3.37を固定し、ResidualMaterial評価、単一合法手の実探索、`meta`/`incomplete`契約、終局表示、identityによる旧キャッシュ除外を追加しています。ログイン・通信・課金は利用条件に含めません。
-
-PR #12では、[棋譜解析画面の改善](docs/design/analysis-refresh.md)と[4種類の駒セット](docs/design/piece-sets.md)を追加しました。解析正しさ修正を取り込み、Android emulatorとiOS Simulatorの両方で実エンジンのReleaseビルド・起動・主要操作・画面を確認済みです。初回受入で見つかったiOSのグラフ操作と最大文字の表示も修正し、両OSで再受入しました。結果・証拠・未確認事項は[開発状況](docs/DEVELOPMENT.md#pr-12-解析画面と駒セット)に記録しています。
-
-Issue #7の修正では、公開fixtureを使うA/B/C/Dのhost診断に加え、製品コード`6a54ff5`でAndroid emulator・iOS Simulatorの新規ビルド・起動・受入フロー・両OSスクリーンショット目視まで検証済みです（両OSともMaestro 15フロー成功・失敗0。iOSは別検査として書き出しKIFとfixtureのバイト一致も確認）。証拠は `evidence/android-20260922`（run `20260922T203618Z-74028`）と `evidence/ios-20260922`（run `20260922T204527Z-37636`）に保存しています。実機での動作・性能は未検証です。画面は[採用モックとデザイン基準](docs/design/README.md)を踏襲します。検証の証拠と残る制約は[開発状況](docs/DEVELOPMENT.md)を参照してください。
-
-Issue #19では、モバイル製品から独立した認証付きCloudflare staging解析ゲートを構築し、private image build・4 fixture smoke・timeout/recoveryを実環境で検証済みです。初期版アプリは引き続き端末内で解析し、このWorkerへの接続やログインを利用条件にしません。このゲートはproduction serviceではありません。検証結果と手順は[cloud README](cloud/README.md)を参照してください。
-
-Issue #20では、このstagingゲートで同じengine/modelの探索条件48種を実戦由来60局面で比較し、Free / 精密解析の初期候補と代替候補を[profile比較レポート](docs/CLOUD-PROFILE-BENCHMARK.md)にまとめました。2026-09-26に初期候補が承認されました。承認済みのprofileは、Freeがstandard-2 / Threads 1 / 1000ms / MultiPV 2、精密解析がstandard-3 / Threads 2 / 5000ms / MultiPV 3です（Hashはどちらも64 MiB）。アプリへの組み込みは、#21以降で行います。
-
-Issue #21では、同じstaging Workerに公開`/v1/*`の非同期解析バックエンドを追加しました。`POST /v1/credentials`がインストール単位の匿名credentialを発行し（D1はSHA-256 hashのみ保持）、`POST /v1/jobs`が1局を1つの永続jobとして受け付けます。Queue consumerがdriverの`/session`ストリームで局面を順に解析し、進捗・結果・取消は`GET /v1/jobs/:id`、`GET /v1/jobs/:id/results`、`POST /v1/jobs/:id/cancel`で提供します。profile値と制限を有効にした場合の上限は`cloud/config/job-profiles.json`に集約しています。現在は開発専用のため、staging設定でFreeの回数制限とPrecisionの個別許可を無効にし、全検証端末で両方式を利用できます（Issue #34）。匿名認証・所有者分離・同時active 1局・512手上限は維持します。制限の再有効化は[cloud READMEの設定手順](cloud/README.md#development-staging-access-issue-34)を参照してください。アプリとの接続はIssue #22（SecureStoreへのcredential保存）、本番切替はIssue #24で、これもproduction serviceではありません。手順と検証範囲は[cloud README](cloud/README.md)を参照してください。
-
-Issue #22では、アプリが3つの解析方式を切り替えられるようになりました。既定は端末内のSekireiで、Cloud Free / Cloud Precisionはstaging技術ゲートへのopt-in選択です（接続先はビルド時の`EXPO_PUBLIC_CLOUD_ENDPOINT`で指定し、production serviceではありません）。Cloud解析はserver jobとして継続し、アプリの終了や通信断からは同じjobへ復帰します。3方式の結果は分離して保存され、開発用の方式比較は[解析方式の比較レポート](docs/ANALYSIS-COMPARISON.md)を参照してください。実戦3局で3方式と探索時間をそろえた条件を比べた結果は[解析方式の比較検討](docs/ANALYSIS-METHOD-STUDY.md)にあります。同じ時間でも Cloud のエンジンが Sekirei より基準（Precision）に近く、短時間の Cloud 探索で評価が欠ける問題は #36 で修正しました。
-
-Issue #30では、Cloudの解析終了後もContainerが稼働し続ける不具合を修正しました。5分のidle設定と解析条件は維持しています。原因・staging検証・費用見積もり上の扱いは[Container停止レポート](docs/CLOUD-CONTAINER-LIFECYCLE.md)を参照してください。
-
-Cloud結果の合法性・終局判定はサーバーで検証し、端末での受信・保存結果の読み込みは形式・局面・解析条件の確認に絞っています。精密解析の結果処理で負荷になっていた全合法手の生成と全読み筋の再検証を外しました。盤面の指し手適用時の合法性確認は維持します。Fold7での改善効果と、この変更後の両OSでの操作は未確認です。
-
-Issue #29・#36では、取消直後の次のCloud解析が失敗する問題と、短い探索で評価が欠ける問題を修正しました。stagingの検証結果と、`driverVersion`を据え置いた理由は[Issue #29/#36レポート](docs/CLOUD-SESSION-AND-PVINTERVAL.md)にあります。
-
-全局解析では、native境界で検証済みの初回反復の予算不足だけをその局面の欠測として扱い、後続局面の解析を続けます。処理が最後まで走っても不足が残る場合は解析済み件数と探索量不足の件数を分けて表示し、全局面の有効結果が揃った場合だけ全局解析完了と表示します。不完全な候補は保存せず、再起動後は保存済み結果と欠測だけを表示します。
+- 端末内Sekirei（既定）、Cloud Free、Cloud Precisionを選択できます。分岐・深掘り・証明済み1手／3手詰めは現在もSekireiを使います。
+- Cloudは開発用stagingです。匿名認証で利用し、現在は回数制限・Precisionの個別許可を無効化しています。同時active 1局・512手上限は維持します。
+- 今後はCloudへ一本化します。分岐・深掘りの移行仕様、本番の利用条件、Sekirei撤去は [Issue #24](https://github.com/phni3j9a/meeshogi/issues/24) の後続作業です。LLM解説・課金・同期は未実装です。
+- M1〜M3（棋譜管理・解析・戦績）は実装済みです。両OSの過去の受入は [PR #12](https://github.com/phni3j9a/meeshogi/pull/12)・[PR #13](https://github.com/phni3j9a/meeshogi/pull/13)・[Issue #22の記録](docs/ISSUE-22-ACCEPTANCE.md) を参照できます。
+- 最新のCloud結果処理の軽量化は共通テストまで確認済みです。Fold7での改善効果や両OSでの操作、実機の性能・発熱は未確認です。
 
 ## 開発
 
-Node.js 22.23.2、Rust 1.96.0を使用します。JavaScript依存は `package-lock.json`、Rust依存は `native/sekirei/Cargo.lock` で固定しています。
+Node.js 22.23.2、Rust 1.96.0を使用します。採用バージョンはpackage／Cargoのlockfileを正本にします。
 
 ```sh
 npm ci
+npm start
+# 変更したロジックの確認例
+npm test -- tests/storage/repository.test.ts
+# アプリ共通チェック
 npm run check
-cargo test --manifest-path native/sekirei/Cargo.toml --locked
-bash scripts/engine/static-eval-cross-check.sh
 ```
 
-ネイティブ解析を含むため、開発用アプリをビルドします。AndroidはJDK 17 / SDK 36 / NDK 27.1.12297006、iOSはmacOS / Xcodeが必要です。`android/` と `ios/` はExpo CNGの生成物として扱います。
+ネイティブ解析を含むので、初回は開発ビルドが必要です。以後のJS・UI変更は同じ開発ビルドで確認します。毎回の両OSビルド・全フロー受入は不要です。[開発・検証手順](docs/DEVELOPMENT.md) を参照してください。
 
-```sh
-rustup target add aarch64-linux-android x86_64-linux-android
-cargo install cargo-ndk --version 4.1.2 --locked
-export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
-npx expo prebuild --platform android --no-install
-npm run android
-# macOS:
-rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-npx expo prebuild --platform ios --no-install
-bash scripts/engine/build-ios.sh
-pod install --project-directory=ios
-npm run ios
-```
+Androidの開発版は [GitHub Releases](https://github.com/phni3j9a/meeshogi/releases) から取得できます。[配布条件・上書き更新](docs/ANDROID_RELEASES.md)。
 
-iOSはRustのXCFrameworkと同梱モデルを生成してからPodをインストールします。CIの操作検証と、ビルド済みSimulatorアプリを使う再検証の手順は[開発状況](docs/DEVELOPMENT.md#操作検証の実行)を参照してください。
+## 必要なときに読む文書
 
-解析にはsekirei-weightの現行候補 `c-leaf-wrm-seed42` を同梱し、読み込み時にSHA-256を確認します。固定したruntime・モデルの来歴と利用条件は[解析エンジン](docs/ENGINE.md)、戦型の判定条件は[分類ルール](docs/OPENINGS.md)を参照してください。Issue #7のvariant比較は診断専用の[ハーネス](scripts/diagnostics/README.md)を参照してください。
+- [製品仕様](docs/PRODUCT.md)：現在の機能・守る挙動・対象外
+- [構成](docs/ARCHITECTURE.md)：コードの配置と解析・保存の境界
+- [開発手順](docs/DEVELOPMENT.md)：変更別の検証、ネイティブ初回ビルド、任意の操作検証
+- [Cloudの運用](cloud/README.md)：staging設定・deploy・smoke
+- [解析エンジン](docs/ENGINE.md)／[戦型分類](docs/OPENINGS.md)／[デザイン](docs/design/README.md)
+- [解析方式の比較](docs/ANALYSIS-METHOD-STUDY.md)：Cloud移行の判断材料
+- [エージェントの作業指示](AGENTS.md)
 
-## 初期版の体験
-
-1. 将棋ウォーズ・棋桜でコピーした棋譜を貼り付ける。
-2. 端末内に保存し、一局全体を自動解析する。解析中も棋譜を操作できる。
-3. 盤面・評価値グラフ・候補手から振り返り、自由に駒を動かして分岐を検討する。
-4. 確定した1手詰め・3手詰めのバッジをタップして、答えを盤上で確認する。
-5. 棋譜を蓄積し、勝敗・勝率や戦型別の戦績を確認する。
-
-棋譜は端末内に保存し、KIFとして書き出せます。初期版ではアカウント登録や同期を必要としません。LLM解説・助言と課金は将来の機能です。
-
-## 開発方針
-
-- iOS・Androidを同時に進める。GitHub Actionsの`ci.yml`は共通ロジック・型検査・Rustテストを確認し、モバイルのビルド・起動・主要操作はDevin Cloudの各OS受入セッションで別に検証する。
-- `sekirei-weight`は実用的なweightの開発、本リポジトリはモバイル統合とアプリ体験を担当する。
-- モックや固定の解析結果による画面検証と、実エンジンによる解析を区別する。
-- まず無料版の一巡する体験を作る。LLM機能のためのサーバーや課金基盤を先行実装しない。
-
-## 文書
-
-- [初期版の製品仕様](docs/PRODUCT.md)
-- [採用した9画面とデザイン基準](docs/design/README.md)
-- [構成方針と未決事項](docs/ARCHITECTURE.md)
-- [実装順序と両OSの検証](docs/DEVELOPMENT.md)
-- [解析方式の比較検討（2026-09、実戦3局）](docs/ANALYSIS-METHOD-STUDY.md)
-- [Issue #7エンジン診断ハーネス](scripts/diagnostics/README.md)
-- [棋譜サンプルと取り込み期待値](fixtures/kif/README.md)
-- [Codex向け作業指示](AGENTS.md)
-
-## 関連プロジェクト
-
-- [sekirei-weight](https://github.com/phni3j9a/sekirei-weight): 棋譜解析に使うweightの開発・評価。
-- [meeterm](https://github.com/phni3j9a/meeterm): マスコットのシリーズと、両OSを並行検証する開発運用の参考。
+変更の経緯と検証はIssue・PRに残し、ここへ作業ログを追記しません。

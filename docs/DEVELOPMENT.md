@@ -1,244 +1,67 @@
-# 開発の進め方
+# 開発と検証
 
-Android APKの自動配布は `android-release.yml` で実行します。`main` の既存CIが成功したコミットからRelease APKを生成し、GitHub Pre-releaseへ掲載します。配布ビルドの検査と、以下のDevin Cloudで行う操作受入は別です。[配布・更新手順](ANDROID_RELEASES.md)。
+変更に関係する確認が通れば、その変更をPRにまとめる。毎回の両OSビルド、全Maestroフロー、全画面の撮影、Devin常駐セッションは完了条件にしない。
 
-## 現在地
+## 変更別の確認
 
-2026-09-29、Fold7で精密解析中に操作が重くなる報告を受け、Cloud結果の端末側での全合法手生成・全PV再生・終局再判定を撤去した。これらはサーバーが結果を保存する前に担当し、端末では形式・局面・identity・profile・評価値・実効候補数を確認する。既存の盤面操作時の合法性確認は維持する。共通コードなのでAndroid/iOSの両方に適用される。`npm run check`（型検査・21ファイル285 tests）は成功した。CIのExpo互換性チェックが推奨パッチ版との差で失敗したため、Expo 57.0.26・Constants 57.0.20・DocumentPicker 57.0.3・Router 57.0.24へ更新し、lockfileとライセンス表示を同期した。ユーザー指定により追加の修正前後の性能比較と両OSのビルド・操作受入は省略しており、依存パッチ更新を含めFold7での改善効果や画面の成功は未確認である。
+| 変更 | 通常の確認 |
+| --- | --- |
+| 文書だけ | 差分とリンク。アプリテスト・ビルド不要 |
+| 小さな文言・スタイル | 対象画面を手元の開発ビルドで確認。新規テスト・Release再ビルド不要 |
+| 共通ロジック・保存・通信 | 型検査と関連テスト。不具合修正は再発を防ぐケースを追加 |
+| OS連携・ネイティブ・依存 | 影響するOSでビルドと対象操作。共通のネイティブ変更は両OS |
+| 正式配布・広範囲な変更 | 両OSで取り込み→解析→保存／再起動→書き出しの主要操作 |
 
-2026年9月25日現在、無料版M1〜M3をまとめた[PR #5](https://github.com/phni3j9a/meeshogi/pull/5)と関連する#9/#11、Issue #7の解析正しさ修正（PR #13）はマージ済みである。PR #12の画面刷新は最新mainの解析正しさ修正を取り込み、Android emulatorとiOS Simulatorのネイティブ受入を完了した。Expo SDK 57 / React Native 0.86.3、tsshogi 2.3.4、SQLiteとRustの解析経路を採用し、モバイル受入はDevin Cloud常駐セッションへ移行済み（Issue #8）である。GitHub Actionsの`ci.yml`は共通ロジック・型検査・Rustテストを検証し、モバイル受入の代わりにはしない。
+対象を絞った操作確認を正式な検証として扱う。修正後は影響範囲を再確認し、変更していない範囲の検証を繰り返さない。使える環境がない場合は未確認を報告し、検証のためだけにVM・エージェントを自動起動しない。CI、画面の目視、実機の性能確認は別の事実として記載する。
 
-Issue #19では別のstaging技術ゲートとして、認証付きCloudflare Workerからprivate YaneuraOu + Suisho11 Plus Containerを呼ぶ1局面APIを構築し、2026-09-25に実環境のsmokeとtimeout/recoveryを検証済み。モバイル製品コードから独立しており、端末内解析・ログイン不要の方針を変更しない。production serviceではない。offline testとdeploy/smoke/timeoutの手順および実測結果は[`cloud/README.md`](../cloud/README.md)を参照する。
+## ローカルのチェック
 
-Issue #20はこのgatewayから同じprivate imageを使うserial benchmarkの独立したstaging技術ゲートである。比較対象のstandard-2 / standard-3は別々の固定benchmark appへルーティングし、normal singletonはstandard-2 / max_instances=1で維持する。通常deployでは測定routeを無効にする。B-005で一つのappの型変更後にruntime不一致が観測されたことが分離の理由だが、内部の原因は未確定であり、各classのCPU/affinity/MemTotal/build readiness確認をpilotの条件とする。両OSアプリの解析経路、production service、端末性能の目標ではない。測定手順と残る制約は[`cloud/README.md`](../cloud/README.md)に記録する。2026-09-25〜26に実測を終え（4650要求、失敗1件）、結果と初期候補・代替候補を[profile比較レポート](CLOUD-PROFILE-BENCHMARK.md)にまとめた。2026-09-26にユーザーが初期候補を承認した。承認済みのprofileは、Freeがstandard-2 / Threads 1 / Hash 64 MiB / 1000ms / MultiPV 2、精密解析がstandard-3 / Threads 2 / Hash 64 MiB / 5000ms / MultiPV 3で、後続Issue（#21以降）へはこの値だけを渡す。staging は通常 deploy（benchmark route無効）へ戻した。
-
-Issue #21は、このstaging Workerへ公開`/v1/*`の非同期jobバックエンドを追加した。`POST /v1/credentials`がインストール単位の匿名credential（`mcd1_`形式、D1はSHA-256 hashのみ保存）を発行し、`POST /v1/jobs`が1局を1つの永続jobとして受け付けてQueueへ送る。consumerはdriver `POST /session`のストリームをcursor `next_ply`から継続し、局面ごとの検証済み結果をD1へ条件付きで書き込む。`GET /v1/jobs/:id`（進捗・再接続）、`GET /v1/jobs/:id/results`（永続結果のcursor付き取得）、`POST /v1/jobs/:id/cancel`（原子的な取消と遅延結果ガード）を提供する。利用制限（Free 5局/JST日・5局/60秒・同時active 1）とprofile値は`cloud/config/job-profiles.json`に集約し、`precision`はoperatorがD1のowner行でallowlistする場合のみ有効。エンジン条件・benchmark条件は公開APIへ露出しない。検証は実SQLite上の永続層・admission・guardテストとfake session streamによるconsumer振る舞いテストに加え、2026-09-26にstaging実環境（candidate `b5f339e`、digest-pinned image `sha256:0c9543b4…`）で同期smoke・Free/Precision非同期smoke・daily quota（429 `daily_quota_exceeded`）・1 engine process再利用証跡（`engineLaunch` 27行一意）を実測済み。初回runでは、deploy後もContainer instanceが旧imageを返す事象を観測し（当時は停止・再開を実証しておらず、休眠固有の問題とは確定していない）、対象app3件のdelete→再deployで是正した。当時はDLQ到達・continuationの実経路・job経路のidle停止と再起動が未検証だった。idle停止の後続検証はIssue #30として別途記録する。アプリへの接続はIssue #22（SecureStoreへのcredential保存）、本番切替はIssue #24であり、Issue #20のベンチマーク実測はこの非同期経路の性能・コスト測定ではない。詳細は[`cloud/README.md`](../cloud/README.md)の「Issue #21 asynchronous job backend」を参照する。
-
-### Issue #34: 開発専用stagingの利用制限
-
-開発中の繰り返し検証のため、stagingのWorker varsでFreeの回数制限とPrecisionの個別許可を無効にする。既存・新規の匿名IDで両方式を使え、端末登録UIやownerごとの開発フラグは追加しない。匿名認証・所有者分離・同時active 1局・512手・探索条件は維持する。設定を`"true"`へ戻すか省略すると従来の上限・個別許可が有効になる。設定・smoke手順は[cloud README](../cloud/README.md#development-staging-access-issue-34)を参照。過去のIssue #21/#22受入にある5局上限・Precision拒否は、その時点の制限付き設定での結果である。今回の変更はサーバー側に限り、両OSアプリの再ビルド・画面受入は実施対象に含めない。
-
-2026-09-27に`3e6aaa6`をWorkerだけdeployし、version `5e06897d-010f-4ebc-ba9d-cd970ca386ee`で両制限の無効化を確認した。同一ownerで6.433秒間にFreeを6局受け付け（終局局面を使用した受付・取消検証）、未許可の新規ownerでPrecision 27/27局面、別の新規ownerでFree 27/27局面の実エンジン解析が完了した。認証・所有者分離・同時active制限・513手拒否・実行中の部分結果・取消後20秒の結果不変も確認済み。既存imageとsecretを維持し、Container更新・DB migrationは行っていない。Cloud型検査・Vitest 101 tests・Python 95 tests、アプリ共通の型検査・264 testsを通過し、GitHub CIでも同候補の全チェックが成功した（[PR #35](https://github.com/phni3j9a/meeshogi/pull/35)）。
-
-### Issue #29 / #36: 取消直後のjob失敗とPvInterval
-
-2026-09-28、取消直後の次jobが`retry_exhausted`になる問題と、短時間探索の`incomplete`を修正した。driverは取り残されたsessionを`/session/cancel`または次の`/session`で止め、consumerは再配送を遅らせる。エンジンは`PvInterval 0`で動かす。`8e46077`をstagingへdeployし、取消直後（0.1ms未満）に作った次jobがFree 3/3・Precision 1/1で完走した。実戦3局では、Free（1000ms）のincompleteが変更前2回の計10件から0件になった。Precisionの所要時間とincomplete 0は変わらない。Precisionのnodes中央値は約12%低かったが、原因は確認していない。`driverVersion`は据え置いた。Cloud型検査・Vitest 111 tests・Python 107 tests、アプリ264 testsを通過した。モバイルは変更しておらず、両OSの受入は行っていない。詳細は[Issue #29/#36レポート](CLOUD-SESSION-AND-PVINTERVAL.md)を参照する。
-
-### Issue #30: Containerの停止不良
-
-2026-09-27、SIGTERMを受けても終了しないPython PID 1と、consumerの未解放応答を修正した。`sleepAfter=5m`、Free/Precision条件、利用制限、構成を維持する。ローカルの実HTTP・子プロセス・workerd回帰検証とstaging受入の証拠、deploy時の旧image対処、使用量の確認方法は[Container停止レポート](CLOUD-CONTAINER-LIFECYCLE.md)を参照する。ユーザーの今後の方針はCloudのみだが、深掘り・分岐の詳細は未決であり、今回Sekirei撤去や構成最適化は行わない。
-
-### Issue #22: 3方式の解析共存（アプリ側）
-
-アプリに「端末内（Sekirei）」「Cloud・無料」「Cloud・精密」の方式選択を追加し、既定はSekireiのままとした。Cloud解析は`cloud_attempts`/`cloud_results`/`cloud_meta`の独立テーブルで3方式の結果を分離し、POST前に永続化したidempotency keyとjobIdでアプリ終了・通信断から同一jobへ復帰する。credentialはSecureStoreにのみ保存し、キー欠落・破損・owner不一致・401を区別して復帰可否を再評価する。未確認の要求がある間は代替credentialの発行を拒否し、棋譜削除はserver終了・取消の確認まで保持する。分岐検討と深掘りはSekireiのローカル解析のまま、詰みバッジは証明済みmateProofのみを根拠とし、開発用の3方式比較export（`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`または`__DEV__`時のみ）を追加した。設計は[構成方針のIssue #22節](ARCHITECTURE.md#issue-22-アプリ側のcloud解析共存)、製品上の規則は[PRODUCT.mdの方式選択節](PRODUCT.md#解析方式の選択issue-22)を参照。
-
-最終候補`7d35caa`で`npm run check`（typecheckとVitest 21ファイル・264 tests）・`npx expo install --check`・`git diff --check`が成功した。同じ候補から両OSを新規ビルドし、Devin Cloudで既存全フロー（Android 15/15、iOS full 15/15）とCloud phase A 7/7（方式picker・Free開始/完了・明示取消・Cloud選択中のローカル分岐・Precision 403）を通した。background／kill・再起動では両OSとも同一jobId・attempt数不変のまま復帰した。通信遮断は、最初の判定がjob完了後の遮断や効いていない遮断を見逃していたため（FP-021）、判定を遮断直前・遮断中・復帰後の比較に直して再実施し、両OSで遮断中にアプリの受信が止まって通信エラーが記録され、復帰後に同一jobで受信が再開することを確認した。403拒否後の画面（日本語メッセージ・取消ボタンなし）と通常削除（`cloud_attempts`0行）はスクリーンショットを開いて確認した。Precision正常系81/81と実棋譜の3方式export・比較レポートは直前の候補（Android `bd0788b`、iOS `c94f88b`系）で実測した（以後の製品差分はCloudの4xx処理・日本語メッセージ・iOS entitlementのみ）。物理端末は未検証。証跡・未検証項目・手動操作で補った箇所は[Issue #22受入](ISSUE-22-ACCEPTANCE.md)にまとめた。
-
-受入に必要な環境: iOS SimulatorのReleaseビルドはadhoc署名（`CODE_SIGN_IDENTITY=-`）にする。`CODE_SIGNING_ALLOWED=NO`ではkeychain entitlementが埋め込まれず、SecureStoreが失敗してCloud解析を使えない。接続先はビルド時の`EXPO_PUBLIC_CLOUD_ENDPOINT`で注入し、stagingのhostnameをリポジトリへ含めない。開発用の比較exportメニューは`EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1`をビルド時に付ける。Precisionは`cloud/config/job-profiles.json`の既定運用どおり、operatorがowner行の`precision_allowed`を立てたcredentialのみ有効である。
-
-### PR #12: 解析画面と駒セット
-
-盤面・評価グラフ・候補手・手送りを再構成し、グラフの横ドラッグで局面を確認できる。設定では黄楊・白木・桜木・青磁を比較して選択でき、SQLite保存後に盤上・持駒・詰み手順へ共通反映する。生成済み23PNGは約0.55MiB。仕様と以前のWeb検証は[画面の改善](design/analysis-refresh.md)・[駒セット](design/piece-sets.md)を参照。
-
-最新mainの詰み終局・探索量不足の部分終了・旧解析cache除外を新画面へ統合した。駒セットの旧設定互換・保存失敗・再起動後の復元と、進行中の解析を止めない動作はロジックテストで確認した。初回の実エンジンReleaseビルドは統合コミット`7f877a2`で両OSともインストール・起動できた。[Android初回レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-android-20260923/evidence/report.md)と[iOS初回レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-ios-20260923/report.md)に、その検証と発見事項を保存した。
-
-初回のiOS実GUI操作で、iOS 26以降は全画面戻るジェスチャーがグラフの横ドラッグを奪う問題と、OS最大文字で詰め手順のカウンターが右端で切れる問題を発見した。`91cc1d0`で検討画面の全画面戻るジェスチャーを無効にし、カウンターを折り返せるようにした。修正後コミット`ba6c6df`の新規Releaseビルドを両OSで再受入し、画像を実際に開いて確認した。
-
-- [iOS修正後レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-ios-fix-20260923/report.md): Simulatorへ新規ビルド・インストール・起動。既存15フローは自動実行で全成功、visual専用フローは設計どおり未実行。PR固有の駒セット・グラフ2フロー、iPhone 17eの通常／最大文字・iPad miniのレイアウトも成功した。実GUI横ドラッグで途中の読み出し、離した位置への局面移動、画面が戻らないことを確認し、画面左端からの戻る操作は残った。最大文字の詰み手数は次行に完全表示された。KIF書き出しはfixtureとバイト一致。
-- [Android修正後レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-android-fix-20260923/evidence/report.md): emulatorへ新規ビルド・インストール・起動。既存15フローとPR固有7フローが全成功。4セットの盤上・持駒・反転・詰み手順、再起動後の保存、明暗、文字拡大、横ドラッグを確認した。グラフ上の縦ドラッグは、スクロール余地のある状態で実際にページを動かした。最初の検証スクリプトは操作後の画面情報を更新せず判定し、スクロール余地も確認していなかったため、判定手順を修正した。
-
-CIは`ba6c6df`で型検査・Vitest 112件・Rust 24件・Expo依存整合性・Devin helper 5件が成功した。受入はSimulator／emulatorまで。実iPhone・実Android端末の性能・FPS・発熱は未確認である。iOSのSave to Files保存先UIはiOS 27のRemoteUIが自動操作下で表示されず未確認だが、書き出したKIFのバイト列は確認した。Androidの専用タブレット実機と真のOSジェスチャーキャンセルも未確認である。
-
-### PR #13: 解析正しさの検証履歴
-
-Issue #7の実装状態は、Sekirei v0.3.37（`7fd1d9b42a85fbc5aeb222f8aa453d3e08f3c0ac`）固定、既存weight `c-leaf-wrm-seed42`（SHA-256 `807c18da03521414a8c75dfe51dd4de2caf8e9ec4909320826eac12b66852eab`）の維持、探索内でのResidualMaterial（material 1 + NNUE 1、bias 0、clip 0）、成功payloadの`meta`、未完成探索の`incomplete`、checkmate/no-legal-movesの終局区別、engine/model identityによる旧cache除外までを含む。今回の継続修正では、native境界で整合性を確認できた初回反復の予算不足だけを局面単位でスキップし、後続局面を処理する`partial`終了と正直な再起動後表示を追加する。payloadとidentityは変更しない。
-
-この作業でホスト上確認したのは、公開fixture `fixtures/analysis/positions.json`に対する診断専用A/B/C/D比較である。Threads 1、`SpecTopN=0`、局面ごとに新規16 MiB TT、`max_depth=8`、1/10,000 nodes（連続王手局面は100,000/1,000,000 nodes）を揃え、v0.3.36 NNUE-only、単一合法手だけを直した隔離版、v0.3.37 Absolute、candidate worktreeのbridgeを初期化したResidualMaterialを比較した。結果は[エンジン診断記録](ENGINE-DIAGNOSTICS.md)とハーネスのREADMEに保存する。
-
-診断で、単一合法手の製品baselineは実nodes 0のまま完了扱いになる一方、修正版・v0.3.37では同じ局面が実探索（代表値164 nodes）へ入ること、連続王手でbaselineのmate→CP→mate往復を再現できることを確認した。これはホスト上のcore/bridge初期化診断であり、アプリのビルド・起動・操作・画面受入や棋力向上の証拠ではない。診断用Bは製品へ切り替えない。
-
-このcandidateでIssue #7の受入検証として完了したものは、製品コード`6a54ff5`からのAndroid/iOS新規ビルド、インストール・起動、公開fixtureの再解析、予算不足を挟む後続局面までの停止・再開・旧cache更新、部分終了/終局表示、分岐復帰、両OSのスクリーンショット目視である。Devin CloudのAndroid emulatorでMaestro 15フロー成功・失敗0（`evidence/android-20260922` run `20260922T203618Z-74028`）、iOS Simulatorでも15フロー成功・失敗0（`evidence/ios-20260922` run `20260922T204527Z-37636`）を確認した。iOSでは一部フローにhelperと条件分岐を使い、最後の書き出しKIF比較はapp-cache内のコピー `exported-shogiwars.kifu` でfixtureとのバイト一致を確認した。実機での検証とユーザー報告の150手棋譜は残る。
-
-全局解析の予算不足制御
-
-`incomplete` payloadは、SFEN・identity・条件・`meta`・合法fallback・詰み証明をnative境界で検証し、初回反復の予算不足として成立した場合だけ専用エラーにする。storeはその局面を保存せず一度だけスキップし、後続局面を直列に解析する。走査完了時に不足があれば今回のjobを`partial`にして、解析済み件数と探索量不足件数を表示する。jobの不足履歴やfallbackはSQLiteへ保存しないため、再起動後は保存済みの現行結果件数と欠測だけを表示する。設定変更、停止、棋譜削除、別棋譜開始、通常エラー、保存失敗は既存のgeneration/cancellation/write guardで処理を停止し、不足スキップへ変換しない。
-
-このcandidateでは`npm run check`（typecheckとVitest 106 tests）、`npm ci`、`git diff --check`、製品nativeの`cargo test`、`scripts/engine/test.sh`（モデルSHA-256検証とRust 24 tests）を実行して通過した。GitHub Actionsの`ci.yml`も候補SHAで成功している。native検査とCI通過・host目視・emulator／Simulator・物理端末は分けて報告する。
-
-## 継続する検証と対象外
-
-Issue #7では、iOS Simulator／Android emulatorまたは実機で各ページを撮影し、実際に目視することを受入条件にする。次の未検証分は残す。
-
-- 実iPhone・実Android端末での動作・応答時間、署名配布・TestFlight。Issue #7のモバイル受入はエミュレーター／Simulatorまでで、実機は未検証として残す。
-- 両OSの一定フレームレート、長時間使用時の発熱・消費電力、大量の実棋譜を持つ物理端末での性能。合成1,000局の過去確認は機能検証と参考測定に限る。
-- 研究側のSekirei v0.3.4系runtimeとアプリv0.3.37、研究TT 64 MiBとapp bridge 16 MiB、nativeへ過去の対局履歴を渡さない条件差。静的評価の整数一致は探索全体の再現や棋力向上を主張する根拠にしない。
-- ユーザーから報告された150手の対局データは未取得であり、その棋譜の原因確定とは区別する。
-
-AIチャット・LLM解説、ログイン、クラウド同期、課金、分岐の永続保存は今回の無料版の対象外であり、次の独立した開発段階とする。
-
-## 実装のまとまり
-
-機能を細かい骨組みだけに分割せず、ユーザーが使える一巡を単位に進める。各まとまりでiOS・Androidを同時に開発する。M1〜M3のiOS検証は今回合意したページごとの目視確認を受入基準とし、下記の詳細操作の自動化は継続検証用として保持する。
-
-### M1: 両OSで棋譜を取り込み、保存して振り返る
-
-- 技術選定を具体化し、依存バージョンを固定する。
-- 採用済みのモックを3タブと各詳細画面に反映し、両OSで盤面・文字・タップ操作を確認する。静止画にない空状態・エラー・解析中や、文字サイズ変更・キーボード表示時も確認する。
-- 両OSのアプリ土台と、共通ロジックを確認するGitHub Actionsを作る。
-- 2サービスの貼り付けとKIFファイル取り込み、局面再生・手送り、自分の名前設定、勝敗判定を実装する。
-- 棋譜一覧、検索・お気に入り・前回の続き、端末内保存、再起動後の読み込み、KIF書き出しをつなげる。
-- Devin CloudのAndroid／iOS受入セッションで取り込み・盤面遷移・保存後の再起動を確認する。`ci.yml`はこのモバイル操作の代わりにしない。
-
-完了条件: サンプルを取り込んで手送りでき、アプリを開き直しても本譜と対局情報が残る。書き出したKIFを再読込して同じ本譜・結果になる。解析表示が固定データなら、その旨を開発画面と成果報告で明示する。
-
-### M2: 実エンジンで解析・自由検討・短手数詰み
-
-- 採用するSekireiとweightを固定し、両OSで読み込みと実探索を確認する。
-- 自動全局解析、段階的なグラフ更新、保存、停止・再開、選択局面の深掘りを実装する。
-- 候補手の再生、合法手による分岐検討、「本譜に戻る」をつなげる。
-- 1手詰め・3手詰めを確定判定し、バッジから答えを再生できるようにする。
-
-完了条件: 両OSで実際の局面に対する解析結果が返り、操作を継続できる。分岐の結果が本譜へ混入せず、詰みは全応手への検証を通る。シミュレーターだけで判断せず、端末性能・発熱などの製品検証を別途行う。
-
-### M3: 戦績・代表戦型と無料版の仕上げ
-
-- 通算・月別・先後別・サービス別の集計を実装する。
-- 代表戦法と対戦構図の分類、未分類、手動修正、自分／相手別の集計を実装する。
-- 重複取り込み、他人の棋譜、結果不明などで戦績が壊れないことを確認する。
-- 取り込みから解析・検討・保存・書き出し・戦績まで一巡して確認する。
-
-M1〜M3で無料の初期版を構成する。LLM・課金は次の独立した開発段階とする。
-
-## 検証方針
-
-meetermの両OSを継続的に検証する運用を参考にし、meeshogiの機能に合わせて検証する。2026年9月から、エミュレーター／Simulatorを使う受入検証はDevin Cloudの常駐セッションで実行する。GitHub Actionsの `ci.yml` は共通ロジック・型検査・Rustテストの高速チェックのみを担い、モバイル実機相当の受入はブロックするstatus checkにはしない。
-
-## Devin Cloudのモバイル検証
-
-受入検証は次の常駐セッションで実行する。
-
-| セッション | 環境 | 用途 |
-| --- | --- | --- |
-| [`8d6602ec533b498e9d85ca46f268f72c`](https://app.devin.ai/sessions/8d6602ec533b498e9d85ca46f268f72c) | Devin Cloud macOS (Apple Silicon) | iOS Simulator受入（visual / full）。2026-09-27に旧セッション`7cb3955c…`のVMが接続不能になったため置き換えた |
-| [`f9dace84ec92408da0bcacaf1c95930b`](https://app.devin.ai/sessions/f9dace84ec92408da0bcacaf1c95930b) | Devin Cloud Linux (KVM) | Android ビルド・エミュレーター・Maestro受入 |
-
-実行の流れ:
-
-1. 検証したいコミットとスイートをMain（このCLI）へ依頼する。Mainは `scripts/ci/devin-cloud.py` で対象セッションへ指示を送り、`wait-evidence` でevidenceブランチの更新を待って完了を確認する（下記「セッションの駆動」）。
-2. セッションは `git fetch && git reset --hard <SHA>` で正確なコミットへ合わせ、`npm install`・prebuild・ビルド・受入スクリプトを実行する。永続VMのツールチェーンは再利用するが、VMの状態をソースの正本として扱わない。
-3. 結果は `artifacts/<OS>/` ごと `evidence/<platform>-<yyyymmdd>` のorphanブランチへpushされる。Mainがブランチをfetchしてスクリーンショットを実際に開き、証拠つきで報告する。最終判定は人間が行う。
-4. 失敗時は同じセッションでその場調査できる（liveのadb/xcrun、エミュレーター状態の観察）。これがホスト型ランナーのログだけの運用に対する利点。
-
-上の2セッションは2026年9月23日のPR #12受入用にCLIのACP経由で作成したSWE-2セッションである。以前のセッションはアーカイブ済みのため、こちらを既定の送信先とする。汚染・コンテキスト圧迫で作り直す場合は、Web UIを使わずに `devin-cloud.py new` で新しいSWE-2セッションを立て、上の表のIDを更新する。
-
-### セッションの駆動
+Node.js 22.23.2、Rust 1.96.0。依存はlockfileで固定する。
 
 ```sh
-python3 scripts/ci/devin-cloud.py list                    # --all でアーカイブ済みも表示
-python3 scripts/ci/devin-cloud.py new --platform macos --prompt-file prompt.md --wait 60
-python3 scripts/ci/devin-cloud.py send <session-id> --prompt-file prompt.md --wait 60
-python3 scripts/ci/devin-cloud.py status <session-id> --messages 3
-python3 scripts/ci/devin-cloud.py wait-evidence evidence/<platform>-<name> --timeout 5400
+npm ci                                  # 初回・依存変更時
+npm run typecheck
+npm test -- tests/storage/repository.test.ts  # 対象に合わせて選ぶ
+npm run check                           # アプリ共通の一括確認
+npm ci --prefix cloud
+npm run check --prefix cloud             # Cloud変更時
+cargo test --manifest-path native/sekirei/Cargo.toml --locked  # Rust変更時
+npx expo install --check                 # Expo依存更新時
 ```
 
-ヘルパーはDevin CLIの `devin acp --cloud`（ACPのcloud relay）を使い、CLIの `devin auth login` の資格情報で動く。`DEVIN_API_KEY` は使わない。
+GitHub CIはPRとmainに対する共通チェックだけを行う。文書・任意のモバイル受入資材だけの変更は対象外。ローカルで全項目を重複実行する必要はない。配布ビルドは [ANDROID_RELEASES.md](ANDROID_RELEASES.md) を参照。
 
-- `new` は既定で `--repo phni3j9a/meeshogi --version devin-swe-2-max` とする。relayが提示しない値は拒否し、作成後のセッションが要求したversionを報告しなければ失敗にする。
-- `--wait` を過ぎても続くターンは失敗ではなく「detached」と表示する。Cloud側の作業は継続するので、長い受入は短い `--wait` で送り、`status` で結果を確認する。
-- `status` は直近のDevinメッセージを再生し、状態・platform・`devinVersionOverride`・URLを出力する。待機中のセッションも状態は `running` と表示されるため、完了の判定には使わない。
-- 受入の完了は `wait-evidence` で待つ。受入は失敗時もevidenceブランチへpushするので、その先頭の更新を完了の合図にする。既定では60秒ごとに `git ls-remote` で確認し、新しい先頭を表示してexit 0、タイムアウトならexit 2で終わる。まだないブランチは最初のcommitを待つ。待ち始める前にpushされうる場合は `--after <sha>` を指定する。`status` の繰り返しや固定sleepで待たない。
-- Cloud側からのローカル操作要求（ファイル参照や許可確認）には応じない。受入実行にはローカルのツールを使わない。
+## 初回のモバイルビルド
 
-ACPを使う理由と制約:
+AndroidはJDK 17 / SDK 36 / NDK 27.1.12297006、iOSはmacOS / Xcodeが必要。`android/`・`ios/`はExpo CNGの生成物でGit管理しない。
 
-- REST APIの `POST /v3/organizations/{org}/sessions` は `devin_mode`（`normal/fast/lite/ultra/fusion`）しか受け付けず、SWE-2を選べない。
-- ACP relayの `session/new` が返す `configOptions` には次がある。いずれも最初のプロンプト前に `session/set_config_option` で設定する。
-  - `devin_version`：`devin-swe-2-low/high/max` とpriority版
-  - `platform`：`linux/macos/windows`
-- CLIの文書ではcloud ACPはinsiders向けと表記されており、`devin_version` の値も公開APIではない内部識別子である。確認はCLI 3000.11.1、2026-09-23。
-- 値が提示されなくなった場合 `new` は失敗する。そのときはWeb UIでSWE-2セッションを作成し、`send`/`status` で駆動する。別モデルで受入を実行しない。
-
-2026-09-23に `new` で作成した新規セッションの実測（読み取りのみ）:
-
-- Linux：blueprintの暖機状態があった。
-  - Node 22.23.2、Rust 1.96.0（Android targets）、cargo-ndk 4.1.2、OpenJDK 17.0.19
-  - Android SDK：build-tools 35/36、NDK 27.1.12297006、`system-images;android-36;google_apis`
-  - AVD `acceptance`、Maestro 2.10.0、`~/.gradle/init.gradle`、`/dev/kvm`
-  - 8 vCPU / 31 GiB、`~/repos/meeshogi`（`node_modules` 含む）
-- macOS：blueprintのmacOS文書に相当する状態が起動時から入っており、下の手動ブートストラップは不要だった。
-  - Apple M4 Pro (Virtual)、16 GiB
-  - `~/.cargo/bin` のrustup proxy、Rust 1.96.0（iOS targets）
-  - Homebrewの `node@22` 22.23.2と `cocoapods` 1.17.0
-  - Maestro 2.10.0（`~/maestro-2.10.0`）、OpenJDK 17.0.20.1、blueprintの `ENVRC` PATH行
-  - Xcode 26.6（17F113）、iOS 26.5/27.0 Simulator runtime
-  - 初回応答の前に、Cloud側が「`phni3j9a/meeshogi` のpull commandsに5分30秒かかった」と警告した。
-
-以下は、これらのツールが欠けたmacOSセッションへ送る予備手順として残す:
-
-```bash
-mkdir -p ~/.cargo/bin
-RUSTUP_BIN="$(brew --prefix rustup)/libexec/bin/rustup"
-for t in cargo rustc rustdoc rustfmt cargo-clippy clippy-driver cargo-fmt; do
-  ln -sf "$RUSTUP_BIN" "$HOME/.cargo/bin/$t"
-done
-export PATH="$HOME/.cargo/bin:$PATH"
-rustup default 1.96.0
+```sh
+# Android
+rustup target add aarch64-linux-android x86_64-linux-android
+cargo install cargo-ndk --version 4.1.2 --locked
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
+npx expo prebuild --platform android --no-install
+npm run android
+# iOS
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-HOMEBREW_NO_AUTO_UPDATE=1 brew install cocoapods node@22
-brew link --overwrite node@22 || true
-bash scripts/ci/install-maestro.sh  # RUNNER_TEMP未設定時は/tmp配下
-echo 'export PATH="$HOME/.cargo/bin:/opt/homebrew/opt/node@22/bin:$PATH"' >> ~/.zprofile
+npx expo prebuild --platform ios --no-install
+bash scripts/engine/build-ios.sh
+pod install --project-directory=ios
+npm run ios
 ```
 
-`/opt/homebrew/bin/rustup` はargv\[0]を落とすbrewのラッパーなので、proxyはlibexecの実バイナリへリンクする。
+以後のJS・UI変更は`npm start`で開発ビルドを再利用する。ネイティブコード・依存・app configが変わった場合に再生成／再ビルドする。Release固有の不具合調査や配布時にReleaseビルドを使う。
 
-| 検証           | 必要な証拠                                                                           |
-| -------------- | ------------------------------------------------------------------------------------ |
-| 共通ロジック   | KIF取り込み、局面再生、勝敗、保存整合性。実装後は詰みと分類も追加                    |
-| Android        | ビルド、エミュレーターへのインストール・起動、対象操作、クラッシュ検出               |
-| iOS            | ビルド、Simulatorへのインストール・起動、各ページのスクリーンショットと目視確認       |
-| UI             | 両OSのスクリーンショットを保存し、実際に目視確認                                     |
-| 実エンジン統合 | ネイティブ経路で実局面の探索完了と有効な結果。モジュールの存在確認だけでは代替しない |
+## 必要な場合の操作自動化
 
-- SDKのインストール確認やビルド成功だけを、アプリの操作確認として扱わない。
-- 初期のiOS CIは署名不要のSimulatorを使う設計とする。実機配布・TestFlightは別の段階。
-- 失敗時もログ・スクリーンショットなど取得できた診断情報を保存する。取得できなかった場合は理由を記録する。
-- 依存更新は両OSで検証する。生成物を使う方式を採用する場合は、クリーンなチェックアウトから再現する。
-- エミュレーター／Simulatorの成功と、実機の性能・発熱・バックグラウンド動作の成功を区別する。
-- 起動だけのスモークから始め、実装した機能に合わせて受入検証を増やす。未実装機能の成功マーカーを作らない。
-
-## 操作検証の実行
-
-`.maestro/` にライセンス・取り込み・対局者名・全局解析・候補手・分岐・詰み・ファイル・戦績修正・表示・KIF出力・背景停止・文字拡大・検索・削除のフローを置く。受入実行では次のスクリプトがOSのクリップボード、ファイル入力、録画、実行結果をまとめる。いずれもDevin Cloudの該当セッション内で実行される。
+既存の`.maestro/`と`scripts/ci/*-acceptance.sh`は任意の回帰検証用。検証専用の端末／Simulatorで使う（データを消去する）。手動確認で十分な変更は自動化を追加しない。
 
 ```sh
-# ビルド済みAPKと接続済みAndroid emulator/deviceを使用
-bash scripts/ci/android-acceptance.sh
-# インストール済みの同じアプリを検証する場合
-bash scripts/ci/android-acceptance.sh --installed
-# macOS: RUNNER_TEMP配下のSimulator向けRelease appで各ページを撮影
-bash scripts/ci/ios-acceptance.sh
-# iOSの詳細な操作検証を追加で実行する場合
-IOS_ACCEPTANCE_MODE=full bash scripts/ci/ios-acceptance.sh
-# 修正中に関係するフローだけを流す場合（両OS共通）
 ACCEPTANCE_FLOWS=analysis-review,candidate-review bash scripts/ci/android-acceptance.sh --installed
 IOS_ACCEPTANCE_MODE=full ACCEPTANCE_FLOWS=analysis-review,candidate-review bash scripts/ci/ios-acceptance.sh
+# 全体確認が必要な場合だけ、ACCEPTANCE_FLOWSを省略する
 ```
 
-`ACCEPTANCE_FLOWS` はフロー名（`.maestro/` のファイル名から `.yaml` を除いたもの）をカンマ区切りで指定する。準備の `licenses-review` と `import-review` は常に実行し、指定したフローを通常の順番で流す。対局者名のクリップボード準備、KIF出力の照合、文字拡大の設定変更は、対応するフローを選んだときだけ行う。未知の名前はexit 2で止める。後のフローは前のフローが作ったアプリ状態を引き継ぐため、選んだフローが前段の状態に依存する場合はその前段も指定する。指定値は各回の `selected-flows.txt`（未指定なら `all`）に残す。フロー選択の実行は修正中の確認であり、受入の代わりにはしない。受入は未指定で全フローを流す。
+フローは前段のデータを使うため、必要な前段も指定する。ライセンス確認と取り込みは共通の準備として実行される。Cloudフローは接続先を組み込んだビルドとstagingが必要で、明示指定時だけ動く。iOSの既定はvisual、fullで操作フローを実行する。iOSのスクリプトは`RUNNER_TEMP/meeshogi-ios/Build/Products/Release-iphonesimulator/meeshogi.app`を利用可能なiPhone Simulatorへインストールする。Cloudを検証するRelease appはkeychain用にadhoc署名（`CODE_SIGN_IDENTITY=-`）する。
 
-iOSの受入はSimulator起動後に `com.apple.keyboard.preferences` の `DidShowContinuousPathIntroduction` を1にし、キーボードの「スライドで入力」初回案内を表示済みにする。成否は `timeline.log` の `keyboard-introduction.*` に残る。
-
-受入フローはアプリのデータを消去して固定サンプルを取り込む。AndroidとiOSのfullモードは、最後にサンプル1局を削除する。両OSで最初にライセンス原文と対象パッケージ一覧を撮影する。iOSの既定visualモードは、その後の取り込みと基本解析を通して、主要9画面と対局情報・ライセンスを撮影する。個人の棋譜を保存したアプリでは実行しない。クリップボード・ファイル共有を確認する補助アプリはCI専用で、製品アプリへ同梱しない。AndroidとiOSのfullモードでは、出力KIFを共有先から回収し、原本とバイト単位で比較する。各回の証拠は `artifacts/<OS>/runs/` の個別ディレクトリへ保存し、実行後にevidenceブランチへpushする。
-
-常駐セッションではビルド済みの `.app` がVM上に残るため、操作フロー（`.maestro/`・受入スクリプト・文書）だけを修正した場合は `scripts/ci/ios-app-artifact.sh` の package / verify / restore で同じアプリを再利用して再検証できる。再利用は製品ソース（`app`・`src`・`modules`・`native`・`assets`・`scripts/engine`・`ci.yml` 等）のフィンガープリント一致とSHA-256を検査した場合に限る。製品・ネイティブ・モデル・設定が変わった場合は通常ビルドが必要。再検証だけの実行は両OSを含む受入の代わりにはしない。
-
-## 取り込み・将棋ロジックの重点確認
-
-`fixtures/kif/README.md`の期待値を実装時の回帰検証に使う。追加で「同」、成り・不成・持駒・打ち歩詰め、引き分け・中断、重複取り込み、曖昧な自分の名前を扱う。
-
-詰みの検証には、1手詰め、1手では詰まない3手詰め、逃れのある見かけの詰み、王手中の局面、禁止される打ち歩詰め、探索中断を含める。ユーザー提供の通常対局2局だけで詰み判定を検証済みとしない。
-
-## PRで伝えること
-
-変更により可能になった操作、両OSの検証結果、スクリーンショットの確認結果、残る制約を記載する。文書のみの変更では実行していないアプリテストやCI成功を主張しない。
+結果はローカルの`artifacts/`へ保存する。動画は`ACCEPTANCE_RECORD_VIDEO=1`を指定した場合だけ録画する。Gitへのログ・動画・APK追加やevidenceブランチ作成は行わない。共有は必要な画像・失敗ログだけをPRへ添付するか、期限付きartifactを使う。過去の受入結果はPRと個別レポートに残っており、現在の変更の完了条件にはしない。
