@@ -77,10 +77,11 @@
 - MultiPV 1 では、そろえる候補が減る分だけ欠測は減るが、仕組みは同じなので35%残る。
 - PvInterval を 0 にすると深さごとに確定値が出力され、欠測は0になった。所要時間は変わらない。
 - 現行の Cloud Free（1000ms）の incomplete 6局面が同じ原因かは未確認。driver への反映と Precision での負荷確認は #36 で扱う。
+- 追記（2026-09-28）: #36 で driver に PvInterval 0 を反映した後、同じ3局の Cloud Free は incomplete 0/322 になった（[Issue #29/#36レポート](CLOUD-SESSION-AND-PVINTERVAL.md)）。上の表の Cloud Free は変更前の値である。
 
 ## 実行中に見つかった staging の問題
 
-- Precision job が2回、途中で `retry_exhausted` になった（28/97局面目、12/102局面目）。Worker ログでは、Precision 用 Container の alarm と停止状態の更新で Cloudflare 側の internal error が出たあと session が例外で終わった。その後の再試行の `/session` はすべて 409（busy）で、間を置かない再試行が数秒で上限に達していた。後続の job も同じ409で開始直後に失敗した。Container のアイドル停止を待って再投入すると完走した。409 busy と再試行間隔の問題は #29（取消直後の次の Free job の失敗）と同じ系統と考えられる。
+- Precision job が2回、途中で `retry_exhausted` になった（28/97局面目、12/102局面目）。Worker ログでは、Precision 用 Container の alarm と停止状態の更新で Cloudflare 側の internal error が出たあと session が例外で終わった。その後の再試行の `/session` はすべて 409（busy）で、間を置かない再試行が数秒で上限に達していた。後続の job も同じ409で開始直後に失敗した。Container のアイドル停止を待って再投入すると完走した。409 busy と再試行間隔の問題は #29（取消直後の次の Free job の失敗）と同じ系統と考えられる。#29 で、取り残された session の停止と再配送の遅延を追加した。
 - 別の試行で、server 側の job が完了しているのに、クライアントが「Cloudサーバーへ接続できませんでした」を繰り返して結果を受信できなくなった。GET job は200で server に届いていたが、結果取得は server に届いていなかった。原因は特定できず、fetch の失敗理由を記録した再実行では再現しなかった（fetch 失敗0件）。
 - ホストで Free エンジンを起動すると `info string Warning : nn.bin hash mismatch.` が出る。エンジン内部の照合値との差で、ファイルは driver の SHA-256 照合を通っている。コンテナでも同じ表示かは確認していない。
 

@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -54,11 +55,13 @@ MAX_SESSION_POSITIONS = 512
 MAX_SESSION_PLY = 8192
 MAX_SESSION_DEADLINE_MS = 3_600_000
 SESSION_DRAIN_MS = 50
+SESSION_PREEMPT_WAIT_SECONDS = 10.0
 SHUTDOWN_GRACE_SECONDS = 10.0
 MOVE_RE = re.compile(r"^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$")
 SFEN_RE = re.compile(r"^[0-9KkLlNnSsGgBbRrPp/+ bw-]+$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 BUILD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+SESSION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DRIVER_BOOT_ID = uuid.uuid4().hex
 GIB = 1 << 30
@@ -100,6 +103,11 @@ class SearchTimeout(DriverError):
 class EngineExitedUnexpectedly(DriverError):
     def __init__(self, message: str):
         super().__init__("engine_error", message)
+
+
+class SessionCancelled(DriverError):
+    def __init__(self, message: str = "The analysis session was cancelled or superseded."):
+        super().__init__("cancelled", message)
 
 
 def is_valid_sfen(value: Any) -> bool:
@@ -506,11 +514,19 @@ class MultiPvCollector:
 
 
 class EngineSession:
-    def __init__(self, engine_path: Path, manifest: dict[str, Any], settings: dict[str, Any], shutdown_requested: threading.Event):
+    def __init__(
+        self,
+        engine_path: Path,
+        manifest: dict[str, Any],
+        settings: dict[str, Any],
+        shutdown_requested: threading.Event,
+        cancel_requested: threading.Event | None = None,
+    ):
         self.engine_path = engine_path
         self.manifest = manifest
         self.settings = settings
         self.shutdown_requested = shutdown_requested
+        self.cancel_requested = cancel_requested
         self.process: subprocess.Popen[str] | None = None
         self.process_started_monotonic: float | None = None
         self.lines: queue.Queue[str | None] = queue.Queue()
@@ -555,7 +571,7 @@ class EngineSession:
         options = self._options_seen
         required = {
             "Threads", "USI_Hash", "MultiPV", "EvalDir", "FV_SCALE", "USI_Ponder",
-            "USI_OwnBook", "BookFile", "GenerateAllLegalMoves",
+            "USI_OwnBook", "BookFile", "GenerateAllLegalMoves", "PvInterval",
         }
         if not required.issubset(options):
             missing = sorted(required - options)
@@ -563,6 +579,7 @@ class EngineSession:
         self.send(f"setoption name Threads value {self.settings.get('threads', THREADS)}")
         self.send(f"setoption name USI_Hash value {self.settings.get('hashMb', HASH_MB)}")
         self.send(f"setoption name MultiPV value {self.settings['effectiveMultiPV']}")
+        self.send("setoption name PvInterval value 0")
         self.send("setoption name EvalDir value /opt/engine")
         self.send("setoption name FV_SCALE value 40")
         self.send("setoption name USI_Ponder value false")
@@ -588,6 +605,8 @@ class EngineSession:
     def _check_shutdown(self) -> None:
         if self.shutdown_requested.is_set():
             raise DriverError("engine_error", "Driver is shutting down.")
+        if self.cancel_requested is not None and self.cancel_requested.is_set():
+            raise SessionCancelled()
 
     def next_line(self, deadline: float) -> str | None:
         if self.process is None:
@@ -838,6 +857,13 @@ def _session_base_result(sfen: str, identity: dict[str, str], profile: dict[str,
     }
 
 
+@dataclass
+class _ActiveSession:
+    session_id: str
+    cancel: threading.Event
+    connection: socket.socket | None
+
+
 class SessionStream:
     """Owns the busy guard for one analysis-session-v1 response.
 
@@ -904,12 +930,16 @@ class AnalysisService:
             "handshakeTimeoutSeconds": HANDSHAKE_TIMEOUT_SECONDS,
             "readyTimeoutSeconds": READY_TIMEOUT_SECONDS,
             "sessionDrainMs": SESSION_DRAIN_MS,
+            "sessionPreemptWaitSeconds": SESSION_PREEMPT_WAIT_SECONDS,
         }
         if settings:
             self.settings.update(settings)
         self._job_profiles: dict[str, dict[str, Any]] | None = None
         self._monotonic = monotonic if monotonic is not None else time.monotonic
         self.busy = threading.Lock()
+        self._session_guard = threading.Lock()
+        self._active_session: _ActiveSession | None = None
+        self._session_stats = {"started": 0, "cancelled": 0, "preempted": 0}
         self.shutdown_requested = threading.Event()
         self.verify_stop_engine_once_enabled = os.environ.get("ANALYSIS_VERIFY_STOP_ENGINE_ONCE") == "1"
         self.verify_stop_engine_once_pending = self.verify_stop_engine_once_enabled
@@ -927,6 +957,13 @@ class AnalysisService:
             "sourceArchiveSha256",
             "sourceTreeSha256",
         )
+        with self._session_guard:
+            sessions = {
+                "active": self._active_session is not None,
+                "started": self._session_stats["started"],
+                "cancelled": self._session_stats["cancelled"],
+                "preempted": self._session_stats["preempted"],
+            }
         return {
             "schemaVersion": 1,
             "status": "ready",
@@ -940,6 +977,7 @@ class AnalysisService:
             "driverVersion": self.identity["driverVersion"],
             "contractVersion": self.identity["contractVersion"],
             **self.build_info,
+            "sessions": sessions,
             "identityDigests": {key: self.identity[key] for key in digest_keys},
         }
 
@@ -1292,11 +1330,60 @@ class AnalysisService:
             **extra,
         }
 
-    def session_response(self, payload: Any) -> tuple[int, Any]:
+    def _interrupt_active_session(self, reason: str, session_id: str | None = None) -> bool:
+        """Signal the tracked session to stop and cut its response socket.
+
+        Returns True only when an active session record was present (and, when
+        ``session_id`` is given, matches it). The busy guard itself is still
+        held by the interrupted session until its handler finishes reaping the
+        engine. ``reason`` is "cancelled" or "preempted".
+        """
+        with self._session_guard:
+            record = self._active_session
+            if record is None or (session_id is not None and record.session_id != session_id):
+                return False
+            if not record.cancel.is_set():
+                self._session_stats[reason] += 1
+            record.cancel.set()
+            if record.connection is not None:
+                try:
+                    record.connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            return True
+
+    def _release_session(self, record: _ActiveSession) -> None:
+        with self._session_guard:
+            if self._active_session is record:
+                self._active_session = None
+        self.busy.release()
+
+    def cancel_session_response(self, payload: Any) -> tuple[int, dict[str, Any]]:
+        """Best-effort stop of the tracked session named by its header id."""
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"sessionId"}
+            or not isinstance(payload["sessionId"], str)
+            or not SESSION_ID_RE.fullmatch(payload["sessionId"])
+        ):
+            return 400, {
+                "schemaVersion": 1,
+                "status": "failure",
+                "failure": {"code": "invalid", "message": "Expected a sessionId from a session header."},
+            }
+        return 200, {
+            "schemaVersion": 1,
+            "cancelled": self._interrupt_active_session("cancelled", payload["sessionId"]),
+        }
+
+    def session_response(self, payload: Any, connection: socket.socket | None = None) -> tuple[int, Any]:
         """Validate one analysis-session-v1 request and open its NDJSON stream.
 
         Returns ``(status, failure_object)`` for rejections, or ``(200,
         SessionStream)``; the caller must iterate the stream and close it.
+        A new session supersedes an orphaned in-flight one: the old session is
+        interrupted and this request waits ``sessionPreemptWaitSeconds`` for it
+        to release the busy guard.
         """
         def invalid(message: str) -> tuple[int, dict[str, Any]]:
             return 400, self._session_failure("invalid", message)
@@ -1364,19 +1451,30 @@ class AnalysisService:
                 runtimeMismatch=mismatch,
             )
         if not self.busy.acquire(blocking=False):
-            return 409, self._session_failure("busy", "An analysis is already running.")
+            # Busy can mean a session orphaned by a consumer that went away, or
+            # non-session work (/analyze, /benchmark). Only a tracked session is
+            # superseded; anything else keeps the immediate busy rejection.
+            if not self._interrupt_active_session("preempted"):
+                return 409, self._session_failure("busy", "An analysis is already running.")
+            if not self.busy.acquire(timeout=self.settings["sessionPreemptWaitSeconds"]):
+                return 409, self._session_failure("busy", "An analysis is already running.")
+        record = _ActiveSession(uuid.uuid4().hex, threading.Event(), connection)
         try:
             stream = SessionStream(
-                self.busy.release,
-                self._session_lines(profile_id, conditions, profile, positions, deadline_ms, self._monotonic()),
+                lambda: self._release_session(record),
+                self._session_lines(record, profile_id, conditions, profile, positions, deadline_ms, self._monotonic()),
             )
         except Exception:
             self.busy.release()
             raise
+        with self._session_guard:
+            self._active_session = record
+            self._session_stats["started"] += 1
         return 200, stream
 
     def _session_lines(
         self,
+        record: _ActiveSession,
         profile_id: str,
         conditions: dict[str, Any],
         profile: dict[str, Any],
@@ -1406,6 +1504,7 @@ class AnalysisService:
                 "effectiveMultiPV": profile["multiPV"],
             },
             self.shutdown_requested,
+            cancel_requested=record.cancel,
         )
         engine_launches = 0
         analyzed = 0
@@ -1419,9 +1518,21 @@ class AnalysisService:
                 "identity": self.identity,
                 "driverBootId": DRIVER_BOOT_ID,
                 "engineLaunch": 1,
+                "sessionId": record.session_id,
             }
             try:
                 session.start()
+            except SessionCancelled as error:
+                engine_launches = 1 if session.process is not None else 0
+                yield {
+                    "type": "end",
+                    "analyzed": analyzed,
+                    "reason": "error",
+                    "engineLaunches": engine_launches,
+                    "code": "cancelled",
+                    "message": error.message,
+                }
+                return
             except (DriverError, TimeoutError) as error:
                 engine_launches = 1 if session.process is not None else 0
                 message = error.message if isinstance(error, DriverError) else "Engine handshake timed out."
@@ -1456,6 +1567,16 @@ class AnalysisService:
                 try:
                     engine_outcome = session.search(sfen, collector)
                     session.drain_stale_lines(self.settings["sessionDrainMs"] / 1000)
+                except SessionCancelled as error:
+                    yield {
+                        "type": "end",
+                        "analyzed": analyzed,
+                        "reason": "error",
+                        "engineLaunches": engine_launches,
+                        "code": "cancelled",
+                        "message": error.message,
+                    }
+                    return
                 except SearchTimeout:
                     block = collector.best_block
                     result.update({
@@ -1518,7 +1639,7 @@ def create_handler(service: AnalysisService) -> type[BaseHTTPRequestHandler]:
             self._write(status, response)
 
         def do_POST(self) -> None:
-            if self.path not in {"/analyze", "/benchmark", "/session"}:
+            if self.path not in {"/analyze", "/benchmark", "/session", "/session/cancel"}:
                 self._write(404, {"schemaVersion": 1, "sfen": None, "status": "failure", "failure": {"code": "invalid", "message": "Unknown route."}})
                 return
             if self.path == "/benchmark" and not service.benchmark_enabled:
@@ -1542,7 +1663,10 @@ def create_handler(service: AnalysisService) -> type[BaseHTTPRequestHandler]:
                 self._write(400, {"schemaVersion": 1, "sfen": None, "status": "failure", "failure": {"code": "invalid", "message": "Request body is not valid JSON."}})
                 return
             if self.path == "/session":
-                self._write_session(*service.session_response(payload))
+                self._write_session(*service.session_response(payload, connection=self.connection))
+                return
+            if self.path == "/session/cancel":
+                self._write(*service.cancel_session_response(payload))
                 return
             status, response = service.benchmark_response(payload) if self.path == "/benchmark" else service.response(payload)
             self._write(status, response)

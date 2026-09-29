@@ -73,6 +73,16 @@ describe('consumer response ownership in workerd with the installed Containers S
     expect(result.sourceCancelled || result.sourceAborted).toBe(bodyAbandoned);
   });
 
+  it('abandons a session after the header and posts its session cancel (Issue #29)', async () => {
+    const response = await mf.dispatchFetch('http://probe/cancel_after_header');
+    expect(response.status).toBe(200);
+    const result = await response.json() as { cancelBodies?: { sessionId?: string }[] };
+    expect(result).toMatchObject({
+      outcome: 'retry', inflightRequests: 0, expired: true, signalAborted: true, trackedResponses: 2,
+    });
+    expect(result.cancelBodies).toEqual([{ sessionId: 'f'.repeat(32) }]);
+  });
+
   it.each([
     ['http_end_without_eof', 'resume'],
     ['http_stalled_body', 'retry'],

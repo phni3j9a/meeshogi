@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import json
 import os
+import socket
 import tempfile
 import threading
 import time
@@ -96,6 +97,8 @@ for command in iter(commands.get, None):
         print("id name Fake USI Engine", flush=True)
         for name in ["Threads", "USI_Hash", "MultiPV", "EvalDir", "FV_SCALE", "USI_Ponder", "USI_OwnBook", "BookFile", "GenerateAllLegalMoves"]:
             print(f"option name {name} type string default test", flush=True)
+        if scenario != "no-pvinterval":
+            print("option name PvInterval type spin default 300 min 0 max 100000", flush=True)
         print("usiok", flush=True)
     elif command == "isready":
         print("readyok", flush=True)
@@ -107,8 +110,23 @@ for command in iter(commands.get, None):
         if scenario == "hang-on-second-go" and go_count == 2:
             while True:
                 time.sleep(1)
+        if scenario == "hang-first-boot" and boot == 1 and go_count == 1:
+            while True:
+                time.sleep(1)
         if scenario == "resign-second-go" and go_count == 2:
             print("bestmove resign", flush=True)
+            continue
+        if scenario == "bound-final":
+            # Complete exact blocks for depths 1-3, then only a rank-1
+            # upperbound at depth 4 (an interrupted aspiration re-search).
+            print("info depth 1 multipv 1 score cp 30 nodes 100 time 5 pv 7g7f 3c3d", flush=True)
+            print("info depth 1 multipv 2 score cp -5 nodes 100 time 5 pv 2g2f 8c8d", flush=True)
+            print("info depth 2 multipv 1 score cp 32 nodes 200 time 10 pv 7g7f 3c3d", flush=True)
+            print("info depth 2 multipv 2 score cp -8 nodes 200 time 10 pv 2g2f 8c8d", flush=True)
+            print("info depth 3 multipv 1 score cp 34 nodes 300 time 15 pv 7g7f 3c3d", flush=True)
+            print("info depth 3 multipv 2 score cp -10 nodes 300 time 15 pv 2g2f 8c8d", flush=True)
+            print("info depth 4 multipv 1 score cp 40 upperbound nodes 400 time 20 pv 7g7f 8c8d", flush=True)
+            print("bestmove 7g7f", flush=True)
             continue
         emit_info(go_count)
         print("bestmove 7g7f", flush=True)
@@ -290,6 +308,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session_line["identity"], service.identity)
         self.assertEqual(session_line["driverBootId"], driver_module.DRIVER_BOOT_ID)
         self.assertEqual(session_line["engineLaunch"], 1)
+        self.assertRegex(session_line["sessionId"], r"^[0-9a-f]{32}$")
 
         for index, line in enumerate(lines[1:4]):
             self.assertEqual(set(line), {"type", "ply", "engineLaunch", "result"})
@@ -320,6 +339,7 @@ class SessionTests(unittest.TestCase):
                 "setoption name Threads value 1",
                 "setoption name USI_Hash value 64",
                 "setoption name MultiPV value 3",
+                "setoption name PvInterval value 0",
                 "setoption name EvalDir value /opt/engine",
                 "setoption name FV_SCALE value 40",
                 "setoption name USI_Ponder value false",
@@ -557,6 +577,158 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(self.engine_boots(), 2)
 
+    def test_session_engine_missing_pv_interval_reports_error(self) -> None:
+        service = self.service("no-pvinterval")
+        status, lines = self.run_session(service, self.payload())
+        self.assertEqual(status, 200)
+        self.assertEqual([line["type"] for line in lines], ["session", "end"])
+        self.assertEqual(lines[-1]["reason"], "error")
+        self.assertEqual(lines[-1]["analyzed"], 0)
+        self.assertEqual(lines[-1]["code"], "engine_error")
+        self.assertIn("PvInterval", lines[-1]["message"])
+        self.assert_dead(self.engine_pids()[0])
+
+    def test_session_bound_final_line_keeps_last_completed_depth(self) -> None:
+        service = self.service("bound-final")
+        positions = [
+            {"ply": 0, "sfen": STARTPOS, "legalMoveCount": 1},
+            {"ply": 1, "sfen": STARTPOS, "legalMoveCount": 2},
+        ]
+        status, lines = self.run_session(service, self.payload(positions=positions))
+        self.assertEqual(status, 200)
+        results = [line["result"] for line in lines if line["type"] == "result"]
+        self.assertEqual([result["status"] for result in results], ["success", "success"])
+        self.assertEqual([result["meta"]["completedDepth"] for result in results], [3, 3])
+        self.assertEqual([len(result["candidates"]) for result in results], [1, 2])
+        self.assertEqual(results[0]["candidates"][0]["move"], "7g7f")
+        self.assertEqual(results[0]["candidates"][0]["score"], {"kind": "cp", "value": 34})
+        self.assertEqual(results[1]["candidates"][1]["move"], "2g2f")
+        self.assertEqual(results[1]["candidates"][1]["score"], {"kind": "cp", "value": -10})
+        self.assertEqual(lines[-1], {"type": "end", "analyzed": 2, "reason": "complete", "engineLaunches": 1})
+
+    def test_new_session_preempts_orphaned_session(self) -> None:
+        service = self.service("hang-first-boot")
+        status_a, stream_a = service.session_response(self.payload(positions=[{"ply": 0, "sfen": STARTPOS}]))
+        self.assertEqual(status_a, 200)
+        lines_a: list[dict] = []
+
+        def consume_a() -> None:
+            try:
+                for line in stream_a:
+                    lines_a.append(line)
+            finally:
+                stream_a.close()
+
+        thread_a = threading.Thread(target=consume_a, daemon=True)
+        thread_a.start()
+        deadline = time.monotonic() + 5
+        while not lines_a and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(lines_a, "session A never emitted its header")
+        session_id_a = lines_a[0]["sessionId"]
+        self.assertRegex(session_id_a, r"^[0-9a-f]{32}$")
+        # The header is emitted before the engine starts: wait until A's
+        # search is actually running so its process is the one that hangs.
+        while time.monotonic() < deadline:
+            if "go movetime" in "\n".join(self.commands()):
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("session A's engine did not start searching")
+
+        # The second session supersedes the orphaned one and completes.
+        status_b, lines_b = self.run_session(service, self.payload(positions=[{"ply": 0, "sfen": STARTPOS}]))
+        self.assertEqual(status_b, 200)
+        self.assertEqual(lines_b[-1]["reason"], "complete")
+        self.assertNotEqual(lines_b[0]["sessionId"], session_id_a)
+        thread_a.join(timeout=5)
+        self.assertFalse(thread_a.is_alive())
+        self.assertEqual(
+            lines_a[-1],
+            {
+                "type": "end",
+                "analyzed": 0,
+                "reason": "error",
+                "engineLaunches": 1,
+                "code": "cancelled",
+                "message": "The analysis session was cancelled or superseded.",
+            },
+        )
+        first_pid, second_pid = self.engine_pids()
+        self.assert_dead(first_pid)
+        self.assert_dead(second_pid)
+        self.assertEqual(
+            service.health()["sessions"],
+            {"active": False, "started": 2, "cancelled": 0, "preempted": 1},
+        )
+
+    def test_session_busy_without_active_session_stays_busy(self) -> None:
+        # /analyze or /benchmark holds the same busy guard with no session
+        # record: a session request must keep the immediate busy rejection.
+        service = self.service()
+        self.assertTrue(service.busy.acquire(blocking=False))
+        try:
+            status, lines = self.run_session(service, self.payload())
+            self.assertEqual(status, 409)
+            self.assertEqual(lines[0]["failure"]["code"], "busy")
+        finally:
+            service.busy.release()
+        self.assertFalse(self.counter_path.exists())
+        self.assertEqual(service.health()["sessions"]["preempted"], 0)
+
+    def test_session_preempt_wait_timeout_keeps_busy_response(self) -> None:
+        # The interrupted record's holder never frees the guard, so the new
+        # session falls back to busy after sessionPreemptWaitSeconds.
+        service = self.service(extra_settings={"sessionPreemptWaitSeconds": 0.2})
+        self.assertTrue(service.busy.acquire(blocking=False))
+        stale = driver_module._ActiveSession("a" * 32, threading.Event(), None)
+        with service._session_guard:
+            service._active_session = stale
+        try:
+            started = time.monotonic()
+            status, lines = self.run_session(service, self.payload())
+            elapsed = time.monotonic() - started
+            self.assertEqual(status, 409)
+            self.assertEqual(lines[0]["failure"]["code"], "busy")
+            self.assertTrue(stale.cancel.is_set())
+            self.assertGreaterEqual(elapsed, 0.19)
+            self.assertLess(elapsed, 3)
+        finally:
+            with service._session_guard:
+                service._active_session = None
+            service.busy.release()
+        self.assertFalse(self.counter_path.exists())
+        self.assertEqual(service.health()["sessions"]["preempted"], 1)
+
+    def test_interrupt_active_session_shuts_down_the_session_socket(self) -> None:
+        service = self.service()
+        left, right = socket.socketpair()
+        try:
+            record = driver_module._ActiveSession("b" * 32, threading.Event(), left)
+            with service._session_guard:
+                service._active_session = record
+            self.assertTrue(service._interrupt_active_session("cancelled", record.session_id))
+            self.assertTrue(record.cancel.is_set())
+            right.settimeout(2)
+            self.assertEqual(right.recv(1), b"", "peer did not observe the shutdown")
+            # A different id or no active record leaves the session running.
+            self.assertFalse(service._interrupt_active_session("cancelled", "c" * 32))
+            self.assertEqual(service._session_stats["cancelled"], 1)
+            self.assertEqual(service._session_stats["preempted"], 0)
+        finally:
+            left.close()
+            right.close()
+
+    def test_session_end_and_health_report_session_counters(self) -> None:
+        service = self.service()
+        status, lines = self.run_session(service, self.payload(positions=[{"ply": 0, "sfen": STARTPOS}]))
+        self.assertEqual(status, 200)
+        self.assertEqual(lines[-1]["reason"], "complete")
+        self.assertEqual(
+            service.health()["sessions"],
+            {"active": False, "started": 1, "cancelled": 0, "preempted": 0},
+        )
+
     def http_server(self, service: AnalysisService) -> ThreadingHTTPServer:
         server = ThreadingHTTPServer(("127.0.0.1", 0), create_handler(service))
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
@@ -565,9 +737,9 @@ class SessionTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         return server
 
-    def post(self, server: ThreadingHTTPServer, body: bytes | str) -> http.client.HTTPResponse:
+    def post(self, server: ThreadingHTTPServer, body: bytes | str, path: str = "/session") -> http.client.HTTPResponse:
         connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
-        connection.request("POST", "/session", body=body, headers={"content-type": "application/json"})
+        connection.request("POST", path, body=body, headers={"content-type": "application/json"})
         return connection.getresponse()
 
     def test_http_session_streams_chunked_ndjson(self) -> None:
@@ -633,6 +805,126 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(result["status"], "success")
         self.assertEqual(self.engine_boots(), 2)
+
+    def open_hanging_session(self, server: ThreadingHTTPServer) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse, bytes]:
+        """POST /session on a hang-first-boot engine and read its header line."""
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+        connection.request(
+            "POST",
+            "/session",
+            body=json.dumps(self.payload(positions=[{"ply": 0, "sfen": STARTPOS}])),
+            headers={"content-type": "application/json"},
+        )
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        raw = b""
+        deadline = time.monotonic() + 5
+        while b"\n" not in raw and time.monotonic() < deadline:
+            chunk = response.read1(65536)
+            if not chunk:
+                break
+            raw += chunk
+        self.assertTrue(raw.startswith(b"{"), "session never emitted its header")
+        # The header is emitted before the engine starts: wait until A's
+        # search is actually running so its process is the one that hangs.
+        while time.monotonic() < deadline:
+            if "go movetime" in "\n".join(self.commands()):
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("session engine did not start searching")
+        return connection, response, raw
+
+    def test_http_new_session_preempts_orphaned_stream(self) -> None:
+        service = self.service("hang-first-boot")
+        server = self.http_server(service)
+        connection_a, response_a, raw_a = self.open_hanging_session(server)
+        header_a = json.loads(raw_a.decode("utf-8").splitlines()[0])
+        session_id_a = header_a["sessionId"]
+        self.assertRegex(session_id_a, r"^[0-9a-f]{32}$")
+
+        # Session B supersedes A's still-running stream and completes.
+        response_b = self.post(server, json.dumps(self.payload(positions=[{"ply": 0, "sfen": STARTPOS}])))
+        self.assertEqual(response_b.status, 200)
+        lines_b = [json.loads(raw) for raw in response_b.read().decode("utf-8").splitlines()]
+        self.assertEqual(lines_b[-1]["reason"], "complete")
+        self.assertNotEqual(lines_b[0]["sessionId"], session_id_a)
+
+        # A's stream ends: either a cancelled end line or a closed connection.
+        try:
+            tail = response_a.read()
+        except (http.client.HTTPException, ConnectionError, OSError):
+            tail = b""
+        lines_a = [json.loads(line) for line in (raw_a + tail).decode("utf-8").splitlines() if line.strip()]
+        ends_a = [line for line in lines_a if line.get("type") == "end"]
+        if ends_a:
+            self.assertEqual(ends_a[-1]["code"], "cancelled")
+            self.assertEqual(ends_a[-1]["reason"], "error")
+        connection_a.close()
+
+        first_pid, second_pid = self.engine_pids()
+        self.assert_dead(first_pid)
+        self.assert_dead(second_pid)
+        self.assertEqual(
+            service.health()["sessions"],
+            {"active": False, "started": 2, "cancelled": 0, "preempted": 1},
+        )
+
+    def test_http_session_cancel_stops_named_session_and_frees_busy(self) -> None:
+        service = self.service("hang-first-boot")
+        server = self.http_server(service)
+        connection_a, _response_a, raw_a = self.open_hanging_session(server)
+        session_id_a = json.loads(raw_a.decode("utf-8").splitlines()[0])["sessionId"]
+
+        def cancel(body: object) -> tuple[int, dict]:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+            try:
+                connection.request(
+                    "POST", "/session/cancel", body=json.dumps(body),
+                    headers={"content-type": "application/json"},
+                )
+                response = connection.getresponse()
+                return response.status, json.loads(response.read().decode("utf-8"))
+            finally:
+                connection.close()
+
+        # A mismatched id is reported but leaves the running session alone.
+        status, body = cancel({"sessionId": "f" * 32})
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"schemaVersion": 1, "cancelled": False})
+        self.assertTrue(service.health()["sessions"]["active"])
+
+        # Malformed payloads are rejected without touching the session.
+        for bad in ({}, {"sessionId": 7}, {"sessionId": "nope"}, {"sessionId": session_id_a, "extra": 1}, "text"):
+            status, body = cancel(bad)
+            self.assertEqual(status, 400, bad)
+            self.assertEqual(body["failure"]["code"], "invalid")
+        self.assertTrue(service.health()["sessions"]["active"])
+
+        status, body = cancel({"sessionId": session_id_a})
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"schemaVersion": 1, "cancelled": True})
+        connection_a.close()
+
+        # The busy guard frees within seconds, and the next session does not
+        # count as a preemption.
+        deadline = time.monotonic() + 5
+        while True:
+            response_b = self.post(server, json.dumps(self.payload(positions=[{"ply": 0, "sfen": STARTPOS}])))
+            if response_b.status != 409 or time.monotonic() >= deadline:
+                break
+            response_b.read()
+            time.sleep(0.05)
+        self.assertEqual(response_b.status, 200)
+        lines_b = [json.loads(raw) for raw in response_b.read().decode("utf-8").splitlines()]
+        self.assertEqual(lines_b[-1]["reason"], "complete")
+        first_pid, second_pid = self.engine_pids()
+        self.assert_dead(first_pid)
+        self.assert_dead(second_pid)
+        self.assertEqual(
+            service.health()["sessions"],
+            {"active": False, "started": 2, "cancelled": 1, "preempted": 0},
+        )
 
 
 if __name__ == "__main__":

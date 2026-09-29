@@ -37,6 +37,7 @@ RUN output="$(printf '%s\n' \
       'setoption name Threads value 1' \
       'setoption name USI_Hash value 64' \
       'setoption name MultiPV value 3' \
+      'setoption name PvInterval value 0' \
       'setoption name EvalDir value /opt/engine' \
       'setoption name FV_SCALE value 40' \
       'setoption name USI_Ponder value false' \

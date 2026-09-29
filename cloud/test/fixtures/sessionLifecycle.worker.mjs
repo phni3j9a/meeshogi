@@ -17,6 +17,7 @@ export default {
     let sourceAborted = false;
     let sourceClosed = false;
     let signalAborted = false;
+    const cancelBodies = [];
     const background = [];
     const header = {
       type: 'session', contract: 'analysis-session-v1', profileId: 'free', engineLaunch: 1,
@@ -27,6 +28,10 @@ export default {
       getTcpPort: () => ({
         fetch: async (_url, request) => {
           request.signal.addEventListener('abort', () => { signalAborted = true; });
+          if (new URL(request.url).pathname === '/session/cancel') {
+            cancelBodies.push(await request.json());
+            return Response.json({ schemaVersion: 1, cancelled: true });
+          }
           if (mode.startsWith('http_')) {
             return fetch(`${env.HTTP_ORIGIN}/${mode}`, request);
           }
@@ -48,9 +53,10 @@ export default {
                   controller.error(request.signal.reason);
                 }
               }, { once: true });
-              const first = mode === 'invalid_header' ? {} : header;
+              const first = mode === 'invalid_header' ? {}
+                : mode === 'cancel_after_header' ? { ...header, sessionId: 'f'.repeat(32) } : header;
               controller.enqueue(new TextEncoder().encode(JSON.stringify(first) + '\n'));
-              if (mode !== 'stalled_body') {
+              if (mode !== 'stalled_body' && mode !== 'cancel_after_header') {
                 controller.enqueue(new TextEncoder().encode('{"type":"end","reason":"complete","analyzed":0}\n'));
               }
               if (mode === 'normal_end') { sourceClosed = true; controller.close(); }
@@ -61,11 +67,11 @@ export default {
       }),
     };
     const ns = { idFromName: () => 'probe', get: () => container };
-    const expiresSoon = ['late_headers', 'abort_headers', 'stalled_body', 'http_stalled_body'].includes(mode);
+    const expiresSoon = ['late_headers', 'abort_headers', 'stalled_body', 'http_stalled_body', 'cancel_after_header'].includes(mode);
     const outcome = await runSession(
       { ANALYSIS_CONTAINER: ns, ANALYSIS_BENCHMARK_STANDARD_3: ns }, {}, { profile_id: 'free' },
       JOB_PROFILES.free, [], Date.now() + (expiresSoon ? 20 : 2000), () => Date.now(),
-      (task) => { background.push(task); ctx.waitUntil(task); },
+      { waitUntil: (task) => { background.push(task); ctx.waitUntil(task); }, sessionCancelTimeoutMs: 500 },
     );
     await Promise.all(background);
     await wait(30); // Let the SDK's response pipe settle after cancellation.
@@ -73,7 +79,7 @@ export default {
     return Response.json({
       outcome: outcome.kind, inflightRequests: container.inflightRequests,
       expired: container.isActivityExpired(), sourceCancelled, sourceAborted, signalAborted,
-      trackedResponses: background.length,
+      trackedResponses: background.length, cancelBodies,
     });
   },
 };
