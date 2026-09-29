@@ -28,7 +28,7 @@
 
 上の画像もWebプレビューと合成評価値による表示検証。[グラフの検証ログ](screens/analysis-refresh/graph-verification.json)に、タップ・ドラッグ・キャンセル・縦スクロール・欠測・範囲外の数値・mateの結果を記録する。
 
-統合コミット`7f877a2`のネイティブ受入では、両OSのReleaseビルドでグラフのタップ・欠測・分岐・詰み表示を操作した。Android emulatorでは横ドラッグ中の読み出しと指を離した位置への移動を確認した（[Android初回レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-android-20260923/evidence/report.md)）。iOS SimulatorではiOS 26以降の全画面戻るジェスチャーが横ドラッグを奪う問題を発見し、`91cc1d0`で検討画面の設定を修正した（[iOS初回レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-ios-20260923/report.md)）。修正後コミット`ba6c6df`を両OSで新規Releaseビルド・起動し、iOSの実GUI横ドラッグ中の読み出し、指を離した位置への移動、縁からの戻る操作を確認した（[iOS修正後レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-ios-fix-20260923/report.md)）。Androidの縦ドラッグはスクロール余地がある局面でページを動かすことを対照実験で確認した（[Android修正後レポート](https://github.com/phni3j9a/meeshogi/blob/evidence/pr12-android-fix-20260923/evidence/report.md)）。
+統合コミット`7f877a2`の両OS受入で、iOSの全画面戻るジェスチャーがグラフの横ドラッグを奪う問題を発見し、`91cc1d0`で修正した。修正後の`ba6c6df`で両OSを再ビルド・起動し、横ドラッグと局面移動、iOSの画面端から戻る操作、Androidの縦スクロールを確認した。経緯と結果は [PR #12](https://github.com/phni3j9a/meeshogi/pull/12) を参照。動画・大量ログを置いた旧evidenceブランチは2026-09-30に整理した。
 
 縦軸変更後のラベル位置・範囲外の印・左右端のタップ／ドラッグは、[縦軸の検証ログ](screens/analysis-refresh/axis-verification.json)に記録する。
 

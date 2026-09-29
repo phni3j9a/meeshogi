@@ -64,4 +64,4 @@ IOS_ACCEPTANCE_MODE=full ACCEPTANCE_FLOWS=analysis-review,candidate-review bash 
 
 フローは前段のデータを使うため、必要な前段も指定する。ライセンス確認と取り込みは共通の準備として実行される。Cloudフローは接続先を組み込んだビルドとstagingが必要で、明示指定時だけ動く。iOSの既定はvisual、fullで操作フローを実行する。iOSのスクリプトは`RUNNER_TEMP/meeshogi-ios/Build/Products/Release-iphonesimulator/meeshogi.app`を利用可能なiPhone Simulatorへインストールする。Cloudを検証するRelease appはkeychain用にadhoc署名（`CODE_SIGN_IDENTITY=-`）する。
 
-結果はローカルの`artifacts/`へ保存する。動画は`ACCEPTANCE_RECORD_VIDEO=1`を指定した場合だけ録画する。Gitへのログ・動画・APK追加やevidenceブランチ作成は行わない。共有は必要な画像・失敗ログだけをPRへ添付するか、期限付きartifactを使う。過去の受入結果はPRと個別レポートに残っており、現在の変更の完了条件にはしない。
+結果はローカルの`artifacts/`へ保存する。動画は`ACCEPTANCE_RECORD_VIDEO=1`を指定した場合だけ録画する。Gitへのログ・動画・APK追加やevidenceブランチ作成は行わない。共有は必要な画像・失敗ログだけをPRへ添付するか、期限付きartifactを使う。過去のevidenceブランチは整理済みで、受入結果の要約はPRと個別レポートを参照する。過去の全受入は現在の変更の完了条件にはしない。

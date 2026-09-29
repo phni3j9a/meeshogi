@@ -2,6 +2,8 @@
 
 この文書は当時の受入記録。通常の変更に必要な検証は [DEVELOPMENT.md](DEVELOPMENT.md) に従い、この全手順や証拠ブランチ運用を繰り返す必要はない。
 
+動画・大量ログを保持していたevidenceブランチは2026-09-30に削除した。以下のブランチ名・run IDは過去の実行を識別する記録であり、取得先ではない。結果の要約は本書と [PR #31](https://github.com/phni3j9a/meeshogi/pull/31)・[PR #32](https://github.com/phni3j9a/meeshogi/pull/32) に残す。
+
 Issue #22「Sekirei と Cloud（Free / Precision）の一時共存」の受入手順・証跡の取り方と、
 focused run・最終候補 `7d35caa` での両OSの受入結果。
 
