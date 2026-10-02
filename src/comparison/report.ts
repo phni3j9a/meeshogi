@@ -324,7 +324,7 @@ export function renderReport(summary: ComparisonSummary): string {
     '## 前提と reference の位置づけ',
     '',
     `- **reference は Cloud Precision**（\`${summary.reference.method}\`）。深い参照であって、正解や棋力の保証ではない。`,
-    '- Issue #20 benchmark の基準条件（standard-3 / 10000ms / MultiPV 3）とは**別の条件**。ここでは job API の Precision（5000ms / MultiPV 3）を使う。',
+    '- Issue #20 benchmark の基準条件（standard-3 / 10000ms / MultiPV 3）とは**別の条件**。ここでは job API の Precision（2500ms / MultiPV 3）を使う。',
     '- 評価値はすべて先手（black）視点。mate・terminal を cp へ換算しない。未解析・incomplete を「mate なし」として数えない。',
     '- 序盤/中盤/終盤は ply 0–40 / 41–90 / 91+ の手数による便宜区分で、局面内容から実際の戦況を判定したものではない。対象の無い区分は N/A。',
     '- mate の生の手数は残すが、両エンジンの距離規約は未確認のため、距離の完全一致は品質指標にしない。mateProof（証明済み詰め）の有無は Cloud の精度不一致として数えない。',

@@ -1,6 +1,6 @@
 # Cloud解析 Free / Precision の探索条件の見直し（Issue #46）
 
-2026-10-02に、stagingの実際のjob API（Queue → session → engine再利用、`PvInterval 0`）で、Free / Precisionを短くする4条件を測った。目的は待ち時間とサーバーコストを下げることと、FreeとPrecisionの差を分かりやすくすること。**この文書は測定と推奨までで、採用値はまだ決めていない。** stagingは測定後に現行profile（Free 1000ms / MultiPV 2、Precision 5000ms / MultiPV 3）へ戻した。
+2026-10-02に、stagingの実際のjob API（Queue → session → engine再利用、`PvInterval 0`）で、Free / Precisionを短くする4条件を測った。目的は待ち時間とサーバーコストを下げることと、FreeとPrecisionの差を分かりやすくすること。**2026-10-02にユーザーが Free 500ms / MultiPV 1、Precision 2500ms / MultiPV 3 を採用した。** 測定後のstagingはいったん旧profile（Free 1000ms / MultiPV 2、Precision 5000ms / MultiPV 3）へ戻した。
 
 ## 結果
 
@@ -18,7 +18,7 @@
 
 - 4条件とも、240局面・8局のjobで`incomplete`・失敗は0件だった。#20で250msの大半が`incomplete`になった問題は、`PvInterval 0`（#36）以降の経路では起きていない。
 - 92手1局jobは、投入から完了までのクライアント側の実測（各2回、ほぼ同値）。Containerが起きている状態で測った。止まっている場合は、#20の実測で standard-2 が約17秒、standard-3 が約25秒の起動待ちが加わる。
-- 全体表（1局面jobの所要時間を含む）は [`cloud/bench/results/issue-46/compare.md`](../cloud/bench/results/issue-46/compare.md)、生データは同じ場所の `study.jsonl`。
+- 全体表（1局面jobの所要時間を含む）は [`cloud/bench/results/issue-46/compare.md`](../cloud/bench/results/issue-46/compare.md)。測定の生データ（局面ごとの結果）はリポジトリに入れていない。
 
 ## 分かったこと
 
@@ -43,17 +43,24 @@
 | Precision 2500ms | 約$0.014 |
 | Precision 5000ms | 約$0.028 |
 
-## 推奨
+## 採用した条件
+
+| profile | 条件 |
+|---|---|
+| Free | standard-2 / Threads 1 / Hash 64 MiB / 500ms / MultiPV 1 |
+| Precision | standard-3 / Threads 2 / Hash 64 MiB / 2500ms / MultiPV 3 |
 
 - **Precision：2500ms / MultiPV 3。** 品質は5000msと見分けられず、待ち時間と費用が半分になる。
-- **Free：500ms / MultiPV 1。** 現行Freeに近い最善手の一致を保ったまま、92手1局を約50秒で返せる。待ち時間を最優先にするなら250ms（約31秒）も成立するが、最善手の一致は10ポイント下がる。
+- **Free：500ms / MultiPV 1。** 旧Freeに近い最善手の一致を保ったまま、92手1局を約50秒で返せる。250ms（約31秒）は最善手の一致が10ポイント下がるため採らなかった。
+- 探索条件が変わるため、旧条件で保存したCloud結果は新しい条件の結果として表示しない（既存の「条件一致の結果だけを使う」規則のまま）。
+- アプリは候補を数で固定していないので、Freeでは候補が1手だけ表示される。
 
 ## 残る不確実性
 
 - 60局面・各1回の測定で、Threads 2のPrecisionは同じ局面でも結果が揺れる（#20）。2500msと5000msの差が小さいという結論は、この標本の範囲のもの。
 - 局面はコンピュータ将棋大会（WCSC36）の棋譜から抽出した。人間の実戦（将棋ウォーズなど）で同じ傾向になるかは確かめていない。
 - 基準解析は「正解」ではなく、より深く読んだ解析との差の物差し。棋力や評価値の正しさは測っていない。
-- MultiPV 1を採用する場合、アプリ側の候補表示と、指した手の評価の出し方（次の局面の評価値を使う）を確認する必要がある。
+- MultiPV 1のFreeは、実機の画面で候補1手の表示を確認していない。
 - 現行Freeの92手1局job時間は今回測っていない（#20の値は、局面ごとにengineを起動し直していた旧経路のもの）。
 
 ## 測定方法

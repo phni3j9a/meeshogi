@@ -1,19 +1,19 @@
 {
   "schema": "meeshogi-job-config-v1",
-  "note": "Profiles approved in Issue #20. Quota thresholds apply when JOBS_ENFORCE_FREE_QUOTAS is enabled; development staging disables it (Issue #34). The active-job limit always applies. These are not permanent product limits.",
+  "note": "Profiles approved in Issue #20 and shortened in Issue #46. Quota thresholds apply when JOBS_ENFORCE_FREE_QUOTAS is enabled; development staging disables it (Issue #34). The active-job limit always applies. These are not permanent product limits.",
   "profiles": {
     "free": {
       "instanceType": "standard-2",
       "threads": 1,
       "hashMb": 64,
-      "moveTimeMs": 1000,
-      "multiPV": 2
+      "moveTimeMs": 500,
+      "multiPV": 1
     },
     "precision": {
       "instanceType": "standard-3",
       "threads": 2,
       "hashMb": 64,
-      "moveTimeMs": 5000,
+      "moveTimeMs": 2500,
       "multiPV": 3
     }
   },

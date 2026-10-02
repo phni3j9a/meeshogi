@@ -866,7 +866,7 @@ export function aggregateAll(
     schemaVersion: COMPARISON_SUMMARY_VERSION,
     reference: {
       method: REFERENCE_METHOD,
-      note: 'Cloud Precision（5000ms / MultiPV 3）を深い reference として使う。正解・棋力保証ではない。Issue #20 benchmark の 10000ms / MultiPV 3 基準条件とは別の条件。',
+      note: 'Cloud Precision（2500ms / MultiPV 3）を深い reference として使う。正解・棋力保証ではない。Issue #20 benchmark の 10000ms / MultiPV 3 基準条件とは別の条件。',
     },
     inputs: exports.map((e) => ({
       source: e.source,
