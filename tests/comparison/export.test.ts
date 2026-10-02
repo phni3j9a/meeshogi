@@ -221,7 +221,7 @@ describe('比較export writer', () => {
     });
     expect(doc.methods['cloud-precision']).toMatchObject({
       profileId: 'precision',
-      conditions: { requested: { moveTimeMs: 5000, multiPV: 3 } },
+      conditions: { requested: { moveTimeMs: 2500, multiPV: 3 } },
     });
 
     const first = doc.plies[0].results;
@@ -311,19 +311,19 @@ describe('比較export writer', () => {
     const positions = positionsFor('lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1', []);
     const legal = legalMoves(positions[0]);
     const game = makeGame({ positions });
-    const attempt = makeAttempt(game, 'free');
-    const result = makeSuccessResult(positions[0], 'free', {
+    const attempt = makeAttempt(game, 'precision');
+    const result = makeSuccessResult(positions[0], 'precision', {
       scores: [
         { kind: 'mate', value: -5, winningSide: 'gote' },
         { kind: 'mate', value: 3, winningSide: 'sente' },
       ],
     });
-    const doc = await build(game, [attempt], { 'att-free': [cloudRow(game, 0, 'free', result)] });
-    const row = doc.plies[0].results['cloud-free'];
+    const doc = await build(game, [attempt], { 'att-precision': [cloudRow(game, 0, 'precision', result)] });
+    const row = doc.plies[0].results['cloud-precision'];
     expect(row?.status).toBe('complete');
     if (!row || row.status !== 'complete') return;
     const candidates = row.candidates ?? [];
-    expect(candidates.map((c) => c.move)).toEqual(legal.slice(0, 2));
+    expect(candidates.map((c) => c.move)).toEqual(legal.slice(0, 3));
     expect(candidates[0]?.score).toEqual({ kind: 'mate', value: -5, winner: 'white' });
     expect(candidates[1]?.score).toEqual({ kind: 'mate', value: 3, winner: 'black' });
     expect(row.evaluation).toEqual({ kind: 'mate', value: -5, winner: 'white' });

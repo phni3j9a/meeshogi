@@ -44,8 +44,8 @@ npm run analysis-compare -- <export.json> [<export2.json> …] \
 | 方式 | メソッドキー | identity | 要求条件 |
 |---|---|---|---|
 | Sekirei（端末内） | `sekirei` | `engineId`・`modelId`（`src/analysis/identity.ts` の現在 identity） | `nodes`（探索ノード上限）・`multiPV` |
-| Cloud Free | `cloud-free` | `result.identity` の代表値（engine/model の名前と SHA-256、driver・contract version） | profile `free`（Threads 1・Hash 64MiB・1000ms・MultiPV 2） |
-| Cloud Precision | `cloud-precision` | 同上 | profile `precision`（Threads 2・Hash 64MiB・5000ms・MultiPV 3） |
+| Cloud Free | `cloud-free` | `result.identity` の代表値（engine/model の名前と SHA-256、driver・contract version） | profile `free`（Threads 1・Hash 64MiB・500ms・MultiPV 1） |
+| Cloud Precision | `cloud-precision` | 同上 | profile `precision`（Threads 2・Hash 64MiB・2500ms・MultiPV 3） |
 
 **reference は常に Cloud Precision**。深い参照であって、正解・棋力の保証ではない。Issue #20 benchmark の基準条件（standard-3 / 10000ms / MultiPV 3）とも別の条件なので混同しない。
 

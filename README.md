@@ -37,6 +37,7 @@ Androidの開発版は [GitHub Releases](https://github.com/phni3j9a/meeshogi/re
 - [Cloudの運用](cloud/README.md)：staging設定・deploy・smoke
 - [解析エンジン](docs/ENGINE.md)／[戦型分類](docs/OPENINGS.md)／[デザイン](docs/design/README.md)
 - [解析方式の比較](docs/ANALYSIS-METHOD-STUDY.md)：Cloud移行の判断材料
+- [探索条件の見直し](docs/CLOUD-PROFILE-RETUNE.md)：Free / Precisionを短くする候補の実測（Issue #46）
 - [エージェントの作業指示](AGENTS.md)
 
 変更の経緯と検証はIssue・PRに残し、ここへ作業ログを追記しません。

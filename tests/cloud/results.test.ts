@@ -41,13 +41,13 @@ describe('Cloud結果の検証', () => {
   });
 
   it('後手番の局面でもサーバー正規化済みの値を再反転しない', () => {
-    const result = makeSuccessResult(GOTE_POS, 'free', {
+    const result = makeSuccessResult(GOTE_POS, 'precision', {
       scores: [
         { kind: 'cp', value: -120 },
         { kind: 'mate', value: -3, winningSide: 'gote' },
       ],
     });
-    const row = validateCloudResult(wire(GOTE_POS, result, 1), GOTE_POS, 'free');
+    const row = validateCloudResult(wire(GOTE_POS, result, 1), GOTE_POS, 'precision');
     expect(row).not.toBeNull();
     const display = toCloudPositionResult(row!);
     expect(display.candidates[0].scoreCp).toBe(-120);
@@ -55,13 +55,13 @@ describe('Cloud結果の検証', () => {
   });
 
   it('mate=0・勝者不明は値なしとして保持し、詰みにはしない', () => {
-    const result = makeSuccessResult(STARTPOS, 'free', {
+    const result = makeSuccessResult(STARTPOS, 'precision', {
       scores: [
         { kind: 'mate', value: 0, winningSide: 'unknown' },
         { kind: 'mate', value: 7, winningSide: 'sente' },
       ],
     });
-    const row = validateCloudResult(wire(STARTPOS, result), STARTPOS, 'free');
+    const row = validateCloudResult(wire(STARTPOS, result), STARTPOS, 'precision');
     expect(row).not.toBeNull();
     const display = toCloudPositionResult(row!);
     expect(display.candidates[0].scoreCp).toBeNull();
@@ -133,9 +133,9 @@ describe('Cloud結果の検証', () => {
   });
 
   it('実効MultiPVと候補数が一致しないsuccess行を拒否する', () => {
-    // The server declared actual.multiPV=2, but only one candidate arrived.
-    const result = makeSuccessResult(STARTPOS, 'free', { candidateCount: 1 });
-    expect(validateCloudResult(wire(STARTPOS, result), STARTPOS, 'free')).toBeNull();
+    // The server declared actual.multiPV=3, but only one candidate arrived.
+    const result = makeSuccessResult(STARTPOS, 'precision', { candidateCount: 1 });
+    expect(validateCloudResult(wire(STARTPOS, result), STARTPOS, 'precision')).toBeNull();
   });
 
   it('サーバーが確定した実効MultiPVを受け入れ、合法手数を再計算しない', () => {

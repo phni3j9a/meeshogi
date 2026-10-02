@@ -716,7 +716,7 @@ describe('queue consumer', () => {
     expect(results.results.map((row) => row.ply)).toEqual([0, 1, 2]);
     for (const row of results.results) {
       expect(row.result.status).toBe('success');
-      expect(row.result.candidates).toHaveLength(2); // free multiPV
+      expect(row.result.candidates).toHaveLength(1); // free multiPV
       expect(row.result.sfen).toBe(row.sfen);
     }
   });

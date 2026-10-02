@@ -15,8 +15,8 @@ export interface CloudSearchConditions {
 }
 
 export const CLOUD_PROFILES: Record<CloudProfileId, CloudSearchConditions> = {
-  free: { threads: 1, hashMb: 64, moveTimeMs: 1000, multiPV: 2 },
-  precision: { threads: 2, hashMb: 64, moveTimeMs: 5000, multiPV: 3 },
+  free: { threads: 1, hashMb: 64, moveTimeMs: 500, multiPV: 1 },
+  precision: { threads: 2, hashMb: 64, moveTimeMs: 2500, multiPV: 3 },
 };
 
 export const CLOUD_PROFILE_LABELS: Record<CloudProfileId, string> = {

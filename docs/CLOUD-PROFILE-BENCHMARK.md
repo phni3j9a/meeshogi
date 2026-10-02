@@ -1,5 +1,7 @@
 # Cloud解析 Free / 精密解析 profile比較（Issue #20）
 
+> 2026-10-02 に Issue #46 で profile を Free 500ms / MultiPV 1、Precision 2500ms / MultiPV 3 へ変更した。現行の値と根拠は [CLOUD-PROFILE-RETUNE.md](CLOUD-PROFILE-RETUNE.md) を参照。この文書は #20 時点の記録として残す。
+
 2026-09-25〜26に、Issue #19のstaging Cloudflare Worker + Containerで、同じYaneuraOu + Suisho11 Plus（private image、build `faae69bfa42245ea9820cdf0b3420d95`、git `c6d5b52`）を使い、探索条件ごとの品質・時間・推定コストを実測した。**2026-09-26にユーザーが初期候補を承認し、次の値を製品profileに採用した。** 後続Issue（#21以降）には、この承認済みの値だけを渡す。代替候補は採用していない。
 
 | profile | 承認した条件 |
