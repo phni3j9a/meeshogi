@@ -5,25 +5,63 @@ import type { Env } from './index';
 export const FREE_JOB_INSTANCE_TYPE = 'standard-2' as const;
 export const PRECISION_JOB_INSTANCE_TYPE = 'standard-3' as const;
 
-export class FreeJobContainer extends Container<Env> {
+const TERMINATED_STORAGE_KEY = 'job:terminated';
+const TERMINATED_RESPONSE_BODY = JSON.stringify({ status: 'terminated' });
+
+abstract class JobContainerBase extends Container<Env> {
   defaultPort = 8080;
   // The longest configured Queue retry delay is 30s; 1m retains the driver
   // process across redelivery while bounding idle capacity after a lost message.
   sleepAfter = '1m';
+  private terminationRequested = false;
 
-  constructor(ctx: DurableObjectState<{}>, env: Env) {
+  protected constructor(ctx: DurableObjectState<{}>, env: Env, expectedInstanceType: string) {
     super(ctx, env);
-    this.envVars = { ANALYSIS_EXPECTED_INSTANCE_TYPE: FREE_JOB_INSTANCE_TYPE };
+    this.envVars = { ANALYSIS_EXPECTED_INSTANCE_TYPE: expectedInstanceType };
+  }
+
+  /** Persist the terminal fence before destroying the Container. Safe to retry. */
+  async terminateJob(): Promise<void> {
+    this.terminationRequested = true;
+    await this.ctx.storage.put(TERMINATED_STORAGE_KEY, true);
+    await this.destroy();
+  }
+
+  override async fetch(request: Request): Promise<Response> {
+    if (this.terminationRequested) return this.terminatedResponse();
+    try {
+      const terminated = await this.ctx.storage.get<boolean>(TERMINATED_STORAGE_KEY);
+      // Check the in-memory latch again after the storage await so a concurrent
+      // terminateJob RPC cannot let a late fetch reach the Container.
+      if (terminated === true || this.terminationRequested) return this.terminatedResponse();
+    } catch {
+      // Fail closed: an unavailable DO storage read must never start a job
+      // Container whose terminal status cannot be checked.
+      return new Response(TERMINATED_RESPONSE_BODY, {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return super.fetch(request);
+  }
+
+  private terminatedResponse(): Response {
+    return new Response(TERMINATED_RESPONSE_BODY, {
+      status: 410,
+      headers: { 'content-type': 'application/json' },
+    });
   }
 }
 
-export class PrecisionJobContainer extends Container<Env> {
-  defaultPort = 8080;
-  sleepAfter = '1m';
-
+export class FreeJobContainer extends JobContainerBase {
   constructor(ctx: DurableObjectState<{}>, env: Env) {
-    super(ctx, env);
-    this.envVars = { ANALYSIS_EXPECTED_INSTANCE_TYPE: PRECISION_JOB_INSTANCE_TYPE };
+    super(ctx, env, FREE_JOB_INSTANCE_TYPE);
+  }
+}
+
+export class PrecisionJobContainer extends JobContainerBase {
+  constructor(ctx: DurableObjectState<{}>, env: Env) {
+    super(ctx, env, PRECISION_JOB_INSTANCE_TYPE);
   }
 }
 
@@ -38,7 +76,7 @@ export interface JobContainerState {
 
 export type JobContainerLog = (entry: Record<string, unknown>) => void;
 
-const STOP_CONFIRM_TIMEOUT_MS = 5_000;
+const STOP_TOTAL_TIMEOUT_MS = 6_000;
 const STOP_CONFIRM_INTERVAL_MS = 100;
 
 function structuredLog(entry: Record<string, unknown>): void {
@@ -71,16 +109,23 @@ function isStopped(state: JobContainerState): boolean {
   return state.status === 'stopped' || state.status === 'stopped_with_code';
 }
 
-async function readStateBeforeDeadline(
-  container: JobContainer,
-  timeoutMs: number,
-): Promise<JobContainerState | null> {
+type BoundedResult<T> =
+  | { kind: 'value'; value: T }
+  | { kind: 'error'; error: unknown }
+  | { kind: 'timeout' };
+
+/** Observe both outcomes before racing the deadline so late rejections stay handled. */
+async function settleBeforeDeadline<T>(pending: Promise<T>, timeoutMs: number): Promise<BoundedResult<T>> {
+  if (timeoutMs <= 0) return { kind: 'timeout' };
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      container.getState() as unknown as Promise<JobContainerState>,
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), Math.max(timeoutMs, 1));
+      pending.then<BoundedResult<T>, BoundedResult<T>>(
+        (value) => ({ kind: 'value', value }),
+        (error: unknown) => ({ kind: 'error', error }),
+      ),
+      new Promise<BoundedResult<T>>((resolve) => {
+        timer = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs);
       }),
     ]);
   } finally {
@@ -96,24 +141,42 @@ export async function stopJobContainer(
   log: JobContainerLog = structuredLog,
 ): Promise<{ stopped: boolean; state: string | null; pollCount: number }> {
   const startedAt = Date.now();
+  const deadline = startedAt + STOP_TOTAL_TIMEOUT_MS;
   let state: JobContainerState | null = null;
   let pollCount = 0;
+  let errorType: string | undefined;
+  let timedOut = false;
   try {
     const container = getJobContainer(env, jobId, profileId);
-    try {
-      state = await readStateBeforeDeadline(container, 1_000);
-    } catch {
-      // An unstarted DO may have no readable state yet; still attempt destroy.
+    const termination = await settleBeforeDeadline(
+      Promise.resolve().then(() => container.terminateJob()),
+      deadline - Date.now(),
+    );
+    if (termination.kind === 'timeout') {
+      timedOut = true;
+    } else if (termination.kind === 'error') {
+      errorType = termination.error instanceof Error ? termination.error.name : 'unknown';
     }
-    if (!state || !isStopped(state)) {
-      await container.destroy();
-      const deadline = Date.now() + STOP_CONFIRM_TIMEOUT_MS;
-      while (true) {
-        state = await readStateBeforeDeadline(container, deadline - Date.now());
-        pollCount += 1;
-        if (state && isStopped(state)) break;
-        const remaining = deadline - Date.now();
-        if (!state || remaining <= 0) break;
+
+    while (!timedOut && Date.now() < deadline) {
+      const stateResult = await settleBeforeDeadline(
+        Promise.resolve().then(() => container.getState() as unknown as Promise<JobContainerState>),
+        deadline - Date.now(),
+      );
+      pollCount += 1;
+      if (stateResult.kind === 'timeout') {
+        timedOut = true;
+        break;
+      }
+      if (stateResult.kind === 'error') {
+        errorType ??= stateResult.error instanceof Error ? stateResult.error.name : 'unknown';
+        break;
+      }
+      state = stateResult.value;
+      if (isStopped(state)) break;
+      if (errorType) break;
+      const remaining = deadline - Date.now();
+      if (remaining > 0) {
         await new Promise<void>((resolve) => setTimeout(resolve, Math.min(STOP_CONFIRM_INTERVAL_MS, remaining)));
       }
     }
@@ -122,6 +185,7 @@ export async function stopJobContainer(
       log({
         event: 'job_container_stop_result', jobId, profile: profileId, stopped,
         containerState: state?.status ?? null, pollCount, durationMs: Date.now() - startedAt,
+        timedOut, ...(errorType ? { errorType } : {}),
       });
     } catch {
       // Observability must not change stop outcome.

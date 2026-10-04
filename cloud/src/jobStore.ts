@@ -266,11 +266,12 @@ export class JobStore {
     return changes[0] === 1 && changes[1] === 1;
   }
 
-  async markRunning(jobId: string, isoNow: string): Promise<void> {
-    await this.db.run(
+  async markRunning(jobId: string, isoNow: string): Promise<boolean> {
+    const changes = await this.db.run(
       `UPDATE jobs SET status = 'running', updated_at = ? WHERE job_id = ? AND status = 'queued'`,
       [isoNow, jobId],
     );
+    return changes === 1;
   }
 
   async markCompleted(jobId: string, isoNow: string): Promise<boolean> {

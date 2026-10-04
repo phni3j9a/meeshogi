@@ -4,8 +4,25 @@ import realBenchmarkResponseFixture from '../fixtures/benchmark/real-startpos-st
 vi.mock('@cloudflare/containers', () => ({
   Container: class {
     envVars: Record<string, string> = {};
+    containerFetchCalls = 0;
+    destroyCalls = 0;
+    lifecycleEvents: string[];
+    ctx: { storage?: DurableObjectStorage };
 
-    constructor(_ctx: unknown, _env: unknown) {}
+    constructor(ctx: unknown, _env: unknown) {
+      this.ctx = ctx as { storage?: DurableObjectStorage };
+      this.lifecycleEvents = (ctx as { lifecycleEvents?: string[] }).lifecycleEvents ?? [];
+    }
+
+    async fetch(_request: Request): Promise<Response> {
+      this.containerFetchCalls += 1;
+      return new Response('forwarded');
+    }
+
+    async destroy(): Promise<void> {
+      this.destroyCalls += 1;
+      this.lifecycleEvents.push('destroy');
+    }
   },
   getContainer: (binding: { getByName: (name: string) => unknown }, name: string) => binding.getByName(name),
 }));
@@ -379,6 +396,33 @@ describe('staging analysis Worker boundary', () => {
     const unavailable = await handleRequest(health, unavailableEnv);
     expect(unavailable.status).toBe(502);
     expect(unavailableEnv.forwardedPaths).toEqual(['/health']);
+  });
+
+  it('persists job termination before destroy and rejects fetch after DO restart without starting the Container', async () => {
+    const values = new Map<string, unknown>();
+    const lifecycleEvents: string[] = [];
+    const storage = {
+      get: async <T>(key: string) => values.get(key) as T | undefined,
+      put: async (key: string, value: unknown) => {
+        lifecycleEvents.push('storage.put');
+        values.set(key, value);
+      },
+    };
+    const ctx = { storage, lifecycleEvents } as unknown as DurableObjectState<{}>;
+    const firstInstance = new FreeJobContainer(ctx, makeEnv());
+    const firstResponse = await firstInstance.fetch(new Request('https://container.test/session'));
+    expect(firstResponse.status).toBe(200);
+    expect((firstInstance as unknown as { containerFetchCalls: number }).containerFetchCalls).toBe(1);
+
+    await firstInstance.terminateJob();
+    expect(lifecycleEvents).toEqual(['storage.put', 'destroy']);
+    expect((firstInstance as unknown as { destroyCalls: number }).destroyCalls).toBe(1);
+
+    const restartedInstance = new FreeJobContainer(ctx, makeEnv());
+    const lateResponse = await restartedInstance.fetch(new Request('https://container.test/session/cancel'));
+    expect(lateResponse.status).toBe(410);
+    expect(await lateResponse.json()).toEqual({ status: 'terminated' });
+    expect((restartedInstance as unknown as { containerFetchCalls: number }).containerFetchCalls).toBe(0);
   });
 
   it('includes Cloudflare Worker version metadata in health when the binding is available', async () => {

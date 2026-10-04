@@ -97,7 +97,7 @@ Issue #48で、job処理を同期解析用singletonおよびbenchmarkクラス�
 
 Queueは `meeshogi-jobs-free-staging` / `meeshogi-jobs-free-staging-dlq` と `meeshogi-jobs-precision-staging` / `meeshogi-jobs-precision-staging-dlq` の4本。producerとcontinuationは保存profileのQueueへ送り、consumerは `batch.queue` とD1 profileの一致を確認する。不一致は `queue_profile_mismatch` として終端化する。旧 `meeshogi-jobs-staging` bindingは外す。staging deploy前に旧Queue backlogがないことを確認する。
 
-完了・失敗・retry枯渇・取消がD1に確定した後、同じjobIdのContainerへ `destroy()` を呼び、`getState()` を最大5秒、100ms間隔で確認する。停止失敗は構造化ログに残すが、Queue ack/retry結果は変えない。continuationと通常retryの前には停止しない。jobクラスの `sleepAfter = '1m'` は保険で、設定されている最大retry待ち30秒（10/20/30秒）より長く、同期解析・benchmarkの5分設定には影響しない。
+完了・失敗・retry枯渇・取消がD1に確定した後、同じjobIdのContainer RPC `terminateJob()` を呼ぶ。DO storageへ終端フラグを永続化してから `destroy()` し、終端後の `/session` と `/session/cancel` fetchはHTTP 410で拒否するため、DO再起動後もContainerを起動しない。停止RPCと `getState()` の確認全体に6秒の期限を設け、pollは100ms間隔とする。期限切れ・RPC失敗は構造化ログに残すが、Queue ack/retry結果は変えない。consumerが410を受けたらD1を再読し、終端なら停止を冪等に再試行してackし、activeなら契約違反として失敗させる。session cleanup前にもD1を読み直し、終端jobへ起動fetchを送らない。`markRunning` が0行を更新した場合もD1を読み直して、終端jobではsessionを開始しない。continuationと通常retryの前には停止しない。jobクラスの `sleepAfter = '1m'` は保険で、設定されている最大retry待ち30秒（10/20/30秒）より長く、同期解析・benchmarkの5分設定には影響しない。
 
 `GET /internal/jobs/:jobId/container` はinternal tokenを要求し、D1からprofileを読み、jobId名stubの `getState()` だけを返す。Container `fetch()` は呼ばないため、停止確認のpollingはアプリを起動・延命しない。計測ログにはdelivery開始、Container fetch開始、session header受信、最初の結果commit、停止結果がjobId/profileと共に記録される。HTTP 503時は最大1KiBの本文を記録し、従来どおりretryする。
 

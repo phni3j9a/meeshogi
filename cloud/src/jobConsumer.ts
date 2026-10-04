@@ -269,6 +269,23 @@ async function runSession(
   );
   if (started === null || started === SESSION_TIMEOUT) return RETRY;
   const response = started;
+  if (response.status === 410) {
+    controller.abort();
+    await cancelBody(response);
+    let persisted: JobRow | null;
+    try {
+      persisted = await store.jobById(job.job_id);
+    } catch {
+      // A transient D1 read failure keeps the original delivery eligible for retry.
+      return RETRY;
+    }
+    if (persisted && isTerminal(persisted)) return DONE;
+    return {
+      kind: 'fail',
+      code: 'contract_violation',
+      message: 'The job Container rejected an active job as already terminated.',
+    };
+  }
   if (!response.ok) {
     if (response.status === 409 || response.status === 503 || response.status === 429 || response.status >= 500) {
       if (response.status === 503) {
@@ -435,7 +452,15 @@ async function runSession(
     // keeps its busy guard until something stops it (Issue #29). Ask it to
     // stop our session so the next job does not burn its retries on 409 busy.
     if (sessionId !== null && endReason === null) {
-      await cancelDriverSession(container, sessionId, cancelTimeoutMs, waitUntil);
+      let persisted: JobRow | null = null;
+      try {
+        persisted = await store.jobById(job.job_id);
+      } catch {
+        // If D1 is unavailable, preserve the existing best-effort cleanup.
+      }
+      if (!persisted || !isTerminal(persisted)) {
+        await cancelDriverSession(container, sessionId, cancelTimeoutMs, waitUntil);
+      }
     }
   }
 
@@ -502,7 +527,16 @@ async function driveJob(
     if (positions.length === 0) return RETRY;
     const sessionDeadline = budgetDeadline - JOB_CONSUMER.tailMarginMs;
     if (sessionDeadline - now() <= 0) return RETRY;
-    await store.markRunning(jobId, iso(now()));
+    const markedRunning = await store.markRunning(jobId, iso(now()));
+    if (!markedRunning) {
+      // Cancellation may have committed between the active read and this
+      // guarded UPDATE. Never open a session until the persisted row is fresh.
+      const fresh = await store.jobById(jobId);
+      if (!isActive(fresh)) return DONE;
+      if (fresh.status !== 'running') return RETRY;
+      if (fresh.next_ply !== job.next_ply) continue;
+      job = fresh;
+    }
 
     const outcome = await runSession(env, store, job, profile, positions, sessionDeadline, now, deps);
     if (outcome.kind !== 'resume') return outcome;
