@@ -101,10 +101,20 @@ class RenderConfigTests(unittest.TestCase):
             "meeshogi-analysis-mvp-staging-job-free": "FreeJobContainer",
             "meeshogi-analysis-mvp-staging-job-precision": "PrecisionJobContainer",
         })
-        self.assertEqual({row["queue"]: row["max_concurrency"] for row in benchmark["queues"]["consumers"]}, {
-            "meeshogi-jobs-free-staging": 3,
-            "meeshogi-jobs-precision-staging": 2,
+        consumers = benchmark["queues"]["consumers"]
+        self.assertEqual({row["queue"] for row in consumers}, {
+            "meeshogi-jobs-free-staging",
+            "meeshogi-jobs-precision-staging",
         })
+        self.assertEqual({row["queue"]: row["dead_letter_queue"] for row in consumers}, {
+            "meeshogi-jobs-free-staging": "meeshogi-jobs-free-staging-dlq",
+            "meeshogi-jobs-precision-staging": "meeshogi-jobs-precision-staging-dlq",
+        })
+        self.assertTrue(all(row["max_batch_size"] == 1 for row in consumers))
+        self.assertTrue(all(row["max_batch_timeout"] == 0 for row in consumers))
+        self.assertTrue(all(row["max_retries"] == 3 for row in consumers))
+        self.assertTrue(all("max_concurrency" not in row for row in consumers))
+        self.assertTrue(all("visibility_timeout_ms" not in row for row in consumers))
         self.assertEqual(benchmark["vars"]["ANALYSIS_BENCHMARK_BUILD_ID"], "c" * 32)
         targets = json.loads(benchmark["vars"]["ANALYSIS_BENCHMARK_TARGETS"])
         self.assertEqual(targets[1]["targetId"], f"bench-standard-2-{'c' * 32}-pilot-standard-2")

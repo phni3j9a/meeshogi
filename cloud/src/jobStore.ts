@@ -83,6 +83,12 @@ export interface ResultRow {
   created_at: string;
 }
 
+export interface StaleActiveJobRow {
+  job_id: string;
+  profile_id: string;
+  updated_at: string;
+}
+
 const JOB_COLUMNS = `job_id, owner_id, idempotency_key, input_hash, profile_id, initial_sfen,
   moves_json, total_plies, status, next_ply, jst_day, created_ms, created_at, updated_at,
   finished_at, failure_code, failure_message`;
@@ -182,6 +188,17 @@ export class JobStore {
   async jobById(jobId: string): Promise<JobRow | null> {
     const rows = await this.db.all<JobRow>(`SELECT ${JOB_COLUMNS} FROM jobs WHERE job_id = ?`, [jobId]);
     return rows[0] ?? null;
+  }
+
+  /** A bounded recovery scan for active rows whose DO delivery may be lost. */
+  async staleActiveJobs(staleBefore: string, limit = 100): Promise<StaleActiveJobRow[]> {
+    const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 250));
+    return this.db.all<StaleActiveJobRow>(
+      `SELECT job_id, profile_id, updated_at FROM jobs
+       WHERE status IN ('queued', 'running') AND updated_at <= ?
+       ORDER BY updated_at, job_id LIMIT ?`,
+      [staleBefore, boundedLimit],
+    );
   }
 
   async jobByIdempotency(ownerId: string, idempotencyKey: string): Promise<JobRow | null> {

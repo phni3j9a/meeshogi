@@ -57,7 +57,10 @@ it('does not resume an SDK startup retry after terminateJob', async () => {
     await pingReached;
     await Promise.resolve();
     await Promise.resolve();
-    await container.terminateJob();
+    const termination = container.terminateJob();
+    // If the SDK leaves startup pending, termination is bounded by its 5s settle limit.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await termination;
 
     expect(values.get('job:terminated')).toBe(true);
     expect(events).toEqual(['start-1', 'destroy']);
@@ -66,7 +69,6 @@ it('does not resume an SDK startup retry after terminateJob', async () => {
 
     // Advance beyond the SDK's 300ms retry interval: the aborted request must
     // settle without allowing its startup loop to issue another native start.
-    await vi.advanceTimersByTimeAsync(350);
     await pending;
     expect(events).toEqual(['start-1', 'destroy']);
     expect(running).toBe(false);

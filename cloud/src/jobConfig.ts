@@ -6,7 +6,7 @@ export type JobInstanceType = 'standard-2' | 'standard-3';
 
 export type JobProfile = {
   instanceType: JobInstanceType;
-  maxConcurrentJobs: number;
+  maxInstances: number;
   queueName: string;
   deadLetterQueueName: string;
   conditions: SearchConditions;
@@ -20,12 +20,12 @@ export type JobLimits = {
   maxActiveJobsPerOwner: number;
 };
 
-export type JobConsumerConfig = {
+export type JobExecutionConfig = {
   budgetMs: number;
   tailMarginMs: number;
-  /** Standard Queue retries after the first delivery; total deliveries = maxRetries + 1. Must match wrangler.staging.jsonc queues.consumers[].max_retries. */
+  /** Transient execution attempts after the initial try. */
   maxRetries: number;
-  /** Base delay between redeliveries; multiplied by the attempt number so a wedged driver session can drain before the next try. */
+  /** Base delay for DO-owned retries, multiplied by the failed attempt number. */
   retryDelaySeconds: number;
 };
 
@@ -39,7 +39,7 @@ function loadProfiles(): Record<JobProfileId, JobProfile> {
   for (const id of ['free', 'precision'] as const) {
     const row = profiles[id];
     if (!row || !['standard-2', 'standard-3'].includes(String(row.instanceType))
-      || !isPositiveInteger(row.maxConcurrentJobs)
+      || !isPositiveInteger(row.maxInstances)
       || typeof row.queueName !== 'string' || !/^meeshogi-jobs-[a-z]+-staging$/u.test(row.queueName)
       || typeof row.deadLetterQueueName !== 'string' || !/^meeshogi-jobs-[a-z]+-staging-dlq$/u.test(row.deadLetterQueueName)
       || !isPositiveInteger(row.threads) || !isPositiveInteger(row.hashMb)
@@ -48,7 +48,7 @@ function loadProfiles(): Record<JobProfileId, JobProfile> {
     }
     result[id] = {
       instanceType: row.instanceType as JobInstanceType,
-      maxConcurrentJobs: row.maxConcurrentJobs,
+      maxInstances: row.maxInstances,
       queueName: row.queueName,
       deadLetterQueueName: row.deadLetterQueueName,
       conditions: {
@@ -74,16 +74,16 @@ function loadLimits(): JobLimits {
   return limits as unknown as JobLimits;
 }
 
-function loadConsumer(): JobConsumerConfig {
-  const consumer = manifest.consumer as Record<string, unknown>;
-  if (!isPositiveInteger(consumer.budgetMs) || !isPositiveInteger(consumer.tailMarginMs)
-    || !isPositiveInteger(consumer.maxRetries) || !isPositiveInteger(consumer.retryDelaySeconds)
-    || consumer.tailMarginMs >= consumer.budgetMs) {
-    throw new Error('job-profiles.json: consumer config is missing or invalid');
+function loadExecution(): JobExecutionConfig {
+  const execution = manifest.execution as Record<string, unknown>;
+  if (!isPositiveInteger(execution.budgetMs) || execution.budgetMs > 600_000
+    || !isPositiveInteger(execution.tailMarginMs) || !isPositiveInteger(execution.maxRetries)
+    || !isPositiveInteger(execution.retryDelaySeconds) || execution.tailMarginMs >= execution.budgetMs) {
+    throw new Error('job-profiles.json: execution config is missing or invalid');
   }
-  return consumer as unknown as JobConsumerConfig;
+  return execution as unknown as JobExecutionConfig;
 }
 
 export const JOB_PROFILES = loadProfiles();
 export const JOB_LIMITS = loadLimits();
-export const JOB_CONSUMER = loadConsumer();
+export const JOB_EXECUTION = loadExecution();

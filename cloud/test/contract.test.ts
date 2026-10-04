@@ -23,6 +23,10 @@ vi.mock('@cloudflare/containers', () => ({
       this.destroyCalls += 1;
       this.lifecycleEvents.push('destroy');
     }
+
+    deleteSchedules(name: string): void {
+      this.lifecycleEvents.push('deleteSchedules:' + name);
+    }
   },
   getContainer: (binding: { getByName: (name: string) => unknown }, name: string) => binding.getByName(name),
 }));
@@ -415,7 +419,9 @@ describe('staging analysis Worker boundary', () => {
     expect((firstInstance as unknown as { containerFetchCalls: number }).containerFetchCalls).toBe(1);
 
     await firstInstance.terminateJob();
-    expect(lifecycleEvents).toEqual(['storage.put', 'destroy']);
+    expect(lifecycleEvents).toEqual([
+      'storage.put', 'deleteSchedules:runScheduledSlice', 'deleteSchedules:recoverScheduledSlice', 'destroy',
+    ]);
     expect((firstInstance as unknown as { destroyCalls: number }).destroyCalls).toBe(1);
 
     const restartedInstance = new FreeJobContainer(ctx, makeEnv());

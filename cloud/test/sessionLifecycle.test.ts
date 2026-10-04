@@ -1,6 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -9,7 +7,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { EXPECTED_IDENTITY } from '../src/contract';
 import { JOB_PROFILES } from '../src/jobConfig';
 
-describe('consumer response ownership in workerd with the installed Containers SDK', () => {
+describe('runner response ownership in workerd with the installed Containers SDK', () => {
   let mf: Miniflare;
   let server: Server;
   const closedConnections = new Set<string>();
@@ -33,12 +31,6 @@ describe('consumer response ownership in workerd with the installed Containers S
       entryPoints: [fileURLToPath(new URL('./fixtures/sessionLifecycle.worker.mjs', import.meta.url))],
       bundle: true, write: false, format: 'esm', platform: 'neutral', target: 'es2022',
       external: ['cloudflare:workers'],
-      plugins: [{ name: 'expose-session-only-in-test-bundle', setup(builder) {
-        builder.onLoad({ filter: /\/src\/jobConsumer\.ts$/ }, (args) => ({
-          contents: readFileSync(args.path, 'utf8') + '\nexport { runSession };',
-          loader: 'ts', resolveDir: dirname(args.path),
-        }));
-      } }],
     });
     mf = new Miniflare(convertV4MiniflareOptions({
       workers: [{

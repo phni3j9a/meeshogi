@@ -153,8 +153,8 @@ def main() -> int:
     profile_rows: dict[str, dict[str, object]] = {}
     for profile_id in ("free", "precision"):
         row = profiles[profile_id]
-        if not isinstance(row, dict) or type(row.get("maxConcurrentJobs")) is not int or not 1 <= row["maxConcurrentJobs"] <= 250:
-            raise ValueError(f"job-profiles.json profile {profile_id} has invalid maxConcurrentJobs")
+        if not isinstance(row, dict) or type(row.get("maxInstances")) is not int or not 1 <= row["maxInstances"] <= 250:
+            raise ValueError(f"job-profiles.json profile {profile_id} has invalid maxInstances")
         if not isinstance(row.get("queueName"), str) or not isinstance(row.get("deadLetterQueueName"), str):
             raise ValueError(f"job-profiles.json profile {profile_id} has invalid queue names")
         profile_rows[profile_id] = row
@@ -165,7 +165,7 @@ def main() -> int:
     }
     for profile_id, (app_name, class_name) in app_for_profile.items():
         row = next(row for row in containers if row.get("name") == app_name and row.get("class_name") == class_name)
-        row["max_instances"] = profile_rows[profile_id]["maxConcurrentJobs"]
+        row["max_instances"] = profile_rows[profile_id]["maxInstances"]
     for row in containers:
         if row.get("class_name") not in {"FreeJobContainer", "PrecisionJobContainer"}:
             if row.get("max_instances") != 1:
@@ -193,12 +193,10 @@ def main() -> int:
         consumer = consumers_by_queue[profile["queueName"]]
         if consumer.get("dead_letter_queue") != profile["deadLetterQueueName"]:
             raise ValueError(f"{profile_id} dead-letter queue does not match job-profiles.json")
-        consumer["max_concurrency"] = profile["maxConcurrentJobs"]
-    for profile_id, (app_name, _) in app_for_profile.items():
-        app = next(row for row in containers if row.get("name") == app_name)
-        concurrency = consumers_by_queue[profile_rows[profile_id]["queueName"]]["max_concurrency"]
-        if app["max_instances"] != concurrency:
-            raise ValueError(f"{profile_id} Container and Queue concurrency differ")
+        if consumer.get("max_retries") != profiles_manifest.get("execution", {}).get("maxRetries"):
+            raise ValueError(f"{profile_id} Queue retry count does not match the execution policy")
+        if "max_concurrency" in consumer or "visibility_timeout_ms" in consumer:
+            raise ValueError(f"{profile_id} push consumer must not set pull-consumer concurrency or visibility timeout")
     Path(output).write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return 0
 

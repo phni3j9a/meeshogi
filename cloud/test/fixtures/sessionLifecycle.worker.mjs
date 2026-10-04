@@ -1,7 +1,7 @@
 // Exercise the installed Containers SDK and production consumer in workerd.
 // Only the TCP transport and persistence are substituted; no private engine is used.
 import { FreeJobContainer } from '../../src/jobContainers';
-import { runSession } from '../../src/jobConsumer';
+import { runSession } from '../../src/jobRunner';
 import { JOB_PROFILES } from '../../src/jobConfig';
 import { EXPECTED_IDENTITY } from '../../src/contract';
 
@@ -13,7 +13,7 @@ export default {
     const container = Object.create(FreeJobContainer.prototype);
     Object.assign(container, {
       defaultPort: 8080, sleepAfter: '5m', inflightRequests: 0, sleepAfterMs: 0,
-      terminationRequested: false, inFlightFetches: new Set(), ctx: { storage: { get: async () => undefined } },
+      terminationRequested: false, inFlightFetches: new Set(), doState: { storage: { get: async () => undefined } },
     });
     container.state = { getState: async () => ({ status: 'healthy' }) };
     let sourceCancelled = false;
@@ -71,15 +71,22 @@ export default {
     };
     const ns = { idFromName: () => 'probe', get: () => container };
     const expiresSoon = ['late_headers', 'abort_headers', 'stalled_body', 'http_stalled_body', 'cancel_after_header'].includes(mode);
+    const job = {
+      job_id: 'job-session-lifecycle', profile_id: 'free', status: 'running', next_ply: 0,
+      total_plies: 0, owner_id: '', idempotency_key: '', input_hash: '', initial_sfen: '', moves_json: '',
+      jst_day: '', created_ms: 0, created_at: '', updated_at: '', finished_at: null,
+      failure_code: null, failure_message: null,
+    };
+    const store = { jobById: async () => job };
+    const controller = new AbortController();
     const outcome = await runSession(
-      {
-        ANALYSIS_CONTAINER: ns,
-        ANALYSIS_BENCHMARK_STANDARD_3: ns,
-        JOB_FREE_CONTAINER: ns,
-        JOB_PRECISION_CONTAINER: ns,
-      }, {}, { profile_id: 'free' },
+      store, (sessionRequest) => container.fetch(sessionRequest), controller.signal, job,
       JOB_PROFILES.free, [], Date.now() + (expiresSoon ? 20 : 2000), () => Date.now(),
-      { waitUntil: (task) => { background.push(task); ctx.waitUntil(task); }, sessionCancelTimeoutMs: 500 },
+      {
+        store, jobId: job.job_id, transport: (sessionRequest) => container.fetch(sessionRequest),
+        signal: controller.signal, budgetMs: 1000, tailMarginMs: 0, instanceType: 'standard-2',
+        waitUntil: (task) => { background.push(task); ctx.waitUntil(task); }, sessionCancelTimeoutMs: 500,
+      },
     );
     await Promise.all(background);
     await wait(30); // Let the SDK's response pipe settle after cancellation.
