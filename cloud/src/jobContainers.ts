@@ -204,7 +204,9 @@ abstract class JobContainerBase extends Container<Env> {
       if (control.phase === 'terminal' || this.terminationRequested) {
         return { accepted: true, generation: control.generation };
       }
-      if (control.phase === 'running' && this.activeRun?.runId === control.runId) {
+      if (control.phase === 'running'
+        && this.activeRun?.generation === control.generation
+        && this.activeRun.runId === control.runId) {
         return { accepted: true, generation: control.generation };
       }
       const current = control;
@@ -222,10 +224,13 @@ abstract class JobContainerBase extends Container<Env> {
 
   /** SDK callback; do not override alarm() or use Durable Object alarms directly. */
   async runScheduledSlice(payload: SchedulePayload, schedule?: ScheduleRecord<SchedulePayload>): Promise<void> {
+    const activeRunAtEntry = this.activeRun;
     try {
       await this.executeScheduled(payload, schedule, false);
     } finally {
-      if (this.activeRun?.runId === payload?.runId) this.activeRun = undefined;
+      if (this.activeRun !== activeRunAtEntry
+        && this.activeRun?.generation === payload?.generation
+        && this.activeRun.runId === payload?.runId) this.activeRun = undefined;
     }
   }
 
@@ -343,11 +348,17 @@ abstract class JobContainerBase extends Container<Env> {
 
     if (recovery) {
       if (control.phase !== 'running') return;
-      if (this.activeRun?.runId === control.runId) {
+      if (this.activeRun?.generation === control.generation && this.activeRun.runId === control.runId) {
         const recoveryAt = alignToSdkSecond(Date.now() + RECOVERY_DELAY_MS);
         await this.ensureReservation(control, RECOVERY_CALLBACK, recoveryAt, schedule?.taskId);
         return;
       }
+      await this.scheduleTransient(control, 'callback_recovery');
+      return;
+    }
+    if (control.phase === 'running') {
+      if (this.activeRun?.generation === control.generation && this.activeRun.runId === control.runId) return;
+      this.emitControl('job_run_resumed_after_restart', control, { previousRunId: control.runId });
       await this.scheduleTransient(control, 'callback_recovery');
       return;
     }

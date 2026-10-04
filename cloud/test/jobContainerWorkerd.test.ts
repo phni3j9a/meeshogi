@@ -9,6 +9,7 @@ const AFTER_2G2F = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/7P1/PPPPPPP1P/1B5R1/LNSGKGSNL 
 const JOB_ID = 'job-49-workerd';
 const CANCEL_JOB_ID = 'job-49-cancel';
 const RUNNING_STREAM_JOB_ID = 'job-49-running-stream';
+const RUNNING_REPLAY_JOB_ID = 'job-49-running-replay';
 
 describe('DO-driven jobs in workerd with the installed Containers SDK', () => {
   let mf: Miniflare;
@@ -168,6 +169,43 @@ describe('DO-driven jobs in workerd with the installed Containers SDK', () => {
     expect(job).toMatchObject({ status: 'completed', next_ply: 2 });
     expect(await fetchJson('/request-cursors', RUNNING_STREAM_JOB_ID)).toEqual([[0, 1], [1]]);
     expect(await fetchJson('/result-plies', RUNNING_STREAM_JOB_ID)).toEqual([0, 1]);
+  }, 30_000);
+
+  it('resumes a replayed run callback after the active DO run was lost', async () => {
+    await seedJob(RUNNING_REPLAY_JOB_ID);
+    await fetchJson('/start', RUNNING_REPLAY_JOB_ID);
+    await waitForCursor(RUNNING_REPLAY_JOB_ID, 1);
+
+    const running = await fetchJson<{
+      control: { phase: string; generation: number; attempt: number };
+      activeRun: unknown;
+    }>('/inspect', RUNNING_REPLAY_JOB_ID);
+    expect(running).toMatchObject({
+      control: { phase: 'running', generation: 1, attempt: 1 },
+      activeRun: { generation: 1 },
+    });
+
+    expect(await fetchJson('/release-stream', RUNNING_REPLAY_JOB_ID)).toEqual({ released: true });
+    const released = await fetchJson<{ control: { phase: string }; activeRun: unknown }>('/inspect', RUNNING_REPLAY_JOB_ID);
+    expect(released).toMatchObject({ control: { phase: 'running' }, activeRun: null });
+
+    expect(await fetchJson<{ accepted: boolean; generation: number }>('/replay-run-callback', RUNNING_REPLAY_JOB_ID))
+      .toMatchObject({ accepted: true, generation: 1 });
+    const retry = await fetchJson<{ control: { phase: string; generation: number; attempt: number } }>(
+      '/inspect', RUNNING_REPLAY_JOB_ID,
+    );
+    expect(retry.control).toMatchObject({ phase: 'scheduled', generation: 2, attempt: 2 });
+
+    const deadline = Date.now() + 18_000;
+    let job: { status: string; next_ply: number } | undefined;
+    while (Date.now() < deadline) {
+      job = await fetchJson('/job', RUNNING_REPLAY_JOB_ID);
+      if (job?.status === 'completed') break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(job).toMatchObject({ status: 'completed', next_ply: 2 });
+    expect(await fetchJson('/request-cursors', RUNNING_REPLAY_JOB_ID)).toEqual([[0, 1], [1]]);
+    expect(await fetchJson('/result-plies', RUNNING_REPLAY_JOB_ID)).toEqual([0, 1]);
   }, 30_000);
 
   it('terminates an alarm-owned stream promptly and leaves the durable terminal fence', async () => {

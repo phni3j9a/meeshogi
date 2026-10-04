@@ -590,6 +590,79 @@ describe('JobContainer durable control state machine', () => {
     db.sqlite.close();
   });
 
+  it('resumes a replayed run callback after restart from the D1 cursor without duplicating results', async () => {
+    const db = seedJob('do_run_restart', ['2g2f']);
+    const requestedCursors: number[][] = [];
+    const harness = makeDo('do_run_restart', db.d1, async (request) => {
+      if (new URL(request.url).pathname !== '/session') return Response.json({ schemaVersion: 1, cancelled: true });
+      const body = await request.json() as SessionRequest;
+      requestedCursors.push(body.positions.map((position) => position.ply));
+      return sessionResponse(body.positions, 'free');
+    });
+    await harness.store.markRunning('do_run_restart', '2026-10-04T00:00:00.000Z');
+    const firstResult = successLine(db.positions[0], 'free').result;
+    await harness.store.commitResult(
+      'do_run_restart', 0, db.positions[0].sfen, 'success', 1,
+      JSON.stringify(firstResult), '2026-10-04T00:00:01.000Z',
+    );
+    await harness.container.startJob({ jobId: 'do_run_restart', profileId: 'free' });
+    const original = harness.schedules.find((row) => row.callback === RUN_CALLBACK)!;
+    const previous = control(harness);
+    await harness.context.storage.put('job:control', {
+      ...previous,
+      phase: 'running',
+      recoveryAt: Date.now() + JOB_EXECUTION.budgetMs + 20_000,
+    });
+
+    await runSchedule(harness, original);
+    expect(requestedCursors).toEqual([]);
+    expect(control(harness)).toMatchObject({ phase: 'scheduled', generation: 2, attempt: 2 });
+    const restartEvent = vi.mocked(console.log).mock.calls
+      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .find((entry) => entry.event === 'job_run_resumed_after_restart' && entry.jobId === 'do_run_restart');
+    expect(restartEvent).toMatchObject({
+      profile: 'free', generation: 1, previousRunId: previous.runId,
+    });
+
+    const retry = harness.schedules.find((row) => row.callback === RUN_CALLBACK)!;
+    vi.setSystemTime(control(harness).notBefore);
+    await runSchedule(harness, retry);
+    expect(requestedCursors).toEqual([[1]]);
+    expect(await harness.store.jobById('do_run_restart')).toMatchObject({ status: 'completed', next_ply: 2 });
+    expect(db.sqlite.prepare('SELECT ply FROM job_results WHERE job_id = ? ORDER BY ply').all('do_run_restart'))
+      .toEqual([{ ply: 0 }, { ply: 1 }]);
+    db.sqlite.close();
+  });
+
+  it('keeps a matching in-memory run active when a duplicate run callback returns', async () => {
+    const db = seedJob('do_run_duplicate', ['2g2f']);
+    let resolveResponse!: (response: Response) => void;
+    let sessionBegun!: () => void;
+    const begun = new Promise<void>((resolve) => { sessionBegun = resolve; });
+    const harness = makeDo('do_run_duplicate', db.d1, async (request) => {
+      if (new URL(request.url).pathname !== '/session') return Response.json({ schemaVersion: 1, cancelled: true });
+      sessionBegun();
+      return new Promise<Response>((resolve) => { resolveResponse = resolve; });
+    });
+    await harness.container.startJob({ jobId: 'do_run_duplicate', profileId: 'free' });
+    const original = harness.schedules.find((row) => row.callback === RUN_CALLBACK)!;
+    const pendingRun = runSchedule(harness, original);
+    await begun;
+    expect(control(harness)).toMatchObject({ phase: 'running', generation: 1 });
+
+    await harness.container.runScheduledSlice(original.payload as never, { ...original, taskId: 'duplicate-run-callback' } as never);
+    expect(harness.sessionCount).toBe(1);
+    expect(control(harness)).toMatchObject({ phase: 'running', generation: 1 });
+    expect(harness.schedules.filter((row) => row.callback === RUN_CALLBACK)).toEqual([original]);
+
+    resolveResponse(sessionResponse(db.positions, 'free'));
+    await pendingRun;
+    expect(await harness.store.jobById('do_run_duplicate')).toMatchObject({ status: 'completed', next_ply: 2 });
+    expect(db.sqlite.prepare('SELECT ply FROM job_results WHERE job_id = ? ORDER BY ply').all('do_run_duplicate'))
+      .toEqual([{ ply: 0 }, { ply: 1 }]);
+    db.sqlite.close();
+  });
+
   it('ignores stale generations and callbacks after terminal fencing without fetching the Container', async () => {
     const db = seedJob('do_stale_callback');
     let fetches = 0;

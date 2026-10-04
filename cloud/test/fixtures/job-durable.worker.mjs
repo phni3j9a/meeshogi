@@ -57,7 +57,7 @@ function makeNativeContainer(jobId) {
           }];
           const firstAttempt = count === 1;
           const firstAttemptStalls = firstAttempt
-            && (jobId === 'job-49-cancel' || jobId === 'job-49-running-stream');
+            && (jobId === 'job-49-cancel' || jobId === 'job-49-running-stream' || jobId === 'job-49-running-replay');
           const positions = firstAttempt ? body.positions.slice(0, 1) : body.positions;
           for (const position of positions) {
             lines.push({ type: 'result', ply: position.ply, engineLaunch: 1, result: resultFor(position, JOB_PROFILES.free.conditions) });
@@ -126,6 +126,13 @@ export class WorkerdFreeJobContainer extends FreeJobContainer {
     return { accepted: true, generation: control.generation };
   }
 
+  async replayRunCallback() {
+    const control = await this.doState.storage.get('job:control');
+    if (!control || !control.runId) return { accepted: false };
+    await this.runScheduledSlice({ schemaVersion: 1, generation: control.generation, runId: control.runId });
+    return { accepted: true, generation: control.generation };
+  }
+
   async releaseActiveStreamForTest() {
     const active = this.activeRun;
     if (!active) return { released: false };
@@ -154,6 +161,7 @@ export default {
     if (url.pathname === '/start') return Response.json(await stub.startJob({ jobId, profileId: 'free' }));
     if (url.pathname === '/inspect') return Response.json(await stub.inspectJob());
     if (url.pathname === '/recover') return Response.json(await stub.forceRecovery());
+    if (url.pathname === '/replay-run-callback') return Response.json(await stub.replayRunCallback());
     if (url.pathname === '/release-stream') return Response.json(await stub.releaseActiveStreamForTest());
     if (url.pathname === '/request-cursors') return Response.json(requestedCursors.get(jobId) ?? []);
     if (url.pathname === '/terminate') {
