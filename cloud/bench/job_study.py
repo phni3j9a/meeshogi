@@ -17,6 +17,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +33,15 @@ JOB_TIMEOUT_SECONDS = 3600
 PHASES = ("opening", "middlegame", "endgame")
 
 
-def api(base: str, method: str, path: str, credential: str | None, body: Any | None) -> tuple[int, dict[str, Any]]:
+def api(
+    base: str,
+    method: str,
+    path: str,
+    credential: str | None,
+    body: Any | None,
+    *,
+    internal_token: str | None = None,
+) -> tuple[int, dict[str, Any]]:
     headers = {"User-Agent": USER_AGENT}
     data = None
     if body is not None:
@@ -39,6 +49,8 @@ def api(base: str, method: str, path: str, credential: str | None, body: Any | N
         data = json.dumps(body).encode()
     if credential:
         headers["Authorization"] = f"Bearer {credential}"
+    elif internal_token:
+        headers["Authorization"] = f"Bearer {internal_token}"
     request = urllib.request.Request(base.rstrip("/") + path, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
@@ -50,7 +62,11 @@ def api(base: str, method: str, path: str, credential: str | None, body: Any | N
             return error.code, {}
 
 
-def run_job(base: str, credential: str, profile: str, key: str, initial_sfen: str, moves: list[str]) -> dict[str, Any]:
+def run_job(base: str, profile: str, key: str, initial_sfen: str, moves: list[str], internal_token: str) -> dict[str, Any]:
+    credential_status, credential_body = api(base, "POST", "/v1/credentials", None, {})
+    if credential_status != 201 or not isinstance(credential_body.get("credential"), str):
+        raise RuntimeError(f"credential issuance failed: HTTP {credential_status} {credential_body!r}")
+    credential = credential_body["credential"]
     started = time.monotonic()
     status, body = api(base, "POST", "/v1/jobs", credential, {
         "idempotencyKey": key, "profileId": profile, "initialSfen": initial_sfen, "moves": moves,
@@ -70,7 +86,26 @@ def run_job(base: str, credential: str, profile: str, key: str, initial_sfen: st
         if view.get("status") in ("completed", "failed", "cancelled"):
             break
         time.sleep(POLL_SECONDS)
-    wall_ms = round((time.monotonic() - started) * 1000)
+    terminal_ms = round((time.monotonic() - started) * 1000)
+    terminal_at = datetime.now(timezone.utc).isoformat()
+    stop_confirmed_at = None
+    terminal_to_stop_ms = None
+    stop_view: dict[str, Any] | None = None
+    stop_deadline = time.monotonic() + 60
+    while time.monotonic() < stop_deadline:
+        state_status, state = api(
+            base, "GET", f"/internal/jobs/{job_id}/container", None, None,
+            internal_token=internal_token,
+        )
+        if state_status != 200:
+            raise RuntimeError(f"job Container state failed: HTTP {state_status} {state!r}")
+        stop_view = state
+        container_state = state.get("containerState")
+        if isinstance(container_state, dict) and container_state.get("status") in {"stopped", "stopped_with_code"}:
+            stop_confirmed_at = datetime.now(timezone.utc).isoformat()
+            terminal_to_stop_ms = round((time.monotonic() - started) * 1000) - terminal_ms
+            break
+        time.sleep(POLL_SECONDS)
     results: list[dict[str, Any]] = []
     after = -1
     while view.get("status") == "completed":
@@ -81,8 +116,17 @@ def run_job(base: str, credential: str, profile: str, key: str, initial_sfen: st
         if not page.get("hasMore"):
             break
         after = int(page["nextAfterPly"])
-    return {"jobId": job_id, "jobStatus": view.get("status"), "failure": view.get("failure"),
-            "wallMs": wall_ms, "firstResultMs": first_result_ms, "results": results}
+    return {
+        "jobId": job_id, "jobStatus": view.get("status"), "failure": view.get("failure"),
+        "wallMs": terminal_ms, "firstResultMs": first_result_ms,
+        "postToFirstResultMs": first_result_ms, "postToCompleteMs": terminal_ms,
+        "terminalAt": terminal_at, "containerStopConfirmedAt": stop_confirmed_at,
+        "postToContainerStopConfirmedMs": (terminal_ms + terminal_to_stop_ms) if terminal_to_stop_ms is not None else None,
+        "terminalToContainerStopConfirmedMs": terminal_to_stop_ms,
+        "containerStopConfirmed": stop_confirmed_at is not None,
+        "containerState": stop_view.get("containerState") if stop_view else None,
+        "results": results,
+    }
 
 
 def requested_conditions(job: dict[str, Any]) -> dict[str, Any] | None:
@@ -98,11 +142,13 @@ def command_run(args: argparse.Namespace) -> int:
     if not base:
         print("Set ANALYSIS_STAGING_URL or pass --base-url.", file=sys.stderr)
         return 2
-    status, body = api(base, "POST", "/v1/credentials", None, {})
-    if status != 201:
-        print(f"credential issuance failed: HTTP {status}", file=sys.stderr)
-        return 1
-    credential = body["credential"]
+    internal_token = os.environ.get("ANALYSIS_INTERNAL_TOKEN")
+    if not internal_token:
+        print("Set ANALYSIS_INTERNAL_TOKEN to record job Container stop confirmation.", file=sys.stderr)
+        return 2
+    if args.parallel_jobs < 1:
+        print("--parallel-jobs must be at least 1.", file=sys.stderr)
+        return 2
     stamp = time.strftime("%Y%m%dT%H%M%S")
     output = Path(args.output)
 
@@ -112,39 +158,69 @@ def command_run(args: argparse.Namespace) -> int:
 
     positions = json.loads(POSITIONS_PATH.read_text(encoding="utf-8"))["positions"]
     game = json.loads(GAME_MOVES_PATH.read_text(encoding="utf-8"))
-    # Warm-up: absorbs a cold start and proves which conditions staging serves before measuring.
-    warm = run_job(base, credential, args.profile, f"{args.label}-{stamp}-warm", positions[0]["sfen"], [])
-    served = requested_conditions(warm)
-    print(f"warm-up {warm['jobStatus']} in {warm['wallMs']} ms; served conditions {served}")
-    if warm["jobStatus"] != "completed" or served is None:
-        print("warm-up did not complete; staging may still serve the previous image.", file=sys.stderr)
-        return 1
-    if args.expect_movetime and served.get("moveTimeMs") != args.expect_movetime:
-        print(f"staging serves moveTimeMs={served.get('moveTimeMs')}, expected {args.expect_movetime}.", file=sys.stderr)
-        return 1
-    emit({"recordType": "warmup", "label": args.label, "profile": args.profile, "conditions": served,
-          "wallMs": warm["wallMs"]})
+    tasks: list[dict[str, Any]] = []
     if args.mode in ("positions", "both"):
-        for index, position in enumerate(positions):
-            job = run_job(base, credential, args.profile, f"{args.label}-{stamp}-{position['id']}", position["sfen"], [])
-            result = job["results"][0]["result"] if job["results"] else None
-            emit({"recordType": "position", "label": args.label, "profile": args.profile,
-                  "conditions": requested_conditions(job), "positionId": position["id"], "phase": position["phase"],
-                  "positionSha256": position["sha256"], "jobStatus": job["jobStatus"], "failure": job["failure"],
-                  "wallMs": job["wallMs"], "result": result})
-            print(f"  [{index + 1}/{len(positions)}] {position['id']} {job['jobStatus']} "
-                  f"{(result or {}).get('status')} {job['wallMs']} ms")
+        tasks.extend({
+            "recordType": "position", "key": position["id"], "initialSfen": position["sfen"], "moves": [],
+            "position": position,
+        } for position in positions)
     if args.mode in ("game", "both"):
         for repetition in range(1, args.game_repetitions + 1):
-            job = run_job(base, credential, args.profile, f"{args.label}-{stamp}-game-{repetition}",
-                          game["initialSfen"], game["moves"])
-            statuses = [row.get("result", {}).get("status") for row in job["results"]]
-            emit({"recordType": "game", "label": args.label, "profile": args.profile,
-                  "conditions": requested_conditions(job), "repetition": repetition, "jobStatus": job["jobStatus"],
-                  "failure": job["failure"], "wallMs": job["wallMs"], "firstResultMs": job["firstResultMs"],
-                  "positions": len(job["results"]),
-                  "statusCounts": {status: statuses.count(status) for status in sorted(set(map(str, statuses)))}})
-            print(f"  game {repetition}: {job['jobStatus']} {len(job['results'])} plies in {job['wallMs']} ms")
+            tasks.append({
+                "recordType": "game", "key": f"game-{repetition}",
+                "initialSfen": game["initialSfen"], "moves": game["moves"], "repetition": repetition,
+            })
+
+    def run_one(index: int, task: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        profile = ("free" if index % 2 == 0 else "precision") if args.profile == "mixed" else args.profile
+        job = run_job(
+            base, profile, f"{args.label}-{stamp}-{task['key']}",
+            task["initialSfen"], task["moves"], internal_token,
+        )
+        served = requested_conditions(job)
+        if args.expect_movetime and served and served.get("moveTimeMs") != args.expect_movetime:
+            raise RuntimeError(
+                f"job {job['jobId']} serves moveTimeMs={served.get('moveTimeMs')}, expected {args.expect_movetime}"
+            )
+        row = {
+            "recordType": task["recordType"], "label": args.label, "profile": profile,
+            "conditions": served, "jobId": job["jobId"], "jobStatus": job["jobStatus"],
+            "failure": job["failure"], "wallMs": job["wallMs"],
+            "postToFirstResultMs": job["postToFirstResultMs"],
+            "postToCompleteMs": job["postToCompleteMs"],
+            "terminalAt": job["terminalAt"],
+            "containerStopConfirmedAt": job["containerStopConfirmedAt"],
+            "postToContainerStopConfirmedMs": job["postToContainerStopConfirmedMs"],
+            "terminalToContainerStopConfirmedMs": job["terminalToContainerStopConfirmedMs"],
+            "containerStopConfirmed": job["containerStopConfirmed"],
+            "containerState": job["containerState"],
+        }
+        if task["recordType"] == "position":
+            position = task["position"]
+            row.update({
+                "positionId": position["id"], "phase": position["phase"],
+                "positionSha256": position["sha256"],
+                "result": job["results"][0]["result"] if job["results"] else None,
+            })
+        else:
+            statuses = [result.get("result", {}).get("status") for result in job["results"]]
+            row.update({
+                "repetition": task["repetition"], "firstResultMs": job["firstResultMs"],
+                "positions": len(job["results"]),
+                "statusCounts": {status: statuses.count(status) for status in sorted(set(map(str, statuses)))},
+            })
+        return index, row
+
+    with ThreadPoolExecutor(max_workers=max(args.parallel_jobs, 1)) as pool:
+        futures = [pool.submit(run_one, index, task) for index, task in enumerate(tasks)]
+        completed = sorted((future.result() for future in as_completed(futures)), key=lambda item: item[0])
+    for index, row in completed:
+        emit(row)
+        print(f"  [{index + 1}/{len(tasks)}] {row['recordType']} {row.get('positionId', row.get('repetition'))} "
+              f"profile={row['profile']} {row['jobStatus']} post→complete={row['postToCompleteMs']} ms "
+              f"post→stopped={row['postToContainerStopConfirmedMs']}")
+        if not row["containerStopConfirmed"]:
+            print(f"  WARNING: job {row['jobId']} did not report a stopped Container within 60s.", file=sys.stderr)
     return 0
 
 
@@ -250,10 +326,12 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run")
     run.add_argument("--base-url")
-    run.add_argument("--profile", choices=("free", "precision"), required=True)
+    run.add_argument("--profile", choices=("free", "precision", "mixed"), required=True)
     run.add_argument("--label", required=True)
     run.add_argument("--mode", choices=("positions", "game", "both"), default="both")
     run.add_argument("--game-repetitions", type=int, default=2)
+    run.add_argument("--parallel-jobs", type=int, default=1,
+                     help="Run up to N cold jobIds concurrently. Each job gets a separate owner credential.")
     run.add_argument("--expect-movetime", type=int)
     run.add_argument("--output", required=True)
     compare = sub.add_parser("compare")

@@ -24,10 +24,14 @@ import {
   AnalysisContainer,
   BenchmarkStandard2Container,
   BenchmarkStandard3Container,
+  FreeJobContainer,
+  PrecisionJobContainer,
   handleRequest,
   type Env,
 } from '../src/index';
 import { Position } from 'tsshogi';
+import { JOB_PROFILES } from '../src/jobConfig';
+import { validateJobContainerProfile } from '../src/jobContainers';
 
 const STARTPOS = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1';
 const TERMINAL_MATE = '2+Lk1+S3/9/1N1BB4/9/9/9/9/9/4K4 w LP 4';
@@ -228,6 +232,8 @@ function makeEnv(
   const normalBinding = createBinding('ANALYSIS_CONTAINER');
   const standard2Binding = createBinding('ANALYSIS_BENCHMARK_STANDARD_2');
   const standard3Binding = createBinding('ANALYSIS_BENCHMARK_STANDARD_3');
+  const freeJobBinding = createBinding('JOB_FREE_CONTAINER');
+  const precisionJobBinding = createBinding('JOB_PRECISION_CONTAINER');
   return {
     ANALYSIS_INTERNAL_TOKEN: token,
     ANALYSIS_VERIFY_STOP_ENGINE_ONCE: verificationFlag,
@@ -275,6 +281,8 @@ function makeEnv(
     ANALYSIS_CONTAINER: normalBinding as unknown as Env['ANALYSIS_CONTAINER'],
     ANALYSIS_BENCHMARK_STANDARD_2: standard2Binding as unknown as Env['ANALYSIS_BENCHMARK_STANDARD_2'],
     ANALYSIS_BENCHMARK_STANDARD_3: standard3Binding as unknown as Env['ANALYSIS_BENCHMARK_STANDARD_3'],
+    JOB_FREE_CONTAINER: freeJobBinding as unknown as Env['JOB_FREE_CONTAINER'],
+    JOB_PRECISION_CONTAINER: precisionJobBinding as unknown as Env['JOB_PRECISION_CONTAINER'],
     calls,
     forwardedPaths,
     targetNames,
@@ -307,6 +315,18 @@ async function result(response: Response) {
 }
 
 describe('staging analysis Worker boundary', () => {
+  it('rejects a profile whose instance type disagrees with its job Container class', () => {
+    validateJobContainerProfile('free');
+    validateJobContainerProfile('precision');
+    const originalType = JOB_PROFILES.free.instanceType;
+    try {
+      Object.defineProperty(JOB_PROFILES.free, 'instanceType', { value: 'standard-3', configurable: true });
+      expect(() => validateJobContainerProfile('free')).toThrow(/Configuration error/u);
+    } finally {
+      Object.defineProperty(JOB_PROFILES.free, 'instanceType', { value: originalType, configurable: true });
+    }
+  });
+
   it('bundles 48 unique comparison conditions and one fixed reference', () => {
     expect(BENCHMARK_CONDITIONS).toHaveLength(49);
     expect(new Set(BENCHMARK_CONDITIONS.map((condition) => condition.conditionId)).size).toBe(49);
@@ -328,11 +348,17 @@ describe('staging analysis Worker boundary', () => {
     const benchmarkStandard3 = new BenchmarkStandard3Container({} as DurableObjectState<{}>, {
       ...benchmarkEnv, ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2',
     });
+    const freeJob = new FreeJobContainer({} as DurableObjectState<{}>, normalEnv);
+    const precisionJob = new PrecisionJobContainer({} as DurableObjectState<{}>, normalEnv);
 
     expect(verificationContainer.envVars).toEqual({ ANALYSIS_VERIFY_STOP_ENGINE_ONCE: '1', ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
     expect(normalContainer.envVars).toEqual({ ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
     expect(benchmarkStandard2.envVars).toEqual({ ANALYSIS_BENCHMARK_ENABLED: '1', ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
     expect(benchmarkStandard3.envVars).toEqual({ ANALYSIS_BENCHMARK_ENABLED: '1', ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-3' });
+    expect(freeJob.envVars).toEqual({ ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-2' });
+    expect(precisionJob.envVars).toEqual({ ANALYSIS_EXPECTED_INSTANCE_TYPE: 'standard-3' });
+    expect(freeJob.sleepAfter).toBe('1m');
+    expect(precisionJob.sleepAfter).toBe('1m');
 
     const health = new Request('https://staging.example/internal/health', {
       method: 'GET',

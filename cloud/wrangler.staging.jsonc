@@ -18,12 +18,15 @@
     "bindings": [
       { "name": "ANALYSIS_CONTAINER", "class_name": "AnalysisContainer" },
       { "name": "ANALYSIS_BENCHMARK_STANDARD_2", "class_name": "BenchmarkStandard2Container" },
-      { "name": "ANALYSIS_BENCHMARK_STANDARD_3", "class_name": "BenchmarkStandard3Container" }
+      { "name": "ANALYSIS_BENCHMARK_STANDARD_3", "class_name": "BenchmarkStandard3Container" },
+      { "name": "JOB_FREE_CONTAINER", "class_name": "FreeJobContainer" },
+      { "name": "JOB_PRECISION_CONTAINER", "class_name": "PrecisionJobContainer" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] },
-    { "tag": "v2", "new_sqlite_classes": ["BenchmarkStandard2Container", "BenchmarkStandard3Container"] }
+    { "tag": "v2", "new_sqlite_classes": ["BenchmarkStandard2Container", "BenchmarkStandard3Container"] },
+    { "tag": "v3", "new_sqlite_classes": ["FreeJobContainer", "PrecisionJobContainer"] }
   ],
   "containers": [
     {
@@ -46,6 +49,20 @@
       "image": "registry.cloudflare.com/__ACCOUNT_ID__/meeshogi-analysis-mvp-staging@sha256:__IMAGE_DIGEST__",
       "max_instances": 1,
       "instance_type": "standard-3"
+    },
+    {
+      "name": "meeshogi-analysis-mvp-staging-job-free",
+      "class_name": "FreeJobContainer",
+      "image": "registry.cloudflare.com/__ACCOUNT_ID__/meeshogi-analysis-mvp-staging@sha256:__IMAGE_DIGEST__",
+      "max_instances": 3,
+      "instance_type": "standard-2"
+    },
+    {
+      "name": "meeshogi-analysis-mvp-staging-job-precision",
+      "class_name": "PrecisionJobContainer",
+      "image": "registry.cloudflare.com/__ACCOUNT_ID__/meeshogi-analysis-mvp-staging@sha256:__IMAGE_DIGEST__",
+      "max_instances": 2,
+      "instance_type": "standard-3"
     }
   ],
   "d1_databases": [
@@ -59,16 +76,26 @@
   ],
   "queues": {
     "producers": [
-      { "queue": "meeshogi-jobs-staging", "binding": "JOBS_QUEUE" }
+      { "queue": "meeshogi-jobs-free-staging", "binding": "JOBS_FREE_QUEUE" },
+      { "queue": "meeshogi-jobs-precision-staging", "binding": "JOBS_PRECISION_QUEUE" }
     ],
     "consumers": [
       {
-        "queue": "meeshogi-jobs-staging",
+        "queue": "meeshogi-jobs-free-staging",
         "max_batch_size": 1,
         "max_batch_timeout": 0,
         "max_retries": 3,
-        "dead_letter_queue": "meeshogi-jobs-staging-dlq",
-        "max_concurrency": 1,
+        "dead_letter_queue": "meeshogi-jobs-free-staging-dlq",
+        "max_concurrency": 3,
+        "visibility_timeout_ms": 900000
+      },
+      {
+        "queue": "meeshogi-jobs-precision-staging",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 3,
+        "dead_letter_queue": "meeshogi-jobs-precision-staging-dlq",
+        "max_concurrency": 2,
         "visibility_timeout_ms": 900000
       }
     ]

@@ -9,10 +9,8 @@
  * current message is acked. Transient failures use the standard Queue retry;
  * contract violations and retry exhaustion mark the job failed.
  */
-import { getContainer } from '@cloudflare/containers';
 import {
   EXPECTED_IDENTITY,
-  SINGLETON_TARGET_ID,
   hasExpectedIdentity,
   legalMoves,
   validateDriverResult,
@@ -21,7 +19,14 @@ import {
 } from './contract';
 import { JOB_CONSUMER, JOB_PROFILES, type JobProfile, type JobProfileId } from './jobConfig';
 import { D1RawDb, JobStore, type JobRow } from './jobStore';
-import type { AnalysisContainer, BenchmarkStandard3Container, Env, JobQueueMessage } from './index';
+import type { Env, JobQueueMessage } from './index';
+import {
+  getJobContainer,
+  stopJobContainer,
+  validateJobContainerProfile,
+  type JobContainer,
+  type JobContainerLog,
+} from './jobContainers';
 
 const SESSION_CONTRACT = 'analysis-session-v1';
 const SESSION_PATH = '/session';
@@ -31,17 +36,7 @@ const SESSION_ID_PATTERN = /^[0-9a-f]{32}$/u;
 const MAX_SESSION_LINE_BYTES = 64 * 1024;
 /** The driver rejects sessions above this position count; extra positions are processed by a later session in the same delivery. */
 const MAX_SESSION_POSITIONS = 512;
-const JOB_CONTAINER_NAMES: Record<JobProfile['instanceType'], string> = {
-  // Free jobs share the normal singleton instance so the max_instances=1 app
-  // cannot fail to start while it is alive; contention surfaces as the
-  // driver's single-request busy guard and takes the transient retry path.
-  'standard-2': SINGLETON_TARGET_ID,
-  'standard-3': 'analysis-jobs-standard-3',
-};
-
-type RoutedContainer =
-  | ReturnType<typeof getContainer<AnalysisContainer>>
-  | ReturnType<typeof getContainer<BenchmarkStandard3Container>>;
+type RoutedContainer = JobContainer;
 
 type Outcome =
   | { kind: 'resume' }
@@ -60,6 +55,16 @@ export interface JobConsumerDeps {
   waitUntil?: (task: Promise<unknown>) => void;
   /** Bound for the best-effort /session/cancel fetch; overridable so tests stay fast. */
   sessionCancelTimeoutMs?: number;
+  log?: JobContainerLog;
+}
+
+function emit(deps: JobConsumerDeps, entry: Record<string, unknown>): void {
+  const log = deps.log ?? ((value) => console.log(JSON.stringify(value)));
+  try {
+    log(entry);
+  } catch {
+    // Diagnostic output never changes message handling.
+  }
 }
 
 function iso(now: number): string {
@@ -92,6 +97,38 @@ async function cancelBody(response: Response): Promise<void> {
   } catch {
     // A disconnected transport may already have errored the body.
   }
+}
+
+async function readResponsePrefix(response: Response, maxBytes: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let bytesRead = 0;
+  const deadline = Date.now() + 250;
+  try {
+    while (bytesRead < maxBytes) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      const next = await beforeDeadline(reader.read(), remainingMs);
+      if (next === SESSION_TIMEOUT) break;
+      if (next.done) break;
+      const remaining = maxBytes - bytesRead;
+      const chunk = next.value.subarray(0, remaining);
+      chunks.push(chunk);
+      bytesRead += chunk.byteLength;
+      if (chunk.byteLength < next.value.byteLength) break;
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* disconnected transport */ }
+    reader.releaseLock();
+  }
+  const merged = new Uint8Array(bytesRead);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
 }
 
 /**
@@ -172,13 +209,6 @@ function terminalResult(sfen: string, terminal: 'checkmate' | 'no-legal-moves', 
   };
 }
 
-function sessionContainer(env: Env, profile: JobProfile): RoutedContainer {
-  if (profile.instanceType === 'standard-3') {
-    return getContainer<BenchmarkStandard3Container>(env.ANALYSIS_BENCHMARK_STANDARD_3, JOB_CONTAINER_NAMES['standard-3']);
-  }
-  return getContainer<AnalysisContainer>(env.ANALYSIS_CONTAINER, JOB_CONTAINER_NAMES['standard-2']);
-}
-
 /** Returns the driver's session id (absent on old images), or null when the header violates the contract. */
 function parseSessionHeader(value: unknown, job: JobRow, profile: JobProfile): { sessionId: string | null } | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
@@ -216,9 +246,13 @@ async function runSession(
 ): Promise<Outcome> {
   const waitUntil = deps.waitUntil;
   const cancelTimeoutMs = deps.sessionCancelTimeoutMs ?? SESSION_CANCEL_TIMEOUT_MS;
-  const container = sessionContainer(env, profile);
+  const container = getJobContainer(env, job.job_id, job.profile_id as JobProfileId);
   const deadlineMs = sessionDeadline - now();
   const controller = new AbortController();
+  emit(deps, {
+    event: 'job_container_fetch_begin', jobId: job.job_id, profile: job.profile_id,
+    path: SESSION_PATH, deadlineMs,
+  });
   const started = await ownedContainerPost(
     container,
     SESSION_PATH,
@@ -236,11 +270,23 @@ async function runSession(
   if (started === null || started === SESSION_TIMEOUT) return RETRY;
   const response = started;
   if (!response.ok) {
-    controller.abort();
-    await cancelBody(response);
     if (response.status === 409 || response.status === 503 || response.status === 429 || response.status >= 500) {
+      if (response.status === 503) {
+        let bodyPrefix = '';
+        try { bodyPrefix = await readResponsePrefix(response, 1024); } catch { /* retry behavior is unchanged */ }
+        controller.abort();
+        emit(deps, {
+          event: 'job_container_retry_response', jobId: job.job_id, profile: job.profile_id,
+          status: response.status, bodyPrefix,
+        });
+      } else {
+        controller.abort();
+        await cancelBody(response);
+      }
       return RETRY;
     }
+    controller.abort();
+    await cancelBody(response);
     if (response.status >= 400 && response.status < 500) {
       return { kind: 'fail', code: 'driver_rejected', message: `Driver rejected the session request (HTTP ${response.status}).` };
     }
@@ -313,6 +359,7 @@ async function runSession(
         }
         headerSeen = true;
         sessionId = header.sessionId;
+        emit(deps, { event: 'job_session_header_received', jobId: job.job_id, profile: job.profile_id });
         continue;
       }
       const record = line as Record<string, unknown>;
@@ -371,6 +418,9 @@ async function runSession(
       }
       progress += 1;
       received += 1;
+      if (progress === 1) {
+        emit(deps, { event: 'job_first_result_committed', jobId: job.job_id, profile: job.profile_id, ply: expected.ply });
+      }
     }
   } catch {
     return RETRY;
@@ -410,6 +460,11 @@ async function driveJob(
     if (!isActive(job)) return DONE;
     const profile = JOB_PROFILES[job.profile_id as JobProfileId];
     if (!profile) return { kind: 'fail', code: 'unknown_profile', message: `Unknown profile "${job.profile_id}".` };
+    try {
+      validateJobContainerProfile(job.profile_id as JobProfileId);
+    } catch {
+      return { kind: 'fail', code: 'container_configuration', message: 'The job Container class does not match its profile instance type.' };
+    }
 
     // Commit locally-determined terminal positions (only reachable at the end
     // of a validated game) without involving the engine.
@@ -464,22 +519,48 @@ async function persistFailed(store: JobStore, jobId: string, code: string, messa
   }
 }
 
-/** Backoff between redeliveries (Issue #29): a wedged driver session needs time to release the container's busy guard before the next delivery arrives. */
+/** Backoff lets a transient delivery settle while its job-specific Container stays warm. */
 function retryMessage(message: Message<JobQueueMessage>): void {
   message.retry({ delaySeconds: JOB_CONSUMER.retryDelaySeconds * message.attempts });
 }
 
+function isJobProfileId(value: string): value is JobProfileId {
+  return value === 'free' || value === 'precision';
+}
+
+function isTerminal(job: JobRow): boolean {
+  return job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+}
+
+async function stopTerminalRow(env: Env, job: JobRow | null, deps: JobConsumerDeps): Promise<void> {
+  if (!job || !isTerminal(job) || !isJobProfileId(job.profile_id)) return;
+  await stopJobContainer(env, job.job_id, job.profile_id, (entry) => emit(deps, entry));
+}
+
+async function stopPersistedTerminal(env: Env, store: JobStore, jobId: string, deps: JobConsumerDeps): Promise<void> {
+  try {
+    await stopTerminalRow(env, await store.jobById(jobId), deps);
+  } catch {
+    // State confirmation is best-effort and must not change ack/retry behavior.
+  }
+}
+
 async function retryOrFinish(
+  env: Env,
   store: JobStore,
   message: Message<JobQueueMessage>,
   jobId: string,
   now: () => number,
+  deps: JobConsumerDeps,
 ): Promise<void> {
   // Cloudflare attempts start at 1: maxRetries standard retries mean the
   // delivery with attempts === maxRetries is still a retry and only
   // attempts === maxRetries + 1 is the final one.
   if (message.attempts > JOB_CONSUMER.maxRetries) {
-    if (await persistFailed(store, jobId, 'retry_exhausted', 'The delivery reached the configured retry limit.', now)) message.ack();
+    if (await persistFailed(store, jobId, 'retry_exhausted', 'The delivery reached the configured retry limit.', now)) {
+      await stopPersistedTerminal(env, store, jobId, deps);
+      message.ack();
+    }
     else retryMessage(message);
     return;
   }
@@ -511,11 +592,30 @@ export async function handleJobBatch(
       job = await store.jobById(jobId);
     } catch {
       // A transient read failure must not lose the delivery.
-      await retryOrFinish(store, message, jobId, now);
+      await retryOrFinish(env, store, message, jobId, now, deps);
       continue;
     }
     if (!isActive(job)) {
+      await stopTerminalRow(env, job, deps);
       message.ack();
+      continue;
+    }
+
+    emit(deps, {
+      event: 'job_delivery_begin', jobId, profile: job.profile_id,
+      queue: batch.queue, attempt: message.attempts,
+    });
+    if (isJobProfileId(job.profile_id) && batch.queue !== JOB_PROFILES[job.profile_id].queueName) {
+      const saved = await persistFailed(
+        store, jobId, 'queue_profile_mismatch',
+        `The delivery queue does not match persisted profile "${job.profile_id}".`, now,
+      );
+      if (saved) {
+        await stopPersistedTerminal(env, store, jobId, deps);
+        message.ack();
+      } else {
+        retryMessage(message);
+      }
       continue;
     }
 
@@ -528,28 +628,48 @@ export async function handleJobBatch(
     }
 
     if (outcome.kind === 'resume') outcome = DONE;
+    // A cancellation can race a Container teardown and surface as a transport
+    // retry. Re-read D1 before handling the outcome so a terminal job is acked
+    // and stopped instead of being re-enqueued as a transient failure.
+    try {
+      const persisted = await store.jobById(jobId);
+      if (persisted && !isActive(persisted)) {
+        await stopTerminalRow(env, persisted, deps);
+        message.ack();
+        continue;
+      }
+    } catch {
+      // Preserve the outcome when this diagnostic state read is unavailable.
+    }
     switch (outcome.kind) {
       case 'done':
+        await stopPersistedTerminal(env, store, jobId, deps);
         message.ack();
         break;
       case 'continue': {
-        if (!env.JOBS_QUEUE) {
-          await retryOrFinish(store, message, jobId, now);
+        const profileId = isJobProfileId(job.profile_id) ? job.profile_id : null;
+        const queue = profileId === 'free' ? env.JOBS_FREE_QUEUE
+          : profileId === 'precision' ? env.JOBS_PRECISION_QUEUE : undefined;
+        if (!queue || !profileId) {
+          await retryOrFinish(env, store, message, jobId, now, deps);
           break;
         }
         try {
-          await env.JOBS_QUEUE.send({ v: 1, jobId });
+          await queue.send({ v: 1, jobId });
           message.ack();
         } catch {
-          await retryOrFinish(store, message, jobId, now);
+          await retryOrFinish(env, store, message, jobId, now, deps);
         }
         break;
       }
       case 'retry':
-        await retryOrFinish(store, message, jobId, now);
+        await retryOrFinish(env, store, message, jobId, now, deps);
         break;
       case 'fail':
-        if (await persistFailed(store, jobId, outcome.code, outcome.message, now)) message.ack();
+        if (await persistFailed(store, jobId, outcome.code, outcome.message, now)) {
+          await stopPersistedTerminal(env, store, jobId, deps);
+          message.ack();
+        }
         else retryMessage(message);
         break;
     }

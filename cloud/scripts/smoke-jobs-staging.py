@@ -65,6 +65,7 @@ PRECISION_OWNER_FILE = Path("/tmp/meeshogi-smoke-jobs-owner.json")
 JOB_DEADLINE_SECONDS = 15 * 60
 JOB_POLL_INTERVAL = 5
 CANCEL_OBSERVE_SECONDS = 20
+CONTAINER_STOP_TIMEOUT_SECONDS = 30
 
 PROFILE_CONDITIONS = {
     "free": {"threads": 1, "hashMb": 64, "moveTimeMs": 500, "multiPV": 1},
@@ -72,7 +73,16 @@ PROFILE_CONDITIONS = {
 }
 
 
-def api(base_url: str, method: str, path: str, credential: str | None, body: Any | None, timeout: float = 30) -> dict[str, Any]:
+def api(
+    base_url: str,
+    method: str,
+    path: str,
+    credential: str | None,
+    body: Any | None,
+    timeout: float = 30,
+    *,
+    internal_token: str | None = None,
+) -> dict[str, Any]:
     """Returns {"httpStatus": int, "body": dict}. HTTP status is never merged into the payload."""
     data = None
     headers: dict[str, str] = {"User-Agent": OPERATOR_USER_AGENT}
@@ -81,6 +91,8 @@ def api(base_url: str, method: str, path: str, credential: str | None, body: Any
         headers["Content-Type"] = "application/json"
     if credential is not None:
         headers["Authorization"] = f"Bearer {credential}"
+    elif internal_token is not None:
+        headers["Authorization"] = f"Bearer {internal_token}"
     req = urllib.request.Request(base_url.rstrip("/") + path, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
@@ -119,6 +131,28 @@ def post_job(base_url: str, credential: str, profile: str, key: str, moves: list
 
 def get_job(base_url: str, credential: str, job_id: str) -> dict[str, Any]:
     return api(base_url, "GET", f"/v1/jobs/{job_id}", credential, None)
+
+
+def wait_for_container_stopped(base_url: str, job_id: str) -> bool | None:
+    token = os.environ.get("ANALYSIS_INTERNAL_TOKEN")
+    if not token:
+        return None
+    deadline = time.monotonic() + CONTAINER_STOP_TIMEOUT_SECONDS
+    last_state: Any = None
+    while time.monotonic() < deadline:
+        response = api(
+            base_url, "GET", f"/internal/jobs/{job_id}/container", None, None,
+            internal_token=token,
+        )
+        expect(response["httpStatus"] == 200,
+               f"Container state failed: HTTP {response['httpStatus']} {response['body']!r}")
+        last_state = response["body"].get("containerState")
+        if isinstance(last_state, dict) and last_state.get("status") in {"stopped", "stopped_with_code"}:
+            print(f"  Container stopped for {job_id} (state-only route)")
+            return True
+        time.sleep(0.5)
+    print(f"  UNVERIFIED: Container did not report stopped for {job_id}: {last_state!r}")
+    return False
 
 
 def get_results(base_url: str, credential: str, job_id: str, after_ply: int = -1, limit: int = 200) -> dict[str, Any]:
@@ -210,7 +244,8 @@ def verify_results(results: list[dict[str, Any]], profile: str) -> None:
     expect(len(launches) == 1, f"results came from multiple engine launches: {sorted(launches)}")
 
 
-def run_job_flow(base_url: str, owner: dict[str, str], profile: str, *, require_precision_allowlist: bool = False) -> None:
+def run_job_flow(base_url: str, owner: dict[str, str], profile: str, *, require_precision_allowlist: bool = False) -> list[str]:
+    unverified: list[str] = []
     key = f"smoke-{profile}-{int(time.time())}"
     print(f"creating {profile} job ({len(GAME_MOVES)} moves, {TOTAL_PLIES} plies)")
     created = post_job(base_url, owner["credential"], profile, key, GAME_MOVES)
@@ -259,6 +294,13 @@ def run_job_flow(base_url: str, owner: dict[str, str], profile: str, *, require_
     results = fetch_all_results(base_url, owner["credential"], job_id)
     verify_results(results, profile)
     print(f"{profile} job completed: {len(results)} ply results verified (conditions, identity, engineLaunch)")
+    stopped = wait_for_container_stopped(base_url, job_id)
+    if stopped is None:
+        unverified.append("container-stop-internal-token-missing")
+        print("  UNVERIFIED: set ANALYSIS_INTERNAL_TOKEN to verify the read-only Container state route")
+    elif not stopped:
+        unverified.append("container-stop")
+    return unverified
 
 
 def attempt_cancel(base_url: str, owner: dict[str, str], key: str) -> tuple[str, dict[str, Any], bool]:
@@ -299,6 +341,11 @@ def run_cancel_flow(base_url: str, owner: dict[str, str]) -> list[str]:
     expect(view.get("nextPly") == baseline_ply, f"nextPly advanced after cancel: {baseline_ply} -> {view.get('nextPly')}")
     expect(view.get("resultCounts") == baseline_counts, f"result counts changed after cancel: {baseline_counts!r} -> {view.get('resultCounts')!r}")
     print(f"cancel holds: status=cancelled, nextPly={baseline_ply}, resultCounts unchanged")
+    stopped = wait_for_container_stopped(base_url, job_id)
+    if stopped is None:
+        unverified.append("cancel-container-stop-internal-token-missing")
+    elif not stopped:
+        unverified.append("cancel-container-stop")
     return unverified
 
 
@@ -326,21 +373,27 @@ def main() -> int:
                 f"--command \"UPDATE owners SET precision_allowed = 1 WHERE owner_id = '{owner['ownerId']}'\""
             )
             return 2
-        run_job_flow(base_url, owner, "precision", require_precision_allowlist=True)
+        unverified = run_job_flow(base_url, owner, "precision", require_precision_allowlist=True)
+        if unverified:
+            print(f"smoke passed with UNVERIFIED items: {', '.join(unverified)}")
+            return 3
         print("smoke ok: precision profile for an allowlisted owner")
         return 0
 
     owner = issue_credential(base_url)
     print(f"issued credential for owner {owner['ownerId']} (credential held in memory only)")
     profile = "precision" if args.precision else "free"
-    run_job_flow(base_url, owner, profile, require_precision_allowlist=args.require_precision_allowlist)
+    unverified = run_job_flow(base_url, owner, profile, require_precision_allowlist=args.require_precision_allowlist)
     if args.precision:
+        if unverified:
+            print(f"smoke passed with UNVERIFIED items: {', '.join(unverified)}")
+            return 3
         print("smoke ok: precision profile for a fresh owner without an allowlist entry")
         return 0
     # The cancel flow also performs the running-state partial results read:
     # it waits for committed rows via afterPly, then cancels and verifies the
     # job stays cancelled with no further progress.
-    unverified = run_cancel_flow(base_url, owner)
+    unverified.extend(run_cancel_flow(base_url, owner))
 
     if unverified:
         print(f"smoke passed with UNVERIFIED items: {', '.join(unverified)}")

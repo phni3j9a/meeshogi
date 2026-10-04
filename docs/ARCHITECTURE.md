@@ -38,6 +38,6 @@ Sekirei v0.3.37と自作weightを固定し、ResidualMaterialで探索する。�
 - credential喪失・不正・owner不一致・401を区別する。未確認の要求がある間は代替credentialを発行しない。
 - 初回POSTへの確定的な契約4xxだけを`not_created`とする。応答不明や再送拒否では対応を保持する。棋譜削除の例外はPRODUCT.mdに従う。
 
-サーバーは1棋譜を1 jobとしてD1へ保存し、Queue consumerがdriverの`/session`を読み、局面単位に検証して書き込む。条件付き書き込みで取消後の遅延結果・重複配信を排除する。consumerは同時実行1、約12分の予算で継続し、標準Queue再配達を使う。driverはsessionごとにengine processを再利用し、取消／取り残されたsessionを停止する。全経路で`PvInterval 0`を指定する。
+サーバーは1棋譜を1 jobとしてD1へ保存し、profile別Queue consumerがjobId名の専用Containerでdriverの`/session`を読み、局面単位に検証して書き込む。staging初期上限はFree 3件・Precision 2件で、profile設定からContainer上限とQueue同時数を同じ値に描画する。条件付き書き込みで取消後の遅延結果・重複配信を排除し、完了・失敗・取消後はContainerを停止する。driverはsessionごとにengine processを再利用し、取消／取り残されたsessionを停止する。全経路で`PvInterval 0`を指定する。
 
 profile・上限は`cloud/config/job-profiles.json`に集約し、探索条件を公開APIへ露出しない。stagingの開発設定・deploy・Container構成は [cloud/README.md](../cloud/README.md)、変更理由と実測は各Issue・PRを参照する。production切替とSekirei撤去は未完了。

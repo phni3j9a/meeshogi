@@ -90,3 +90,29 @@ minute bucketと取得時刻を保存し、直近の未到着データを0と判
 ## 検証の境界
 
 モバイルコード、native Sekirei統合、production資源は変更していない。今回の両OSビルド・画面操作・実機受入は実行していない。Queue→DLQ、12分を超えるcontinuation、実環境へのネットワーク障害注入は今回の受入に含まない。旧staging Workerのcron整理も別作業である。
+
+## Issue #48: jobごとのContainerと終端停止
+
+Issue #48で、job処理を同期解析用singletonおよびbenchmarkクラスから分離した。Freeは `FreeJobContainer` / standard-2、Precisionは `PrecisionJobContainer` / standard-3を使い、DO名はD1に保存された `jobId` とする。profile設定 `cloud/config/job-profiles.json` の初期上限はFree 3、Precision 2。同じ値を `render-config.py` がContainer `max_instances` と対応Queue `max_concurrency` に設定する。既存の `AnalysisContainer`、benchmark 2クラス、`/internal/analyze` の経路は維持する。
+
+Queueは `meeshogi-jobs-free-staging` / `meeshogi-jobs-free-staging-dlq` と `meeshogi-jobs-precision-staging` / `meeshogi-jobs-precision-staging-dlq` の4本。producerとcontinuationは保存profileのQueueへ送り、consumerは `batch.queue` とD1 profileの一致を確認する。不一致は `queue_profile_mismatch` として終端化する。旧 `meeshogi-jobs-staging` bindingは外す。staging deploy前に旧Queue backlogがないことを確認する。
+
+完了・失敗・retry枯渇・取消がD1に確定した後、同じjobIdのContainerへ `destroy()` を呼び、`getState()` を最大5秒、100ms間隔で確認する。停止失敗は構造化ログに残すが、Queue ack/retry結果は変えない。continuationと通常retryの前には停止しない。jobクラスの `sleepAfter = '1m'` は保険で、設定されている最大retry待ち30秒（10/20/30秒）より長く、同期解析・benchmarkの5分設定には影響しない。
+
+`GET /internal/jobs/:jobId/container` はinternal tokenを要求し、D1からprofileを読み、jobId名stubの `getState()` だけを返す。Container `fetch()` は呼ばないため、停止確認のpollingはアプリを起動・延命しない。計測ログにはdelivery開始、Container fetch開始、session header受信、最初の結果commit、停止結果がjobId/profileと共に記録される。HTTP 503時は最大1KiBの本文を記録し、従来どおりretryする。
+
+**実測値: 未計測。** この変更の実装・ローカル検証ではstagingへdeployせず、staging requestを送っていない。Mainがstaging検証するときは、旧Queue backlogがないことを確認し、上記4 Queueを作成して通常deployする。`ANALYSIS_STAGING_URL` と `ANALYSIS_INTERNAL_TOKEN` を設定して次を実行する。
+
+```sh
+cd cloud
+python3 scripts/smoke-jobs-staging.py
+python3 scripts/smoke-jobs-staging.py --precision
+python3 bench/job_study.py run --profile mixed --parallel-jobs 5 --label issue48 \
+  --mode positions --output /tmp/issue48-job-study.jsonl
+```
+
+smokeはpublic job契約・cancel後の不変性と、terminal後にstate-only routeが `stopped` または `stopped_with_code` を返すことを確認する。計測ツールはjobごとに新しいowner credentialを発行し、Free/Precisionを混ぜて同時投入する。JSONLにはjobIdごとのprofile、POST→最初のcommit、POST→terminal、terminal→停止確認の経過時間と確認時刻を保存する。測定表への転記欄は以下のとおり。
+
+| Profile / 並列数 | Job数 | POST→最初の結果 | POST→完了 | terminal→停止確認 | 停止確認できないjob | 実測状態 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 未計測 | — | 未計測 | 未計測 | 未計測 | — | 未計測 |

@@ -69,7 +69,12 @@ export default {
     const ns = { idFromName: () => 'probe', get: () => container };
     const expiresSoon = ['late_headers', 'abort_headers', 'stalled_body', 'http_stalled_body', 'cancel_after_header'].includes(mode);
     const outcome = await runSession(
-      { ANALYSIS_CONTAINER: ns, ANALYSIS_BENCHMARK_STANDARD_3: ns }, {}, { profile_id: 'free' },
+      {
+        ANALYSIS_CONTAINER: ns,
+        ANALYSIS_BENCHMARK_STANDARD_3: ns,
+        JOB_FREE_CONTAINER: ns,
+        JOB_PRECISION_CONTAINER: ns,
+      }, {}, { profile_id: 'free' },
       JOB_PROFILES.free, [], Date.now() + (expiresSoon ? 20 : 2000), () => Date.now(),
       { waitUntil: (task) => { background.push(task); ctx.waitUntil(task); }, sessionCancelTimeoutMs: 500 },
     );

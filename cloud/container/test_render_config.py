@@ -45,7 +45,7 @@ class RenderConfigTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(output.read_text(encoding="utf-8"))
 
-    def test_normal_render_ignores_inherited_flags_and_keeps_three_fixed_apps(self) -> None:
+    def test_normal_render_ignores_inherited_flags_and_keeps_fixed_apps_and_job_caps(self) -> None:
         normal = self.render(inherited_flag="1", verification=False)
         verification = self.render(inherited_flag="0", verification=True)
 
@@ -60,11 +60,19 @@ class RenderConfigTests(unittest.TestCase):
             "AnalysisContainer": "standard-2",
             "BenchmarkStandard2Container": "standard-2",
             "BenchmarkStandard3Container": "standard-3",
+            "FreeJobContainer": "standard-2",
+            "PrecisionJobContainer": "standard-3",
         })
-        self.assertTrue(all(row["max_instances"] == 1 for row in normal["containers"]))
+        self.assertEqual({row["class_name"]: row["max_instances"] for row in normal["containers"]}, {
+            "AnalysisContainer": 1,
+            "BenchmarkStandard2Container": 1,
+            "BenchmarkStandard3Container": 1,
+            "FreeJobContainer": 3,
+            "PrecisionJobContainer": 2,
+        })
         self.assertEqual(normal["migrations"][-1], {
-            "tag": "v2",
-            "new_sqlite_classes": ["BenchmarkStandard2Container", "BenchmarkStandard3Container"],
+            "tag": "v3",
+            "new_sqlite_classes": ["FreeJobContainer", "PrecisionJobContainer"],
         })
         self.assertNotIn("ANALYSIS_BENCHMARK_ENABLED", verification.get("vars", {}))
         self.assertEqual(normal["version_metadata"], {"binding": "CF_VERSION_METADATA"})
@@ -79,11 +87,23 @@ class RenderConfigTests(unittest.TestCase):
         self.assertEqual(benchmark["vars"]["ANALYSIS_EXPECTED_INSTANCE_TYPE"], "standard-2")
         self.assertEqual(benchmark["vars"]["JOBS_ENFORCE_FREE_QUOTAS"], "false")
         self.assertEqual(benchmark["vars"]["JOBS_REQUIRE_PRECISION_ALLOWLIST"], "false")
-        self.assertTrue(all(row["max_instances"] == 1 for row in benchmark["containers"]))
+        self.assertEqual({row["class_name"]: row["max_instances"] for row in benchmark["containers"]}, {
+            "AnalysisContainer": 1,
+            "BenchmarkStandard2Container": 1,
+            "BenchmarkStandard3Container": 1,
+            "FreeJobContainer": 3,
+            "PrecisionJobContainer": 2,
+        })
         self.assertEqual({row["name"]: row["class_name"] for row in benchmark["containers"]}, {
             "meeshogi-analysis-mvp-staging-analysis": "AnalysisContainer",
             "meeshogi-analysis-mvp-staging-benchmark-standard-2": "BenchmarkStandard2Container",
             "meeshogi-analysis-mvp-staging-benchmark-standard-3": "BenchmarkStandard3Container",
+            "meeshogi-analysis-mvp-staging-job-free": "FreeJobContainer",
+            "meeshogi-analysis-mvp-staging-job-precision": "PrecisionJobContainer",
+        })
+        self.assertEqual({row["queue"]: row["max_concurrency"] for row in benchmark["queues"]["consumers"]}, {
+            "meeshogi-jobs-free-staging": 3,
+            "meeshogi-jobs-precision-staging": 2,
         })
         self.assertEqual(benchmark["vars"]["ANALYSIS_BENCHMARK_BUILD_ID"], "c" * 32)
         targets = json.loads(benchmark["vars"]["ANALYSIS_BENCHMARK_TARGETS"])
