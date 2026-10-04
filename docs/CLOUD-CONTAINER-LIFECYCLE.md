@@ -93,7 +93,7 @@ minute bucketと取得時刻を保存し、直近の未到着データを0と判
 
 ## Issue #48: jobごとのContainerと終端停止
 
-Issue #48で、job処理を同期解析用singletonおよびbenchmarkクラスから分離した。Freeは `FreeJobContainer` / standard-2、Precisionは `PrecisionJobContainer` / standard-3を使い、DO名はD1に保存された `jobId` とする。profile設定 `cloud/config/job-profiles.json` の初期上限はFree 3、Precision 2。同じ値を `render-config.py` がContainer `max_instances` と対応Queue `max_concurrency` に設定する。既存の `AnalysisContainer`、benchmark 2クラス、`/internal/analyze` の経路は維持する。
+Issue #48で、job処理を同期解析用singletonおよびbenchmarkクラスから分離した。Freeは `FreeJobContainer` / standard-2、Precisionは `PrecisionJobContainer` / standard-3を使い、DO名はD1に保存された `jobId` とする。profile設定 `cloud/config/job-profiles.json` の現在の上限はFree 3、Precision 2で、同じ値を `render-config.py` がContainer `max_instances` と対応Queue `max_concurrency` に設定する。この値はDO主導の即時開始が入るまでの暫定値とし、最終値はIssue #24で決める。既存の `AnalysisContainer`、benchmark 2クラス、`/internal/analyze` の経路は維持する。
 
 Queueは `meeshogi-jobs-free-staging` / `meeshogi-jobs-free-staging-dlq` と `meeshogi-jobs-precision-staging` / `meeshogi-jobs-precision-staging-dlq` の4本。producerとcontinuationは保存profileのQueueへ送り、consumerは `batch.queue` とD1 profileの一致を確認する。不一致は `queue_profile_mismatch` として終端化する。旧 `meeshogi-jobs-staging` bindingは外す。staging deploy前に旧Queue backlogがないことを確認する。
 
@@ -101,18 +101,21 @@ Queueは `meeshogi-jobs-free-staging` / `meeshogi-jobs-free-staging-dlq` と `me
 
 `GET /internal/jobs/:jobId/container` はinternal tokenを要求し、D1からprofileを読み、jobId名stubの `getState()` だけを返す。Container `fetch()` は呼ばないため、停止確認のpollingはアプリを起動・延命しない。計測ログにはdelivery開始、Container fetch開始、session header受信、最初の結果commit、停止結果がjobId/profileと共に記録される。HTTP 503時は最大1KiBの本文を記録し、従来どおりretryする。
 
-**実測値: 未計測。** この変更の実装・ローカル検証ではstagingへdeployせず、staging requestを送っていない。Mainがstaging検証するときは、旧Queue backlogがないことを確認し、上記4 Queueを作成して通常deployする。`ANALYSIS_STAGING_URL` と `ANALYSIS_INTERNAL_TOKEN` を設定して次を実行する。
+**staging実測（2026-10-04、候補 `5d874dc`）:** 1局面jobはjobごとにコールドスタートし、profileごとに60件を逐次実行した。
 
-```sh
-cd cloud
-python3 scripts/smoke-jobs-staging.py
-python3 scripts/smoke-jobs-staging.py --precision
-python3 bench/job_study.py run --profile mixed --parallel-jobs 5 --label issue48 \
-  --mode positions --output /tmp/issue48-job-study.jsonl
-```
+| Profile | 件数 | POST→最初の結果 p50 / p90 / 最大 | 終端→停止確認 p50 / 最大 | 停止確認 |
+| --- | ---: | ---: | ---: | ---: |
+| Free | 60 | 6.1 / 7.1 / 10.6秒 | 0.49 / 0.75秒 | 60/60 |
+| Precision | 60 | 8.3 / 9.1 / 12.9秒 | 0.46 / 0.55秒 | 60/60 |
 
-smokeはpublic job契約・cancel後の不変性と、terminal後にstate-only routeが `stopped` または `stopped_with_code` を返すことを確認する。計測ツールはjobごとに新しいowner credentialを発行し、Free/Precisionを混ぜて同時投入する。JSONLにはjobIdごとのprofile、POST→最初のcommit、POST→terminal、terminal→停止確認の経過時間と確認時刻を保存する。測定表への転記欄は以下のとおり。
+長いjobと同時投入では次の結果だった。
 
-| Profile / 並列数 | Job数 | POST→最初の結果 | POST→完了 | terminal→停止確認 | 停止確認できないjob | 実測状態 |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| 未計測 | — | 未計測 | 未計測 | 未計測 | — | 未計測 |
+| 条件 | POST→最初の結果 | POST→完了 | 補足 |
+| --- | --- | --- | --- |
+| Free 92手 + Precision 92手を同時投入 | Free 6.0秒、Precision 9.0秒 | Free 53秒、Precision 236秒 | 並行して進み、profile間の待ちはなかった。#46の温まったContainerでの値（約50秒、3分55秒）とほぼ同じ。 |
+| Free 92手 ×6（上限3） | 7.9 / 62 / 72 / 116 / 125 / 131秒 | 56 / 110 / 120 / 164 / 173 / 178秒 | 全jobでContainer停止を確認。 |
+| Free 92手 ×3（上限ちょうど） | delivery開始 T+0 / 54 / 65秒 | 59 / 113 / 123秒 | すべてattempt 1、503 retryなし。ほぼ順番に開始。 |
+
+上限ちょうどの3件でもQueue deliveryが順番になったのは、1 deliveryが一局を処理し、Queuesがbatch処理後にconsumerの自動スケールを判断するためである（[Cloudflare Queues consumer concurrency](https://developers.cloudflare.com/queues/configuration/consumer-concurrency/)）。この同一profile内の待ちを解消するDO主導の即時開始は[#49](https://github.com/phni3j9a/meeshogi/issues/49)で実施し、Issue #24のproduction切り替えの前提条件とする。Issue #48の実測ではコールドjobの初回結果までFree 6〜7秒、Precision 8〜9秒（p50/p90）で、warm poolは不要と判断した。#20記録のコールド起動待ちはstandard-2約17秒、standard-3約25秒だった。
+
+5d874dcの再deploy後もFreeの完了・取消とPrecisionのsmokeが成功し、数分後も3つのjob Containerはstoppedのままだった。生データはscratchpadに保管し、リポジトリには上表の集計のみを記録する。
