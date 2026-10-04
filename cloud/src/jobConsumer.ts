@@ -1,6 +1,6 @@
 /** Queue messages only deliver durable starts; the owning DO drives execution. */
 import { JOB_PROFILES, type JobProfileId } from './jobConfig';
-import { D1RawDb, JobStore, type JobRow } from './jobStore';
+import { D1RawDb, JobStore, type JobRow, type StaleActiveJobRow } from './jobStore';
 import type { Env, JobQueueMessage } from './index';
 import { getJobContainer, stopJobContainer, type JobContainerLog } from './jobContainers';
 
@@ -168,9 +168,11 @@ export async function requeueStaleJobs(
     return { scanned: 0, sent: 0 };
   }
   const now = options.now ?? (() => Date.now());
-  const staleBefore = new Date(now() - 15 * 60_000).toISOString();
+  const scanTime = now();
+  const staleBefore = new Date(scanTime - 15 * 60_000).toISOString();
+  const recoveryAt = new Date(scanTime).toISOString();
   const store = new JobStore(new D1RawDb(env.JOBS_DB));
-  let jobs: { job_id: string; profile_id: string; updated_at: string }[];
+  let jobs: StaleActiveJobRow[];
   try {
     jobs = await store.staleActiveJobs(staleBefore, options.limit ?? 100);
   } catch {
@@ -179,6 +181,14 @@ export async function requeueStaleJobs(
   }
   let sent = 0;
   for (const job of jobs) {
+    try {
+      // Move the bounded scan forward before dispatching so a broken or
+      // unavailable Queue binding cannot pin the first page forever.
+      if (!await store.markRecoveryScanned(job, staleBefore, recoveryAt)) continue;
+    } catch {
+      emit(emitDeps, { event: 'job_recovery_scan_failed', jobId: job.job_id, reason: 'd1_write_failed' });
+      continue;
+    }
     if (!isJobProfileId(job.profile_id)) {
       emit(emitDeps, { event: 'job_recovery_skipped', jobId: job.job_id, profile: job.profile_id, reason: 'unknown_profile' });
       continue;

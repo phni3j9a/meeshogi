@@ -5,6 +5,7 @@ import { D1RawDb, JobStore } from '../../src/jobStore';
 
 const sessionCounts = new Map();
 const cancelCounts = new Map();
+const requestedCursors = new Map();
 
 function resultFor(position, conditions) {
   const moves = legalMoves(position.sfen);
@@ -45,6 +46,9 @@ function makeNativeContainer(jobId) {
           const body = await request.json();
           const count = (sessionCounts.get(jobId) ?? 0) + 1;
           sessionCounts.set(jobId, count);
+          const cursors = requestedCursors.get(jobId) ?? [];
+          cursors.push(body.positions.map((position) => position.ply));
+          requestedCursors.set(jobId, cursors);
           const encoder = new TextEncoder();
           const lines = [{
             type: 'session', contract: 'analysis-session-v1', profileId: 'free', engineLaunch: 1,
@@ -52,7 +56,8 @@ function makeNativeContainer(jobId) {
             identity: EXPECTED_IDENTITY, conditions: JOB_PROFILES.free.conditions,
           }];
           const firstAttempt = count === 1;
-          const firstAttemptStalls = firstAttempt && jobId === 'job-49-cancel';
+          const firstAttemptStalls = firstAttempt
+            && (jobId === 'job-49-cancel' || jobId === 'job-49-running-stream');
           const positions = firstAttempt ? body.positions.slice(0, 1) : body.positions;
           for (const position of positions) {
             lines.push({ type: 'result', ply: position.ply, engineLaunch: 1, result: resultFor(position, JOB_PROFILES.free.conditions) });
@@ -120,6 +125,17 @@ export class WorkerdFreeJobContainer extends FreeJobContainer {
     await this.recoverScheduledSlice({ schemaVersion: 1, generation: control.generation, runId: control.runId });
     return { accepted: true, generation: control.generation };
   }
+
+  async releaseActiveStreamForTest() {
+    const active = this.activeRun;
+    if (!active) return { released: false };
+    active.controller.abort(new DOMException('Simulated workerd instance loss.', 'AbortError'));
+    const deadline = Date.now() + 5_000;
+    while (this.activeRun?.runId === active.runId && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return { released: this.activeRun?.runId !== active.runId };
+  }
 }
 
 function storeFor(env) {
@@ -138,6 +154,8 @@ export default {
     if (url.pathname === '/start') return Response.json(await stub.startJob({ jobId, profileId: 'free' }));
     if (url.pathname === '/inspect') return Response.json(await stub.inspectJob());
     if (url.pathname === '/recover') return Response.json(await stub.forceRecovery());
+    if (url.pathname === '/release-stream') return Response.json(await stub.releaseActiveStreamForTest());
+    if (url.pathname === '/request-cursors') return Response.json(requestedCursors.get(jobId) ?? []);
     if (url.pathname === '/terminate') {
       const store = storeFor(env);
       await store.cancelJob(jobId, 'own_workerd', new Date().toISOString());
@@ -148,6 +166,10 @@ export default {
     const row = await storeFor(env).jobById(jobId);
     if (url.pathname === '/job') return Response.json(row);
     if (url.pathname === '/result-count') return Response.json({ count: (await storeFor(env).resultsPage(jobId, -1, 100)).length });
+    if (url.pathname === '/result-plies') {
+      const results = await storeFor(env).resultsPage(jobId, -1, 100);
+      return Response.json(results.map((result) => result.ply));
+    }
     return new Response('not found', { status: 404 });
   },
 };

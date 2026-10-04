@@ -92,6 +92,16 @@ function newRunId(): string {
   return crypto.randomUUID();
 }
 
+/** The Containers SDK schedules at whole Unix seconds and floors its target. */
+function alignToSdkSecond(time: number): number {
+  return Math.ceil(time / 1000) * 1000;
+}
+
+function delayUntilSdkSecond(notBefore: number, now = Date.now()): number {
+  const currentSecond = Math.floor(now / 1000);
+  return Math.max(0, Math.ceil(notBefore / 1000) - currentSecond);
+}
+
 async function settleBeforeDeadline<T>(pending: Promise<T>, timeoutMs: number): Promise<BoundedResult<T>> {
   if (timeoutMs <= 0) return { kind: 'timeout' };
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -322,14 +332,20 @@ abstract class JobContainerBase extends Container<Env> {
     if (recovery) {
       if (control.phase !== 'running') return;
       if (this.activeRun?.runId === control.runId) {
-        const recoveryAt = Date.now() + RECOVERY_DELAY_MS;
+        const recoveryAt = alignToSdkSecond(Date.now() + RECOVERY_DELAY_MS);
         await this.ensureReservation(control, RECOVERY_CALLBACK, recoveryAt);
         return;
       }
       await this.scheduleTransient(control, 'callback_recovery');
       return;
     }
-    if (control.phase !== 'scheduled' || Date.now() < control.notBefore) return;
+    if (control.phase !== 'scheduled') return;
+    if (Date.now() < control.notBefore) {
+      // The SDK removes a fired schedule before invoking this callback. Keep
+      // the job recoverable even if a callback arrives earlier than expected.
+      await this.ensureReservation(control, RUN_CALLBACK, control.notBefore);
+      return;
+    }
 
     const controller = new AbortController();
     this.activeRun = { generation: control.generation, runId: control.runId!, controller };
@@ -338,14 +354,14 @@ abstract class JobContainerBase extends Container<Env> {
       phase: 'running',
       taskId: schedule?.taskId ?? control.taskId,
       recoveryTaskId: null,
-      recoveryAt: Date.now() + RECOVERY_DELAY_MS,
+      recoveryAt: alignToSdkSecond(Date.now() + RECOVERY_DELAY_MS),
     };
     await this.doState.storage.put(CONTROL_STORAGE_KEY, control);
     if (this.terminationRequested || controller.signal.aborted) return;
 
     try {
       const recoveryTask = await this.schedulable().schedule(
-        Math.max(1, Math.ceil(RECOVERY_DELAY_MS / 1000)),
+        delayUntilSdkSecond(control.recoveryAt!, Date.now()),
         RECOVERY_CALLBACK,
         this.payload(control),
       );
@@ -479,7 +495,7 @@ abstract class JobContainerBase extends Container<Env> {
       ...latest,
       generation: latest.generation + 1,
       attempt,
-      notBefore: Date.now() + Math.max(0, delaySeconds) * 1000,
+      notBefore: alignToSdkSecond(Date.now() + Math.max(0, delaySeconds) * 1000),
       runId: newRunId(),
       taskId: null,
       phase: 'scheduled',
@@ -492,7 +508,9 @@ abstract class JobContainerBase extends Container<Env> {
       this.deleteSchedules(RECOVERY_CALLBACK);
       return;
     }
-    const task = await this.schedulable().schedule(Math.max(0, delaySeconds), RUN_CALLBACK, this.payload(next));
+    const task = await this.schedulable().schedule(
+      delayUntilSdkSecond(next.notBefore, Date.now()), RUN_CALLBACK, this.payload(next),
+    );
     if (this.terminationRequested || await this.isDurablyTerminated()) {
       this.deleteSchedules(RUN_CALLBACK);
       this.deleteSchedules(RECOVERY_CALLBACK);
@@ -528,7 +546,7 @@ abstract class JobContainerBase extends Container<Env> {
       return;
     }
     this.deleteSchedules(callback);
-    const delaySeconds = Math.max(0, Math.ceil((when - Date.now()) / 1000));
+    const delaySeconds = delayUntilSdkSecond(when, Date.now());
     const schedule = await this.schedulable().schedule(delaySeconds, callback, this.payload(control));
     if (this.terminationRequested || await this.isDurablyTerminated()) {
       this.deleteSchedules(callback);

@@ -897,7 +897,7 @@ describe('queue start consumer and stale-job recovery', () => {
     expect(job?.failure_code).toBeNull();
   });
 
-  it('requeues stale jobs to their persisted profile Queue without touching D1', async () => {
+  it('requeues stale jobs to their persisted profile Queue without changing public job timestamps', async () => {
     const { d1, sqlite } = createTestDb();
     const freeQueue = queueProbe();
     const precisionQueue = queueProbe();
@@ -914,9 +914,9 @@ describe('queue start consumer and stale-job recovery', () => {
     expect(result).toEqual({ scanned: 2, sent: 2 });
     expect(freeQueue.sent).toEqual([{ v: 1, jobId: freeId }]);
     expect(precisionQueue.sent).toEqual([{ v: 1, jobId: precisionId }]);
-    expect(sqlite.prepare('SELECT status, updated_at FROM jobs ORDER BY job_id').all()).toEqual([
-      { status: 'queued', updated_at: '2026-10-01T00:00:00.000Z' },
-      { status: 'queued', updated_at: '2026-10-01T00:00:00.000Z' },
+    expect(sqlite.prepare('SELECT status, updated_at, last_recovery_at FROM jobs ORDER BY job_id').all()).toEqual([
+      { status: 'queued', updated_at: '2026-10-01T00:00:00.000Z', last_recovery_at: '2026-10-04T00:00:00.000Z' },
+      { status: 'queued', updated_at: '2026-10-01T00:00:00.000Z', last_recovery_at: '2026-10-04T00:00:00.000Z' },
     ]);
   });
 
@@ -947,6 +947,53 @@ describe('queue start consumer and stale-job recovery', () => {
     expect(bounded).toEqual({ scanned: 1, sent: 1 });
     expect(freeQueue.sent).toEqual([{ v: 1, jobId: older.jobId }]);
     expect((await new JobStore(d1.rawDb).jobById(newer.jobId))?.updated_at).toBe(new Date(cutoff + 1).toISOString());
+  });
+
+  it('reaches every stale row over repeated bounded scans, including running capacity waits', async () => {
+    const { d1, sqlite } = createTestDb();
+    const freeQueue = queueProbe();
+    const env = makeJobsEnv({ d1, freeQueue: freeQueue.queue, precisionQueue: freeQueue.queue, access: STAGING_JOB_VARS });
+    const insertOwner = sqlite.prepare(
+      'INSERT INTO owners (owner_id, credential_hash, precision_allowed, created_at) VALUES (?, ?, 0, ?)',
+    );
+    const insertJob = sqlite.prepare(`INSERT INTO jobs (
+      job_id, owner_id, idempotency_key, input_hash, profile_id, initial_sfen, moves_json,
+      total_plies, status, next_ply, jst_day, created_ms, created_at, updated_at, last_recovery_at
+    ) VALUES (?, ?, ?, 'stale-input', 'free', 'sfen', '[]', 2, ?, ?, '2026-10-03', 0, ?, ?, ?)`);
+    const updatedAt = '2026-10-03T00:00:00.000Z';
+    const previouslyAcceptedAt = '2026-10-03T12:00:00.000Z';
+    const jobIds: string[] = [];
+    for (let index = 0; index < 205; index += 1) {
+      const suffix = String(index).padStart(3, '0');
+      const ownerId = `owner_stale_${suffix}`;
+      const jobId = `job_stale_${suffix}`;
+      const isCapacityWait = index < 125;
+      insertOwner.run(ownerId, `hash_${suffix}`, updatedAt);
+      insertJob.run(
+        jobId,
+        ownerId,
+        `key_${suffix}`,
+        isCapacityWait ? 'running' : 'queued',
+        isCapacityWait ? 1 : 0,
+        updatedAt,
+        updatedAt,
+        isCapacityWait ? previouslyAcceptedAt : null,
+      );
+      jobIds.push(jobId);
+    }
+
+    const scanStart = Date.parse('2026-10-04T00:00:00.000Z');
+    for (let scan = 0; scan < 8; scan += 1) {
+      const result = await requeueStaleJobs(env, { now: () => scanStart + scan * 60_000, limit: 100 });
+      expect(result.scanned).toBe(100);
+    }
+
+    expect(new Set(freeQueue.sent.map((message) => message.jobId)).size).toBe(jobIds.length);
+    expect(new Set(freeQueue.sent.map((message) => message.jobId))).toEqual(new Set(jobIds));
+    expect(sqlite.prepare(`SELECT COUNT(*) AS count FROM jobs
+      WHERE updated_at = ? AND next_ply IN (0, 1) AND last_recovery_at IS NOT NULL`).get(updatedAt)).toEqual({ count: 205 });
+    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status = 'running' AND next_ply = 1").get())
+      .toEqual({ count: 125 });
   });
 
   it('waits for D1 cancellation confirmation before scheduling the stop task', async () => {

@@ -140,7 +140,8 @@ function makeDo(
       if (options.failSchedule?.()) throw new Error('injected schedule failure');
       const record: Schedule = {
         taskId: `task-${++scheduleIndex}`, callback, payload,
-        time: Date.now() + Math.max(0, delaySeconds) * 1000,
+        // Containers SDK 0.3.7 floors schedule targets to whole Unix seconds.
+        time: Math.floor(Date.now() / 1000 + Math.max(0, delaySeconds)),
       };
       schedules.push(record);
       return record;
@@ -180,11 +181,16 @@ function runSchedule(harness: ReturnType<typeof makeDo>, schedule = harness.sche
   if (!schedule) throw new Error('no run callback is scheduled');
   const { container } = harness;
   harness.context.consumeSchedule(schedule.taskId);
+  vi.setSystemTime(Math.max(Date.now(), schedule.time * 1000));
   return container.runScheduledSlice(schedule.payload as never, schedule as never);
 }
 
 describe('JobContainer durable control state machine', () => {
-  beforeEach(() => { vi.spyOn(console, 'log').mockImplementation(() => undefined); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(BASE_TIME);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
   it('repairs fault 1 after control marker persistence but before reservation creation', async () => {
@@ -339,6 +345,52 @@ describe('JobContainer durable control state machine', () => {
     expect(control(genericHarness).notBefore - Date.now()).toBeLessThanOrEqual(11_000);
     capacityDb.sqlite.close();
     genericDb.sqlite.close();
+  });
+
+  it('aligns fractional retry times to SDK seconds and restores a reservation after an early callback', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const db = seedJob('do_fractional_capacity');
+    let sessionCalls = 0;
+    const harness = makeDo('do_fractional_capacity', db.d1, async (request) => {
+      if (new URL(request.url).pathname !== '/session') return Response.json({ schemaVersion: 1, cancelled: true });
+      sessionCalls += 1;
+      if (sessionCalls === 1) {
+        // Model a capacity response arriving at a fractional wall-clock second.
+        vi.setSystemTime(Date.now() + 987);
+        return new Response(
+          'There is no Container instance available at this time. max concurrent instance count reached.',
+          { status: 503 },
+        );
+      }
+      return sessionResponse(db.positions, 'free');
+    });
+
+    await harness.container.startJob({ jobId: 'do_fractional_capacity', profileId: 'free' });
+    const initial = harness.schedules.find((row) => row.callback === RUN_CALLBACK)!;
+    expect(initial.time * 1000).toBeGreaterThanOrEqual(control(harness).notBefore);
+    await runSchedule(harness, initial);
+
+    const retryControl = control(harness);
+    const retry = harness.schedules.find((row) => row.callback === RUN_CALLBACK)!;
+    expect(retryControl.notBefore % 1000).toBe(0);
+    expect(retry.time * 1000).toBe(retryControl.notBefore);
+
+    // A defensive early callback must replace the fired SDK reservation before returning.
+    harness.context.consumeSchedule(retry.taskId);
+    vi.setSystemTime(retryControl.notBefore - 1);
+    await harness.container.runScheduledSlice(retry.payload as never, retry as never);
+    expect(sessionCalls).toBe(1);
+    const restored = harness.schedules.find((row) => row.callback === RUN_CALLBACK)!;
+    expect(restored.time * 1000).toBeGreaterThanOrEqual(retryControl.notBefore);
+
+    // The whole-second callback then resumes after capacity is available.
+    await runSchedule(harness, restored);
+    expect(sessionCalls).toBe(2);
+    expect(await harness.store.jobById('do_fractional_capacity')).toMatchObject({ status: 'completed', next_ply: 3 });
+    expect(db.sqlite.prepare('SELECT COUNT(*) AS count FROM job_results WHERE job_id = ?').get('do_fractional_capacity'))
+      .toEqual({ count: 3 });
+    expect(harness.schedules.filter((row) => row.callback === RUN_CALLBACK)).toHaveLength(0);
+    db.sqlite.close();
   });
 
   it('uses 10/20/30 second execution retries and terminalizes the fourth transient failure', async () => {

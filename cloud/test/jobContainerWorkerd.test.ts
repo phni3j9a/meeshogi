@@ -8,6 +8,7 @@ const STARTPOS = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 
 const AFTER_2G2F = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/7P1/PPPPPPP1P/1B5R1/LNSGKGSNL w - 1';
 const JOB_ID = 'job-49-workerd';
 const CANCEL_JOB_ID = 'job-49-cancel';
+const RUNNING_STREAM_JOB_ID = 'job-49-running-stream';
 
 describe('DO-driven jobs in workerd with the installed Containers SDK', () => {
   let mf: Miniflare;
@@ -115,6 +116,58 @@ describe('DO-driven jobs in workerd with the installed Containers SDK', () => {
     }
     expect(job).toMatchObject({ status: 'completed', next_ply: 2 });
     expect(await fetchJson('/result-count', JOB_ID)).toEqual({ count: 2 });
+  }, 30_000);
+
+  it('recovers an interrupted running stream from its D1 cursor without duplicating a result', async () => {
+    await seedJob(RUNNING_STREAM_JOB_ID);
+    await fetchJson('/start', RUNNING_STREAM_JOB_ID);
+    await waitForCursor(RUNNING_STREAM_JOB_ID, 1);
+
+    const running = await fetchJson<{
+      control: { phase: string; generation: number };
+      activeRun: unknown;
+      recoverySchedules: unknown[];
+    }>('/inspect', RUNNING_STREAM_JOB_ID);
+    expect(running).toMatchObject({
+      control: { phase: 'running', generation: 1 },
+      activeRun: { generation: 1 },
+      recoverySchedules: [{}],
+    });
+
+    // The result is committed while a stream is live. Miniflare's eviction API
+    // rejects this active Container instance, so abort the stream and let the
+    // alarm callback unwind with its durable control still in the running phase.
+    expect(await fetchJson('/release-stream', RUNNING_STREAM_JOB_ID)).toEqual({ released: true });
+    const released = await fetchJson<{
+      control: { phase: string; generation: number };
+      activeRun: unknown;
+      inFlightFetches: number;
+      recoverySchedules: unknown[];
+    }>('/inspect', RUNNING_STREAM_JOB_ID);
+    expect(released).toMatchObject({
+      control: { phase: 'running', generation: 1 },
+      activeRun: null,
+      inFlightFetches: 0,
+    });
+    expect(released.recoverySchedules).toHaveLength(1);
+
+    const recovery = await fetchJson<{ accepted: boolean; generation: number }>('/recover', RUNNING_STREAM_JOB_ID);
+    expect(recovery).toMatchObject({ accepted: true, generation: 1 });
+    const retry = await fetchJson<{ control: { phase: string; generation: number; attempt: number } }>(
+      '/inspect', RUNNING_STREAM_JOB_ID,
+    );
+    expect(retry.control).toMatchObject({ phase: 'scheduled', generation: 2, attempt: 2 });
+
+    const deadline = Date.now() + 18_000;
+    let job: { status: string; next_ply: number } | undefined;
+    while (Date.now() < deadline) {
+      job = await fetchJson('/job', RUNNING_STREAM_JOB_ID);
+      if (job?.status === 'completed') break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(job).toMatchObject({ status: 'completed', next_ply: 2 });
+    expect(await fetchJson('/request-cursors', RUNNING_STREAM_JOB_ID)).toEqual([[0, 1], [1]]);
+    expect(await fetchJson('/result-plies', RUNNING_STREAM_JOB_ID)).toEqual([0, 1]);
   }, 30_000);
 
   it('terminates an alarm-owned stream promptly and leaves the durable terminal fence', async () => {
