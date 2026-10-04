@@ -177,12 +177,32 @@ function control(harness: ReturnType<typeof makeDo>): Control {
   return harness.values.get('job:control') as Control;
 }
 
+function invokeSchedule(
+  harness: ReturnType<typeof makeDo>,
+  schedule: Schedule,
+  callbackTime = Math.max(Date.now(), schedule.time * 1000),
+) {
+  vi.setSystemTime(callbackTime);
+  const pending = schedule.callback === RECOVERY_CALLBACK
+    ? harness.container.recoverScheduledSlice(schedule.payload as never, schedule as never)
+    : harness.container.runScheduledSlice(schedule.payload as never, schedule as never);
+  // Containers SDK 0.3.7 removes the firing schedule after callback completion.
+  return pending.finally(() => harness.context.consumeSchedule(schedule.taskId));
+}
+
 function runSchedule(harness: ReturnType<typeof makeDo>, schedule = harness.schedules.find((item) => item.callback === RUN_CALLBACK)) {
   if (!schedule) throw new Error('no run callback is scheduled');
-  const { container } = harness;
-  harness.context.consumeSchedule(schedule.taskId);
-  vi.setSystemTime(Math.max(Date.now(), schedule.time * 1000));
-  return container.runScheduledSlice(schedule.payload as never, schedule as never);
+  return invokeSchedule(harness, schedule);
+}
+
+function runRecoverySchedule(
+  harness: ReturnType<typeof makeDo>,
+  schedule = harness.schedules.find((item) => item.callback === RECOVERY_CALLBACK),
+) {
+  if (!schedule) throw new Error('no recovery callback is scheduled');
+  // This helper is used for a recovery callback racing an active run; do not
+  // advance fake time and expire that run's independent slice deadline.
+  return invokeSchedule(harness, schedule, Date.now());
 }
 
 describe('JobContainer durable control state machine', () => {
@@ -375,12 +395,12 @@ describe('JobContainer durable control state machine', () => {
     expect(retryControl.notBefore % 1000).toBe(0);
     expect(retry.time * 1000).toBe(retryControl.notBefore);
 
-    // A defensive early callback must replace the fired SDK reservation before returning.
-    harness.context.consumeSchedule(retry.taskId);
-    vi.setSystemTime(retryControl.notBefore - 1);
-    await harness.container.runScheduledSlice(retry.payload as never, retry as never);
+    // The SDK leaves the firing row visible until callback return. The early
+    // callback must ignore its own taskId and replace that reservation.
+    await invokeSchedule(harness, retry, retryControl.notBefore - 1);
     expect(sessionCalls).toBe(1);
     const restored = harness.schedules.find((row) => row.callback === RUN_CALLBACK)!;
+    expect(restored.taskId).not.toBe(retry.taskId);
     expect(restored.time * 1000).toBeGreaterThanOrEqual(retryControl.notBefore);
 
     // The whole-second callback then resumes after capacity is available.
@@ -515,14 +535,19 @@ describe('JobContainer durable control state machine', () => {
     await begun;
     const recovery = harness.schedules.find((row) => row.callback === RECOVERY_CALLBACK)!;
     expect(recovery).toBeDefined();
-    await harness.container.recoverScheduledSlice(recovery.payload as never, recovery as never);
+    await runRecoverySchedule(harness, recovery);
     expect(harness.schedules.filter((row) => row.callback === RECOVERY_CALLBACK)).toHaveLength(1);
+    const replacementRecovery = harness.schedules.find((row) => row.callback === RECOVERY_CALLBACK)!;
+    expect(replacementRecovery.taskId).not.toBe(recovery.taskId);
+    expect(control(harness).recoveryTaskId).toBe(replacementRecovery.taskId);
     await harness.container.startJob({ jobId: 'do_recovery', profileId: 'free' });
     expect(harness.sessionCount).toBe(1);
-    expect(harness.schedules.filter((row) => row.callback === RUN_CALLBACK)).toHaveLength(0);
+    expect(harness.schedules.filter((row) => row.callback === RUN_CALLBACK)).toHaveLength(1);
+    expect(harness.schedules.find((row) => row.callback === RUN_CALLBACK)?.taskId).toBe(scheduled.taskId);
     resolveResponse(sessionResponse(db.positions, 'free'));
     await pendingRun;
     expect(maxInFlight).toBe(1);
+    expect(harness.schedules.filter((row) => row.callback === RUN_CALLBACK)).toHaveLength(0);
     expect(await harness.store.jobById('do_recovery')).toMatchObject({ status: 'completed' });
     db.sqlite.close();
   });

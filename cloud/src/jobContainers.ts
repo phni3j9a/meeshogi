@@ -218,8 +218,8 @@ abstract class JobContainerBase extends Container<Env> {
   }
 
   /** Recovery callback for an unexpected callback exit or instance eviction. */
-  async recoverScheduledSlice(payload: SchedulePayload, _schedule?: ScheduleRecord<SchedulePayload>): Promise<void> {
-    await this.executeScheduled(payload, undefined, true);
+  async recoverScheduledSlice(payload: SchedulePayload, schedule?: ScheduleRecord<SchedulePayload>): Promise<void> {
+    await this.executeScheduled(payload, schedule, true);
   }
 
   /** Durable terminal fence, pending callback removal, stream abort, bounded wait, then destroy. */
@@ -333,7 +333,7 @@ abstract class JobContainerBase extends Container<Env> {
       if (control.phase !== 'running') return;
       if (this.activeRun?.runId === control.runId) {
         const recoveryAt = alignToSdkSecond(Date.now() + RECOVERY_DELAY_MS);
-        await this.ensureReservation(control, RECOVERY_CALLBACK, recoveryAt);
+        await this.ensureReservation(control, RECOVERY_CALLBACK, recoveryAt, schedule?.taskId);
         return;
       }
       await this.scheduleTransient(control, 'callback_recovery');
@@ -341,9 +341,9 @@ abstract class JobContainerBase extends Container<Env> {
     }
     if (control.phase !== 'scheduled') return;
     if (Date.now() < control.notBefore) {
-      // The SDK removes a fired schedule before invoking this callback. Keep
-      // the job recoverable even if a callback arrives earlier than expected.
-      await this.ensureReservation(control, RUN_CALLBACK, control.notBefore);
+      // SDK 0.3.7 removes a fired schedule after its callback returns. Ignore
+      // this in-flight reservation so an early callback replaces it before returning.
+      await this.ensureReservation(control, RUN_CALLBACK, control.notBefore, schedule?.taskId);
       return;
     }
 
@@ -528,9 +528,14 @@ abstract class JobContainerBase extends Container<Env> {
     this.emitControl('job_followup_reserved', { ...afterSchedule, taskId: task.taskId }, { reason, delaySeconds, attempt });
   }
 
-  private async ensureReservation(control: JobControl, callback: string, when: number): Promise<void> {
+  private async ensureReservation(
+    control: JobControl,
+    callback: string,
+    when: number,
+    executingTaskId?: string,
+  ): Promise<void> {
     if (this.terminationRequested) return;
-    const matching = await this.findSchedule(callback, control);
+    const matching = await this.findSchedule(callback, control, executingTaskId);
     if (matching) {
       if (callback === RUN_CALLBACK && control.phase === 'scheduled' && control.taskId !== matching.taskId) {
         const latest = await this.readControl();
@@ -561,9 +566,13 @@ abstract class JobContainerBase extends Container<Env> {
     await this.doState.storage.put(CONTROL_STORAGE_KEY, updated);
   }
 
-  private async findSchedule(callback: string, control: JobControl): Promise<ScheduleRecord<SchedulePayload> | null> {
+  private async findSchedule(
+    callback: string,
+    control: JobControl,
+    excludeTaskId?: string,
+  ): Promise<ScheduleRecord<SchedulePayload> | null> {
     const schedules = await this.schedulable().listSchedules<SchedulePayload>(callback);
-    return schedules.find((item) => validPayload(item.payload)
+    return schedules.find((item) => item.taskId !== excludeTaskId && validPayload(item.payload)
       && item.payload.generation === control.generation && item.payload.runId === control.runId) ?? null;
   }
 
