@@ -4,7 +4,7 @@
   "profiles": {
     "free": {
       "instanceType": "standard-2",
-      "maxConcurrentJobs": 3,
+      "maxInstances": 3,
       "queueName": "meeshogi-jobs-free-staging",
       "deadLetterQueueName": "meeshogi-jobs-free-staging-dlq",
       "threads": 1,
@@ -14,7 +14,7 @@
     },
     "precision": {
       "instanceType": "standard-3",
-      "maxConcurrentJobs": 2,
+      "maxInstances": 2,
       "queueName": "meeshogi-jobs-precision-staging",
       "deadLetterQueueName": "meeshogi-jobs-precision-staging-dlq",
       "threads": 2,
@@ -30,8 +30,8 @@
     "freeRateMaxJobs": 5,
     "maxActiveJobsPerOwner": 1
   },
-  "consumer": {
-    "budgetMs": 720000,
+  "execution": {
+    "budgetMs": 600000,
     "tailMarginMs": 20000,
     "maxRetries": 3,
     "retryDelaySeconds": 10

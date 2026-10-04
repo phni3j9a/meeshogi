@@ -17,7 +17,7 @@ import {
 import { Position } from 'tsshogi';
 import { json, readBody } from './httpUtil';
 import { handleV1Request } from './jobs';
-import { handleJobBatch } from './jobConsumer';
+import { handleJobBatch, requeueStaleJobs } from './jobConsumer';
 import {
   FreeJobContainer,
   PrecisionJobContainer,
@@ -759,7 +759,6 @@ export async function handleRequest(request: Request, env: Env, ctx?: ExecutionC
 
 export default {
   fetch: handleRequest,
-  queue: (batch: MessageBatch, env: Env, ctx: ExecutionContext): Promise<void> => handleJobBatch(
-    batch as MessageBatch<JobQueueMessage>, env, { waitUntil: (task) => ctx.waitUntil(task) },
-  ),
+  queue: (batch: MessageBatch, env: Env): Promise<void> => handleJobBatch(batch as MessageBatch<JobQueueMessage>, env),
+  scheduled: async (_controller: ScheduledController, env: Env): Promise<void> => { await requeueStaleJobs(env); },
 } satisfies ExportedHandler<Env>;

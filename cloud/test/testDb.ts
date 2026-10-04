@@ -8,7 +8,10 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync, type SqliteValue } from 'node:sqlite';
 import type { RawDb, SqlParam, SqlStatement } from '../src/jobStore';
 
-const MIGRATION = new URL('../migrations/0001_job_backend.sql', import.meta.url);
+const MIGRATIONS = [
+  new URL('../migrations/0001_job_backend.sql', import.meta.url),
+  new URL('../migrations/0002_jobs_updated_status.sql', import.meta.url),
+];
 
 type Param = string | number | null;
 
@@ -94,6 +97,6 @@ export class SqliteD1 {
 export function createTestDb(): { sqlite: DatabaseSync; d1: SqliteD1 } {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  sqlite.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const migration of MIGRATIONS) sqlite.exec(readFileSync(migration, 'utf8'));
   return { sqlite, d1: new SqliteD1(sqlite) };
 }

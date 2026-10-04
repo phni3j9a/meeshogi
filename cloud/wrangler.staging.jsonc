@@ -5,6 +5,7 @@
   "compatibility_date": "2026-09-25",
   "account_id": "__ACCOUNT_ID__",
   "workers_dev": true,
+  "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
     "JOBS_ENFORCE_FREE_QUOTAS": "false",
     "JOBS_REQUIRE_PRECISION_ALLOWLIST": "false"
@@ -85,18 +86,14 @@
         "max_batch_size": 1,
         "max_batch_timeout": 0,
         "max_retries": 3,
-        "dead_letter_queue": "meeshogi-jobs-free-staging-dlq",
-        "max_concurrency": 3,
-        "visibility_timeout_ms": 900000
+        "dead_letter_queue": "meeshogi-jobs-free-staging-dlq"
       },
       {
         "queue": "meeshogi-jobs-precision-staging",
         "max_batch_size": 1,
         "max_batch_timeout": 0,
         "max_retries": 3,
-        "dead_letter_queue": "meeshogi-jobs-precision-staging-dlq",
-        "max_concurrency": 2,
-        "visibility_timeout_ms": 900000
+        "dead_letter_queue": "meeshogi-jobs-precision-staging-dlq"
       }
     ]
   }

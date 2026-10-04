@@ -83,6 +83,13 @@ export interface ResultRow {
   created_at: string;
 }
 
+export interface StaleActiveJobRow {
+  job_id: string;
+  profile_id: string;
+  updated_at: string;
+  last_recovery_at: string | null;
+}
+
 const JOB_COLUMNS = `job_id, owner_id, idempotency_key, input_hash, profile_id, initial_sfen,
   moves_json, total_plies, status, next_ply, jst_day, created_ms, created_at, updated_at,
   finished_at, failure_code, failure_message`;
@@ -182,6 +189,28 @@ export class JobStore {
   async jobById(jobId: string): Promise<JobRow | null> {
     const rows = await this.db.all<JobRow>(`SELECT ${JOB_COLUMNS} FROM jobs WHERE job_id = ?`, [jobId]);
     return rows[0] ?? null;
+  }
+
+  /** A bounded recovery scan for active rows whose DO delivery may be lost. */
+  async staleActiveJobs(staleBefore: string, limit = 100): Promise<StaleActiveJobRow[]> {
+    const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 250));
+    return this.db.all<StaleActiveJobRow>(
+      `SELECT job_id, profile_id, updated_at, last_recovery_at FROM jobs
+       WHERE status IN ('queued', 'running') AND updated_at <= ?
+       ORDER BY last_recovery_at, updated_at, job_id LIMIT ?`,
+      [staleBefore, boundedLimit],
+    );
+  }
+
+  /** Advance this row's recovery position without changing public job timestamps or cursor state. */
+  async markRecoveryScanned(job: StaleActiveJobRow, staleBefore: string, recoveryAt: string): Promise<boolean> {
+    const changes = await this.db.run(
+      `UPDATE jobs SET last_recovery_at = ?
+       WHERE job_id = ? AND status IN ('queued', 'running') AND updated_at = ? AND updated_at <= ?
+         AND last_recovery_at IS ?`,
+      [recoveryAt, job.job_id, job.updated_at, staleBefore, job.last_recovery_at],
+    );
+    return changes === 1;
   }
 
   async jobByIdempotency(ownerId: string, idempotencyKey: string): Promise<JobRow | null> {
