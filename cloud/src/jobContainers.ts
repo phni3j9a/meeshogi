@@ -47,9 +47,7 @@ abstract class JobContainerBase extends Container<Env> {
   override async fetch(request: Request): Promise<Response> {
     if (this.terminationRequested) return this.terminatedResponse();
     const controller = new AbortController();
-    const propagateRequestAbort = () => controller.abort(request.signal.reason);
-    if (request.signal.aborted) propagateRequestAbort();
-    else request.signal.addEventListener('abort', propagateRequestAbort, { once: true });
+    const signal = AbortSignal.any([request.signal, controller.signal]);
     let settle!: () => void;
     const settled = new Promise<void>((resolve) => { settle = resolve; });
     const inFlight: InFlightJobFetch = { controller, settled, settle };
@@ -69,12 +67,11 @@ abstract class JobContainerBase extends Container<Env> {
       // Check the in-memory latch again after the storage await so a concurrent
       // terminateJob RPC cannot let a late fetch reach the Container.
       if (terminated === true || this.terminationRequested) return this.terminatedResponse();
-      if (controller.signal.aborted) {
-        throw controller.signal.reason ?? new DOMException('The request was aborted.', 'AbortError');
+      if (signal.aborted) {
+        throw signal.reason ?? new DOMException('The request was aborted.', 'AbortError');
       }
-      return await super.fetch(new Request(request, { signal: controller.signal }));
+      return await super.fetch(new Request(request, { signal }));
     } finally {
-      request.signal.removeEventListener('abort', propagateRequestAbort);
       this.inFlightFetches.delete(inFlight);
       settle();
     }
