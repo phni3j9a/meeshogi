@@ -1,6 +1,6 @@
 // Exercise the installed Containers SDK and production consumer in workerd.
 // Only the TCP transport and persistence are substituted; no private engine is used.
-import { Container } from '@cloudflare/containers';
+import { FreeJobContainer } from '../../src/jobContainers';
 import { runSession } from '../../src/jobConsumer';
 import { JOB_PROFILES } from '../../src/jobConfig';
 import { EXPECTED_IDENTITY } from '../../src/contract';
@@ -10,8 +10,11 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export default {
   async fetch(request, env, ctx) {
     const mode = new URL(request.url).pathname.slice(1);
-    const container = Object.create(Container.prototype);
-    Object.assign(container, { defaultPort: 8080, sleepAfter: '5m', inflightRequests: 0, sleepAfterMs: 0 });
+    const container = Object.create(FreeJobContainer.prototype);
+    Object.assign(container, {
+      defaultPort: 8080, sleepAfter: '5m', inflightRequests: 0, sleepAfterMs: 0,
+      terminationRequested: false, inFlightFetches: new Set(), ctx: { storage: { get: async () => undefined } },
+    });
     container.state = { getState: async () => ({ status: 'healthy' }) };
     let sourceCancelled = false;
     let sourceAborted = false;
@@ -69,7 +72,12 @@ export default {
     const ns = { idFromName: () => 'probe', get: () => container };
     const expiresSoon = ['late_headers', 'abort_headers', 'stalled_body', 'http_stalled_body', 'cancel_after_header'].includes(mode);
     const outcome = await runSession(
-      { ANALYSIS_CONTAINER: ns, ANALYSIS_BENCHMARK_STANDARD_3: ns }, {}, { profile_id: 'free' },
+      {
+        ANALYSIS_CONTAINER: ns,
+        ANALYSIS_BENCHMARK_STANDARD_3: ns,
+        JOB_FREE_CONTAINER: ns,
+        JOB_PRECISION_CONTAINER: ns,
+      }, {}, { profile_id: 'free' },
       JOB_PROFILES.free, [], Date.now() + (expiresSoon ? 20 : 2000), () => Date.now(),
       { waitUntil: (task) => { background.push(task); ctx.waitUntil(task); }, sessionCancelTimeoutMs: 500 },
     );

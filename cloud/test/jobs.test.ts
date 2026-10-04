@@ -27,6 +27,7 @@ import {
   type JobQueueMessage,
 } from '../src/index';
 import { Position } from 'tsshogi';
+import { JobStore } from '../src/jobStore';
 import { createTestDb, type SqliteD1 } from './testDb';
 
 const STARTPOS = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1';
@@ -55,10 +56,32 @@ type SessionScript = (body: SessionCall['body']) => string | Response;
 type CancelScript = (body: SessionCall['body']) => Response | Promise<Response>;
 
 function sessionBinding(name: string, calls: SessionCall[], script: SessionScript, onCancel?: CancelScript) {
+  const states = new Map<string, string>();
+  const destroyedNames: string[] = [];
+  const lateFetches: string[] = [];
+  const terminatedNames = new Set<string>();
   return {
-    getByName: (stubName: string) => ({
+    destroyedNames,
+    lateFetches,
+    getByName: (stubName: string) => {
+      if (!states.has(stubName)) states.set(stubName, 'healthy');
+      return {
+      getState: async () => ({ status: states.get(stubName) }),
+      destroy: async () => { destroyedNames.push(stubName); states.set(stubName, 'stopped'); },
+      terminateJob: async () => {
+        terminatedNames.add(stubName);
+        destroyedNames.push(stubName);
+        states.set(stubName, 'stopped');
+      },
       fetch: async (request: Request) => {
         const path = new URL(request.url).pathname;
+        if (terminatedNames.has(stubName)) {
+          lateFetches.push(path);
+          return new Response(JSON.stringify({ status: 'terminated' }), {
+            status: 410,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
         const body = await request.json() as SessionCall['body'];
         calls.push({ binding: name, name: stubName, path, body });
         if (path === '/session/cancel') {
@@ -73,27 +96,39 @@ function sessionBinding(name: string, calls: SessionCall[], script: SessionScrip
           ? new Response(output, { headers: { 'content-type': 'application/x-ndjson' } })
           : output;
       },
-    }),
+    };
+    },
   };
 }
 
 const NO_SESSION = {
-  getByName: () => ({ fetch: async () => new Response('not configured', { status: 503 }) }),
+  getByName: () => ({
+    getState: async () => ({ status: 'stopped' }),
+    terminateJob: async () => undefined,
+    fetch: async () => new Response('not configured', { status: 503 }),
+  }),
 };
 
 function makeJobsEnv(options: {
   d1?: SqliteD1;
   queue?: { send: (message: JobQueueMessage) => Promise<void> };
+  freeQueue?: { send: (message: JobQueueMessage) => Promise<void> };
+  precisionQueue?: { send: (message: JobQueueMessage) => Promise<void> };
   normal?: unknown;
   standard3?: unknown;
+  jobFree?: unknown;
+  jobPrecision?: unknown;
   access?: Pick<Env, 'JOBS_ENFORCE_FREE_QUOTAS' | 'JOBS_REQUIRE_PRECISION_ALLOWLIST'>;
 }): Env {
   return {
     ANALYSIS_CONTAINER: (options.normal ?? NO_SESSION) as Env['ANALYSIS_CONTAINER'],
     ANALYSIS_BENCHMARK_STANDARD_2: NO_SESSION as unknown as Env['ANALYSIS_BENCHMARK_STANDARD_2'],
     ANALYSIS_BENCHMARK_STANDARD_3: (options.standard3 ?? NO_SESSION) as Env['ANALYSIS_BENCHMARK_STANDARD_3'],
+    JOB_FREE_CONTAINER: (options.jobFree ?? options.normal ?? NO_SESSION) as Env['JOB_FREE_CONTAINER'],
+    JOB_PRECISION_CONTAINER: (options.jobPrecision ?? options.standard3 ?? NO_SESSION) as Env['JOB_PRECISION_CONTAINER'],
     JOBS_DB: options.d1 as unknown as D1Database | undefined,
-    JOBS_QUEUE: options.queue as unknown as Queue<JobQueueMessage> | undefined,
+    JOBS_FREE_QUEUE: (options.freeQueue ?? options.queue) as unknown as Queue<JobQueueMessage> | undefined,
+    JOBS_PRECISION_QUEUE: (options.precisionQueue ?? options.queue) as unknown as Queue<JobQueueMessage> | undefined,
     ...options.access,
   } as Env;
 }
@@ -154,7 +189,12 @@ async function issueCredential(env: Env): Promise<{ credential: string; ownerId:
   return body;
 }
 
-async function createJob(env: Env, credential: string, body: Record<string, unknown>, deps: { now?: () => number } = {}): Promise<Response> {
+async function createJob(
+  env: Env,
+  credential: string,
+  body: Record<string, unknown>,
+  deps: { now?: () => number; waitUntil?: (task: Promise<unknown>) => void } = {},
+): Promise<Response> {
   return handleV1Request(postJson('/v1/jobs', credential, body), env, deps);
 }
 
@@ -248,7 +288,11 @@ interface FakeMessage extends Message<JobQueueMessage> {
   retryOptions?: { delaySeconds?: number };
 }
 
-function fakeBatch(bodies: JobQueueMessage[], attempts = 1): { batch: MessageBatch<JobQueueMessage>; messages: FakeMessage[] } {
+function fakeBatch(
+  bodies: JobQueueMessage[],
+  attempts = 1,
+  queue = 'meeshogi-jobs-free-staging',
+): { batch: MessageBatch<JobQueueMessage>; messages: FakeMessage[] } {
   const messages = bodies.map((body, index) => ({
     id: `message-${index}`,
     timestamp: new Date(),
@@ -264,7 +308,7 @@ function fakeBatch(bodies: JobQueueMessage[], attempts = 1): { batch: MessageBat
     },
   })) as FakeMessage[];
   const batch = {
-    queue: 'meeshogi-jobs-staging',
+    queue,
     messages,
     ackAll() {},
     retryAll() {},
@@ -290,7 +334,7 @@ describe('POST /v1/credentials', () => {
   });
 
   it('accepts an empty JSON object and rejects malformed input', async () => {
-    const { d1 } = createTestDb();
+    const { d1, sqlite } = createTestDb();
     const env = makeJobsEnv({ d1 });
     const withObject = await handleRequest(new Request(`${WORKER}/v1/credentials`, {
       method: 'POST',
@@ -647,11 +691,37 @@ describe('POST /v1/jobs validation and limits', () => {
     expect((await failed.json() as { failure: { code: string } }).failure.code).toBe('enqueue_failed');
     // The job row exists; a resubmission with the same key retries the enqueue.
     const fixed = queueProbe();
-    env.JOBS_QUEUE = fixed.queue as unknown as Queue<JobQueueMessage>;
+    env.JOBS_FREE_QUEUE = fixed.queue as unknown as Queue<JobQueueMessage>;
+    env.JOBS_PRECISION_QUEUE = fixed.queue as unknown as Queue<JobQueueMessage>;
     const replay = await createJob(env, credential, body);
     expect(replay.status).toBe(200);
     const view = await replay.json() as { jobId: string };
     expect(fixed.sent).toEqual([{ v: 1, jobId: view.jobId }]);
+  });
+
+  it('routes create and idempotent replay through the persisted profile queue', async () => {
+    const { d1, sqlite } = createTestDb();
+    const freeQueue = queueProbe();
+    const precisionQueue = queueProbe();
+    const env = makeJobsEnv({ d1, freeQueue: freeQueue.queue, precisionQueue: precisionQueue.queue });
+    const freeOwner = await issueCredential(env);
+    const precisionOwner = await issueCredential(env);
+    sqlite.prepare('UPDATE owners SET precision_allowed = 1 WHERE owner_id = ?').run(precisionOwner.ownerId);
+
+    const free = await createJob(env, freeOwner.credential, jobBody([], { idempotencyKey: 'profile-free' }));
+    const precisionBody = jobBody([], { idempotencyKey: 'profile-precision', profileId: 'precision' });
+    const precision = await createJob(env, precisionOwner.credential, precisionBody);
+    expect(free.status).toBe(201);
+    expect(precision.status).toBe(201);
+    const freeId = (await free.json() as { jobId: string }).jobId;
+    const precisionId = (await precision.json() as { jobId: string }).jobId;
+    expect(freeQueue.sent).toEqual([{ v: 1, jobId: freeId }]);
+    expect(precisionQueue.sent).toEqual([{ v: 1, jobId: precisionId }]);
+
+    const replay = await createJob(env, precisionOwner.credential, precisionBody);
+    expect(replay.status).toBe(200);
+    expect(precisionQueue.sent).toEqual([{ v: 1, jobId: precisionId }, { v: 1, jobId: precisionId }]);
+    expect(freeQueue.sent).toHaveLength(1);
   });
 });
 
@@ -669,19 +739,50 @@ describe('GET /v1/jobs/:id/results parameters', () => {
   });
 });
 
+describe('GET /internal/jobs/:id/container', () => {
+  it('uses only the persisted profile and getState without fetching the Container', async () => {
+    const { d1 } = createTestDb();
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue });
+    env.ANALYSIS_INTERNAL_TOKEN = 'internal-secret';
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const stateNames: string[] = [];
+    let fetches = 0;
+    env.JOB_FREE_CONTAINER = {
+      getByName: (name: string) => ({
+        getState: async () => { stateNames.push(name); return { status: 'stopped' }; },
+        fetch: async () => { fetches += 1; return new Response('unexpected'); },
+      }),
+    } as unknown as Env['JOB_FREE_CONTAINER'];
+    const unauthorized = await handleRequest(new Request(`${WORKER}/internal/jobs/${jobId}/container`), env);
+    expect(unauthorized.status).toBe(401);
+    const response = await handleRequest(new Request(`${WORKER}/internal/jobs/${jobId}/container`, {
+      headers: { authorization: 'Bearer internal-secret' },
+    }), env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      jobId, profileId: 'free', containerState: { status: 'stopped' }, readOnly: true,
+    });
+    expect(stateNames).toEqual([jobId]);
+    expect(fetches).toBe(0);
+  });
+});
+
 describe('queue consumer', () => {
   function consumerEnv(script: SessionScript, profile: JobProfileId = 'free', onCancel?: CancelScript) {
-    const { d1 } = createTestDb();
+    const { d1, sqlite } = createTestDb();
     const probe = queueProbe();
     const calls: SessionCall[] = [];
+    const freeBinding = sessionBinding('JOB_FREE_CONTAINER', calls, script, onCancel);
+    const precisionBinding = sessionBinding('JOB_PRECISION_CONTAINER', calls, script, onCancel);
     const env = makeJobsEnv({
       d1,
       queue: probe.queue,
-      normal: sessionBinding('ANALYSIS_CONTAINER', calls, script, onCancel),
-      standard3: sessionBinding('ANALYSIS_BENCHMARK_STANDARD_3', calls, script, onCancel),
+      jobFree: freeBinding,
+      jobPrecision: precisionBinding,
     });
     void profile;
-    return { d1, env, calls, sent: probe.sent };
+    return { d1, sqlite, env, calls, sent: probe.sent, freeBinding, precisionBinding };
   }
 
   it('analyzes every position through one session and completes', async () => {
@@ -695,8 +796,7 @@ describe('queue consumer', () => {
     // One session carries every remaining position: the driver can keep a
     // single engine process for the whole job.
     expect(calls).toHaveLength(1);
-    // Free jobs share the normal singleton instance (same instance as /internal/analyze).
-    expect(calls[0].name).toBe('analysis-mvp-singleton');
+    expect(calls[0].name).toBe(jobId);
     expect(calls[0].path).toBe('/session');
     expect(calls[0].body.contract).toBe('analysis-session-v1');
     expect(calls[0].body.profileId).toBe('free');
@@ -744,7 +844,7 @@ describe('queue consumer', () => {
   });
 
   it('sends a durable continuation after a deadline and resumes from the cursor', async () => {
-    const { env, calls, sent } = consumerEnv((body) => {
+    const { env, calls, sent, freeBinding, precisionBinding } = consumerEnv((body) => {
       const finish = body.positions[0]?.ply !== 0; // resume call completes everything
       return sessionLines(body.positions, 'free', finish ? {} : { stopAfter: 1, end: 'deadline' });
     });
@@ -755,6 +855,8 @@ describe('queue consumer', () => {
     expect(first.messages[0].acked).toBe(true);
     // Commit/send/ack boundary: the continuation is sent before the ack.
     expect(sent).toEqual([{ v: 1, jobId }, { v: 1, jobId }]);
+    expect(freeBinding.destroyedNames).toEqual([]);
+    expect(precisionBinding.destroyedNames).toEqual([]);
     const partial = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as Record<string, unknown>;
     expect(partial.status).toBe('running');
     expect(partial.nextPly).toBe(1);
@@ -765,6 +867,35 @@ describe('queue consumer', () => {
     expect(calls[1].body.positions.map((position) => position.ply)).toEqual([1, 2]);
     const done = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as { status: string };
     expect(done.status).toBe('completed');
+    expect(freeBinding.destroyedNames).toEqual([jobId]);
+  });
+
+  it('sends a Precision continuation to the Precision Queue without stopping', async () => {
+    const { d1, sqlite } = createTestDb();
+    const freeQueue = queueProbe();
+    const precisionQueue = queueProbe();
+    const calls: SessionCall[] = [];
+    const env = makeJobsEnv({
+      d1,
+      freeQueue: freeQueue.queue,
+      precisionQueue: precisionQueue.queue,
+      jobFree: sessionBinding('JOB_FREE_CONTAINER', calls, (body) => sessionLines(body.positions, 'free')),
+      jobPrecision: sessionBinding('JOB_PRECISION_CONTAINER', calls, (body) => {
+        const continueAfterFirst = body.positions[0]?.ply === 0;
+        return sessionLines(body.positions, 'precision', continueAfterFirst ? { stopAfter: 1, end: 'deadline' } : {});
+      }),
+    });
+    const { credential, ownerId } = await issueCredential(env);
+    sqlite.prepare('UPDATE owners SET precision_allowed = 1 WHERE owner_id = ?').run(ownerId);
+    const { jobId } = await createGame(env, credential, ['2g2f'], { profileId: 'precision' });
+    const precisionBinding = env.JOB_PRECISION_CONTAINER as unknown as { destroyedNames: string[] };
+    const delivery = fakeBatch([{ v: 1, jobId }], 1, JOB_PROFILES.precision.queueName);
+    await handleJobBatch(delivery.batch, env);
+    expect(delivery.messages[0].acked).toBe(true);
+    expect(precisionQueue.sent).toEqual([{ v: 1, jobId }, { v: 1, jobId }]);
+    expect(freeQueue.sent).toEqual([]);
+    expect(precisionBinding.destroyedNames ?? []).toEqual([]);
+    expect(calls[0].name).toBe(jobId);
   });
 
   it('aborts a stalled stream on its own budget and retries without progress', async () => {
@@ -861,7 +992,7 @@ describe('queue consumer', () => {
   });
 
   it('ignores duplicate delivery of a completed job', async () => {
-    const { env, calls } = consumerEnv((body) => sessionLines(body.positions, 'free'));
+    const { env, calls, freeBinding } = consumerEnv((body) => sessionLines(body.positions, 'free'));
     const { credential } = await issueCredential(env);
     const { jobId } = await createGame(env, credential, ['2g2f']);
     const first = fakeBatch([{ v: 1, jobId }]);
@@ -870,10 +1001,11 @@ describe('queue consumer', () => {
     await handleJobBatch(second.batch, env);
     expect(second.messages[0].acked).toBe(true);
     expect(calls).toHaveLength(1);
+    expect(freeBinding.destroyedNames).toEqual([jobId, jobId]);
   });
 
   it('acks a cancelled delivery without starting a session', async () => {
-    const { env, calls } = consumerEnv((body) => sessionLines(body.positions, 'free'));
+    const { env, calls, freeBinding } = consumerEnv((body) => sessionLines(body.positions, 'free'));
     const { credential } = await issueCredential(env);
     const { jobId } = await createGame(env, credential, ['2g2f']);
     const cancel = await handleV1Request(new Request(`${WORKER}/v1/jobs/${jobId}/cancel`, {
@@ -881,10 +1013,59 @@ describe('queue consumer', () => {
       headers: { authorization: `Bearer ${credential}` },
     }), env);
     expect(cancel.status).toBe(200);
+    expect(freeBinding.destroyedNames).toEqual([jobId]);
     const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
     await handleJobBatch(batch, env);
     expect(messages[0].acked).toBe(true);
     expect(calls).toHaveLength(0);
+    expect(freeBinding.destroyedNames).toEqual([jobId, jobId]);
+  });
+
+  it('schedules cancellation stop with waitUntil only after D1 confirms cancelled', async () => {
+    const { sqlite, env, freeBinding } = consumerEnv((body) => sessionLines(body.positions, 'free'));
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const tasks: Promise<unknown>[] = [];
+    const response = await handleV1Request(postJson(`/v1/jobs/${jobId}/cancel`, credential, {}), env, {
+      waitUntil: (task) => {
+        expect(sqlite.prepare('SELECT status FROM jobs WHERE job_id = ?').get(jobId)).toEqual({ status: 'cancelled' });
+        tasks.push(task);
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(tasks).toHaveLength(1);
+    await Promise.all(tasks);
+    expect(freeBinding.destroyedNames).toEqual([jobId]);
+  });
+
+  it('acks a cancellation that races a transient Container response instead of retrying it', async () => {
+    const { d1 } = createTestDb();
+    let status = 'healthy';
+    let jobId = '';
+    let cancel = async () => undefined;
+    const freeBinding = {
+      destroyedNames: [] as string[],
+      getByName: (name: string) => ({
+        getState: async () => ({ status }),
+        terminateJob: async () => { freeBinding.destroyedNames.push(name); status = 'stopped'; },
+        fetch: async () => {
+          await cancel();
+          return new Response('container is shutting down', { status: 503 });
+        },
+      }),
+    };
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, jobFree: freeBinding });
+    const { credential } = await issueCredential(env);
+    jobId = (await createGame(env, credential, ['2g2f'])).jobId;
+    cancel = async () => {
+      const response = await handleV1Request(postJson(`/v1/jobs/${jobId}/cancel`, credential, {}), env);
+      expect(response.status).toBe(200);
+    };
+    const delivery = fakeBatch([{ v: 1, jobId }]);
+    await handleJobBatch(delivery.batch, env);
+    expect(delivery.messages[0].acked).toBe(true);
+    expect(delivery.messages[0].retried).toBe(false);
+    expect(freeBinding.destroyedNames).toEqual([jobId, jobId]);
   });
 
   it('does not commit a driver failure result and retries from the failed ply', async () => {
@@ -991,39 +1172,95 @@ describe('queue consumer', () => {
     expect(job.status).not.toBe('failed');
   });
 
-  it('routes precision jobs to the standard-3 binding with profile conditions', async () => {
+  it('routes precision jobs to the job-specific standard-3 binding with profile conditions', async () => {
     const { d1, sqlite } = createTestDb();
     const probe = queueProbe();
     const calls: SessionCall[] = [];
     const env = makeJobsEnv({
       d1,
       queue: probe.queue,
-      normal: sessionBinding('ANALYSIS_CONTAINER', calls, (body) => sessionLines(body.positions, 'precision')),
-      standard3: sessionBinding('ANALYSIS_BENCHMARK_STANDARD_3', calls, (body) => sessionLines(body.positions, 'precision')),
+      jobFree: sessionBinding('JOB_FREE_CONTAINER', calls, (body) => sessionLines(body.positions, 'precision')),
+      jobPrecision: sessionBinding('JOB_PRECISION_CONTAINER', calls, (body) => sessionLines(body.positions, 'precision')),
     });
     const { credential, ownerId } = await issueCredential(env);
     sqlite.prepare('UPDATE owners SET precision_allowed = 1 WHERE owner_id = ?').run(ownerId);
     const { jobId } = await createGame(env, credential, ['2g2f'], { profileId: 'precision' });
-    const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
+    const { batch, messages } = fakeBatch([{ v: 1, jobId }], 1, JOB_PROFILES.precision.queueName);
     await handleJobBatch(batch, env);
     expect(messages[0].acked).toBe(true);
     expect(calls).toHaveLength(1);
-    expect(calls[0].binding).toBe('ANALYSIS_BENCHMARK_STANDARD_3');
-    expect(calls[0].name).toBe('analysis-jobs-standard-3');
+    expect(calls[0].binding).toBe('JOB_PRECISION_CONTAINER');
+    expect(calls[0].name).toBe(jobId);
     expect(calls[0].body.conditions).toEqual(JOB_PROFILES.precision.conditions);
   });
 
+  it('fails a delivery on the wrong profile Queue and stops the persisted jobId Container', async () => {
+    const { env, calls, freeBinding } = consumerEnv((body) => sessionLines(body.positions, 'free'));
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const mismatch = fakeBatch([{ v: 1, jobId }], 1, JOB_PROFILES.precision.queueName);
+    await handleJobBatch(mismatch.batch, env);
+    expect(mismatch.messages[0].acked).toBe(true);
+    expect(mismatch.messages[0].retried).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(freeBinding.destroyedNames).toEqual([jobId]);
+    const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as {
+      status: string; failure: { code: string };
+    };
+    expect(job.status).toBe('failed');
+    expect(job.failure.code).toBe('queue_profile_mismatch');
+  });
+
+  it('keeps a completed delivery acked when Container shutdown fails and emits lifecycle logs', async () => {
+    const { d1 } = createTestDb();
+    const calls: SessionCall[] = [];
+    const brokenStop = {
+      getByName: (name: string) => ({
+        getState: async () => ({ status: 'healthy' }),
+        terminateJob: async () => { throw new Error('stop failed'); },
+        fetch: async (request: Request) => {
+          const body = await request.json() as SessionCall['body'];
+          calls.push({ binding: 'JOB_FREE_CONTAINER', name, path: new URL(request.url).pathname, body });
+          return new Response(sessionLines(body.positions, 'free'), {
+            headers: { 'content-type': 'application/x-ndjson' },
+          });
+        },
+      }),
+    };
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, jobFree: brokenStop });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const delivery = fakeBatch([{ v: 1, jobId }]);
+    const logs: Record<string, unknown>[] = [];
+    await handleJobBatch(delivery.batch, env, { log: (entry) => logs.push(entry) });
+    expect(delivery.messages[0].acked).toBe(true);
+    expect(delivery.messages[0].retried).toBe(false);
+    expect(calls[0].name).toBe(jobId);
+    const events = logs.map((entry) => entry.event);
+    expect(events).toEqual(expect.arrayContaining([
+      'job_delivery_begin', 'job_container_fetch_begin', 'job_session_header_received',
+      'job_first_result_committed', 'job_container_stop_result',
+    ]));
+    expect(logs.every((entry) => entry.jobId === jobId && entry.profile === 'free')).toBe(true);
+  });
+
   it('retries transient session failures and exhausts into a failed job', async () => {
-    const { env } = consumerEnv(() => new Response('driver unavailable', { status: 503 }));
+    const { env, freeBinding } = consumerEnv(() => new Response('x'.repeat(1500), { status: 503 }));
     const { credential } = await issueCredential(env);
     const { jobId } = await createGame(env, credential, ['2g2f']);
     const first = fakeBatch([{ v: 1, jobId }], 1);
-    await handleJobBatch(first.batch, env);
+    const logs: Record<string, unknown>[] = [];
+    await handleJobBatch(first.batch, env, { log: (entry) => logs.push(entry) });
     expect(first.messages[0].retried).toBe(true);
+    expect(freeBinding.destroyedNames).toEqual([]);
+    const retryLog = logs.find((entry) => entry.event === 'job_container_retry_response');
+    expect(retryLog?.status).toBe(503);
+    expect(retryLog?.bodyPrefix).toBe('x'.repeat(1024));
     expect((await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as { status: string }).status).toBe('running');
     const exhausted = fakeBatch([{ v: 1, jobId }], JOB_CONSUMER.maxRetries + 1);
     await handleJobBatch(exhausted.batch, env);
     expect(exhausted.messages[0].acked).toBe(true);
+    expect(freeBinding.destroyedNames).toEqual([jobId]);
     const job = await (await handleV1Request(get(`/v1/jobs/${jobId}`, credential), env)).json() as {
       status: string; failure: { code: string };
     };
@@ -1071,34 +1308,23 @@ describe('queue consumer', () => {
     return { done: () => state.cancelled };
   }
 
-  it('cancels its driver session when the job is cancelled mid-stream, so the next job completes (Issue #29)', async () => {
+  it('does not refetch a terminally cancelled job Container while the next job runs', async () => {
     const { d1, sqlite } = createTestDb();
     const probe = queueProbe();
     const calls: SessionCall[] = [];
     const sessionIdA = 'ab'.repeat(16);
-    const cancels: unknown[] = [];
+    let jobAContainer: ReturnType<typeof sessionBinding> | undefined;
     let servedA = false;
     const env = makeJobsEnv({
       d1,
       queue: probe.queue,
-      normal: sessionBinding('ANALYSIS_CONTAINER', calls, (body) => {
+      jobFree: (jobAContainer = sessionBinding('JOB_FREE_CONTAINER', calls, (body) => {
         if (!servedA) {
           servedA = true;
           return sessionLines(body.positions, 'free', { sessionId: sessionIdA });
         }
-        // Like the wedged production session, the fake driver stays busy until
-        // the orphaned session's /session/cancel arrives.
-        if (cancels.length === 0) {
-          return new Response(
-            JSON.stringify({ status: 'failure', failure: { code: 'busy', message: 'An analysis is already running.' } }),
-            { status: 409 },
-          );
-        }
         return sessionLines(body.positions, 'free', { sessionId: 'cd'.repeat(16) });
-      }, (body) => {
-        cancels.push(body.sessionId);
-        return new Response(JSON.stringify({ schemaVersion: 1, cancelled: true }), { status: 200 });
-      }),
+      })),
     });
     const { credential } = await issueCredential(env);
     const { jobId: jobA } = await createGame(env, credential, ['2g2f', '8c8d']);
@@ -1106,12 +1332,13 @@ describe('queue consumer', () => {
 
     const first = fakeBatch([{ v: 1, jobId: jobA }]);
     await handleJobBatch(first.batch, env);
-    // The cancelled job's delivery still acks, and the abandonment asked the
-    // driver to stop session A.
+    // The cancelled job's delivery still acks. Its terminated DO rejects
+    // future fetches, so cleanup does not restart a dead Container.
     expect(cancelHook.done()).toBe(true);
     expect(first.messages[0].acked).toBe(true);
     expect(first.messages[0].retried).toBe(false);
-    expect(cancels).toEqual([sessionIdA]);
+    expect(jobAContainer?.lateFetches).toEqual([]);
+    expect(calls.map((call) => call.path)).toEqual(['/session']);
     const jobAView = await (await handleV1Request(get(`/v1/jobs/${jobA}`, credential), env)).json() as { status: string };
     expect(jobAView.status).toBe('cancelled');
 
@@ -1123,7 +1350,7 @@ describe('queue consumer', () => {
     expect(second.messages[0].retried).toBe(false);
     const jobBView = await (await handleV1Request(get(`/v1/jobs/${jobB}`, credential), env)).json() as { status: string };
     expect(jobBView.status).toBe('completed');
-    expect(calls.map((call) => call.path)).toEqual(['/session', '/session/cancel', '/session']);
+    expect(calls.map((call) => call.path)).toEqual(['/session', '/session']);
   });
 
   it('retries with delaySeconds instead of an immediate retry when there is no sessionId to cancel', async () => {
@@ -1248,28 +1475,109 @@ describe('queue consumer', () => {
     ['rejects', async () => { throw new Error('transport down'); }],
     ['non-200', async () => new Response('busy', { status: 500 })],
     ['hangs', () => new Promise<Response>(() => {})],
-  ])('ignores a session cancel that %s, leaving the outcome unchanged', async (_name, onCancel) => {
-    const { d1, sqlite } = createTestDb();
+  ])('ignores a best-effort cancel that %s for an active abandoned session', async (_name, onCancel) => {
+    const { d1 } = createTestDb();
     const probe = queueProbe();
     const calls: SessionCall[] = [];
     const sessionId = 'ab'.repeat(16);
     const env = makeJobsEnv({
       d1,
       queue: probe.queue,
-      normal: sessionBinding('ANALYSIS_CONTAINER', calls,
-        (body) => sessionLines(body.positions, 'free', { sessionId }),
+      jobFree: sessionBinding('JOB_FREE_CONTAINER', calls,
+        (body) => sessionLines(body.positions, 'free', { sessionId, omitEnd: true }),
         onCancel),
     });
     const { credential } = await issueCredential(env);
     const { jobId } = await createGame(env, credential, ['2g2f', '8c8d']);
-    const cancelHook = cancelJobAfterPly(env, credential, jobId, d1, sqlite);
     const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
     await handleJobBatch(batch, env, { sessionCancelTimeoutMs: 25 });
-    expect(cancelHook.done()).toBe(true);
-    // The cancelled job acks DONE regardless of how the cancel fetch behaved.
+    // The job remains active; an abandoned driver session gets best-effort cleanup.
     expect(messages[0].acked).toBe(true);
     expect(messages[0].retried).toBe(false);
     expect(calls.map((call) => call.path)).toEqual(['/session', '/session/cancel']);
+    expect(probe.sent).toEqual([{ v: 1, jobId }, { v: 1, jobId }]);
+  });
+
+  it('acks a late session fetch after cancellation without restarting the terminated Container', async () => {
+    const { d1 } = createTestDb();
+    const calls: SessionCall[] = [];
+    const binding = sessionBinding('JOB_FREE_CONTAINER', calls, body => sessionLines(body.positions, 'free'));
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, jobFree: binding });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const original = JobStore.prototype.markRunning;
+    const spy = vi.spyOn(JobStore.prototype, 'markRunning').mockImplementationOnce(async function(this: JobStore, id, at) {
+      const marked = await original.call(this, id, at);
+      expect(marked).toBe(true);
+      const cancelled = await handleV1Request(postJson(`/v1/jobs/${id}/cancel`, credential, {}), env);
+      expect(cancelled.status).toBe(200);
+      expect(await binding.getByName(id).getState()).toEqual({ status: 'stopped' });
+      return marked;
+    });
+    try {
+      const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
+      await handleJobBatch(batch, env);
+      expect(messages[0].acked).toBe(true);
+      expect(calls).toEqual([]);
+      expect(binding.lateFetches).toEqual(['/session']);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('does not fetch the Container when markRunning updates zero rows for a cancelled job', async () => {
+    const { d1 } = createTestDb();
+    const calls: SessionCall[] = [];
+    const binding = sessionBinding('JOB_FREE_CONTAINER', calls, body => sessionLines(body.positions, 'free'));
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, jobFree: binding });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const original = JobStore.prototype.markRunning;
+    const spy = vi.spyOn(JobStore.prototype, 'markRunning').mockImplementationOnce(async function(this: JobStore, id, at) {
+      const cancelled = await handleV1Request(postJson(`/v1/jobs/${id}/cancel`, credential, {}), env);
+      expect(cancelled.status).toBe(200);
+      return original.call(this, id, at);
+    });
+    try {
+      const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
+      await handleJobBatch(batch, env);
+      expect(messages[0].acked).toBe(true);
+      expect(calls).toEqual([]);
+      expect(binding.lateFetches).toEqual([]);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('acks terminal deliveries at the stop deadline and handles a late terminateJob rejection', async () => {
+    const { d1, sqlite } = createTestDb();
+    let terminateEntered = false;
+    let rejectTerminate!: (error: Error) => void;
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, jobFree: {
+      getByName: () => ({
+        getState: async () => ({ status: 'healthy' }),
+        terminateJob: async () => {
+          terminateEntered = true;
+          await new Promise<void>((_resolve, reject) => { rejectTerminate = reject; });
+        },
+        fetch: async () => { throw new Error('unexpected fetch'); },
+      }),
+    } });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    sqlite.prepare("UPDATE jobs SET status = 'failed' WHERE job_id = ?").run(jobId);
+    const { batch, messages } = fakeBatch([{ v: 1, jobId }]);
+    const logs: Record<string, unknown>[] = [];
+    vi.useFakeTimers();
+    try {
+      const delivery = handleJobBatch(batch, env, { log: (entry) => logs.push(entry) });
+      await vi.advanceTimersByTimeAsync(7_000);
+      await delivery;
+      expect(terminateEntered).toBe(true);
+      expect(messages[0].acked).toBe(true);
+      expect(logs).toContainEqual(expect.objectContaining({
+        event: 'job_container_stop_result', stopped: false, timedOut: true,
+      }));
+      rejectTerminate(new Error('late terminate failure'));
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally { vi.useRealTimers(); }
   });
 
   it('delays standard retries by attempt and still exhausts into a failed job', async () => {

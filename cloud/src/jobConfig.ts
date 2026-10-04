@@ -6,6 +6,9 @@ export type JobInstanceType = 'standard-2' | 'standard-3';
 
 export type JobProfile = {
   instanceType: JobInstanceType;
+  maxConcurrentJobs: number;
+  queueName: string;
+  deadLetterQueueName: string;
   conditions: SearchConditions;
 };
 
@@ -36,12 +39,18 @@ function loadProfiles(): Record<JobProfileId, JobProfile> {
   for (const id of ['free', 'precision'] as const) {
     const row = profiles[id];
     if (!row || !['standard-2', 'standard-3'].includes(String(row.instanceType))
+      || !isPositiveInteger(row.maxConcurrentJobs)
+      || typeof row.queueName !== 'string' || !/^meeshogi-jobs-[a-z]+-staging$/u.test(row.queueName)
+      || typeof row.deadLetterQueueName !== 'string' || !/^meeshogi-jobs-[a-z]+-staging-dlq$/u.test(row.deadLetterQueueName)
       || !isPositiveInteger(row.threads) || !isPositiveInteger(row.hashMb)
       || !isPositiveInteger(row.moveTimeMs) || !isPositiveInteger(row.multiPV)) {
       throw new Error(`job-profiles.json: profile "${id}" is missing or invalid`);
     }
     result[id] = {
       instanceType: row.instanceType as JobInstanceType,
+      maxConcurrentJobs: row.maxConcurrentJobs,
+      queueName: row.queueName,
+      deadLetterQueueName: row.deadLetterQueueName,
       conditions: {
         threads: row.threads,
         hashMb: row.hashMb,

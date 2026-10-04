@@ -18,6 +18,14 @@ import { Position } from 'tsshogi';
 import { json, readBody } from './httpUtil';
 import { handleV1Request } from './jobs';
 import { handleJobBatch } from './jobConsumer';
+import {
+  FreeJobContainer,
+  PrecisionJobContainer,
+  getJobContainer,
+  type JobContainerState,
+} from './jobContainers';
+import type { JobProfileId } from './jobConfig';
+import { D1RawDb, JobStore } from './jobStore';
 
 export interface Env {
   ANALYSIS_INTERNAL_TOKEN?: string;
@@ -30,8 +38,11 @@ export interface Env {
   ANALYSIS_CONTAINER: DurableObjectNamespace<AnalysisContainer>;
   ANALYSIS_BENCHMARK_STANDARD_2: DurableObjectNamespace<BenchmarkStandard2Container>;
   ANALYSIS_BENCHMARK_STANDARD_3: DurableObjectNamespace<BenchmarkStandard3Container>;
+  JOB_FREE_CONTAINER: DurableObjectNamespace<FreeJobContainer>;
+  JOB_PRECISION_CONTAINER: DurableObjectNamespace<PrecisionJobContainer>;
   JOBS_DB?: D1Database;
-  JOBS_QUEUE?: Queue<JobQueueMessage>;
+  JOBS_FREE_QUEUE?: Queue<JobQueueMessage>;
+  JOBS_PRECISION_QUEUE?: Queue<JobQueueMessage>;
   /** Only the literal "false" disables these admission checks. Missing values enforce them. */
   JOBS_ENFORCE_FREE_QUOTAS?: string;
   JOBS_REQUIRE_PRECISION_ALLOWLIST?: string;
@@ -123,6 +134,8 @@ export class BenchmarkStandard3Container extends Container<Env> {
     };
   }
 }
+
+export { FreeJobContainer, PrecisionJobContainer };
 
 function constantTimeEqual(a: string, b: string): boolean {
   let difference = a.length ^ b.length;
@@ -488,9 +501,33 @@ async function handleBenchmarkStop(request: Request, env: Env): Promise<Response
   }
 }
 
-export async function handleRequest(request: Request, env: Env): Promise<Response> {
+async function handleJobContainerState(request: Request, env: Env, jobId: string): Promise<Response> {
+  if (request.method !== 'GET') return json(failure('invalid', 'Method not allowed.'), 405);
+  const authFailure = authorize(request, env);
+  if (authFailure) return authFailure;
+  if (!env.JOBS_DB) return json(failure('engine_error', 'Job database is not configured.'), 503);
+  try {
+    const store = new JobStore(new D1RawDb(env.JOBS_DB));
+    const job = await store.jobById(jobId);
+    if (!job) return json(failure('invalid', 'Job not found.'), 404);
+    if (job.profile_id !== 'free' && job.profile_id !== 'precision') {
+      return json(failure('engine_error', 'Job profile configuration is invalid.'), 500);
+    }
+    const profileId = job.profile_id as JobProfileId;
+    const state = await getJobContainer(env, jobId, profileId).getState() as unknown as JobContainerState;
+    return json({ jobId, profileId, containerState: state, readOnly: true });
+  } catch {
+    return json(failure('engine_error', 'Job Container state is unavailable.'), 502);
+  }
+}
+
+export async function handleRequest(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
-  if (url.pathname.startsWith('/v1/')) return handleV1Request(request, env);
+  if (url.pathname.startsWith('/v1/')) return handleV1Request(request, env, {
+    ...(ctx ? { waitUntil: (task) => ctx.waitUntil(task) } : {}),
+  });
+  const jobContainerMatch = /^\/internal\/jobs\/(job_[0-9a-f]{24})\/container$/u.exec(url.pathname);
+  if (jobContainerMatch) return handleJobContainerState(request, env, jobContainerMatch[1]);
   if (url.pathname === BENCHMARK_HEALTH_PATH) return handleBenchmarkHealth(request, env);
   if (url.pathname === BENCHMARK_STOP_PATH) return handleBenchmarkStop(request, env);
   if (url.pathname === HEALTH_PATH) {

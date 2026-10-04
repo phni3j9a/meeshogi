@@ -130,18 +130,75 @@ def main() -> int:
         ("meeshogi-analysis-mvp-staging-analysis", "AnalysisContainer", "standard-2"),
         ("meeshogi-analysis-mvp-staging-benchmark-standard-2", "BenchmarkStandard2Container", "standard-2"),
         ("meeshogi-analysis-mvp-staging-benchmark-standard-3", "BenchmarkStandard3Container", "standard-3"),
+        ("meeshogi-analysis-mvp-staging-job-free", "FreeJobContainer", "standard-2"),
+        ("meeshogi-analysis-mvp-staging-job-precision", "PrecisionJobContainer", "standard-3"),
     }
     containers = config.get("containers")
     if not isinstance(containers, list) or len(containers) != len(fixed_containers):
-        print("Refusing to modify a config without the fixed normal and two benchmark Containers.", file=sys.stderr)
+        print("Refusing to modify a config without the normal, benchmark, and two job Containers.", file=sys.stderr)
         return 1
     rendered_container_specs = {
         (row.get("name"), row.get("class_name"), row.get("instance_type"))
         for row in containers if isinstance(row, dict)
     }
-    if rendered_container_specs != fixed_containers or any(row.get("max_instances") != 1 for row in containers):
-        print("Refusing to modify a config whose Container apps are not fixed to their class instance types with max_instances=1.", file=sys.stderr)
+    if rendered_container_specs != fixed_containers:
+        print("Refusing to modify a config whose Container apps are not fixed to their class instance types.", file=sys.stderr)
         return 1
+
+    profiles_path = Path(template).resolve().parent / "config" / "job-profiles.json"
+    profiles_manifest = json.loads(profiles_path.read_text(encoding="utf-8"))
+    profiles = profiles_manifest.get("profiles")
+    if not isinstance(profiles, dict) or set(profiles) != {"free", "precision"}:
+        raise ValueError("job-profiles.json must define exactly free and precision profiles")
+    profile_rows: dict[str, dict[str, object]] = {}
+    for profile_id in ("free", "precision"):
+        row = profiles[profile_id]
+        if not isinstance(row, dict) or type(row.get("maxConcurrentJobs")) is not int or not 1 <= row["maxConcurrentJobs"] <= 250:
+            raise ValueError(f"job-profiles.json profile {profile_id} has invalid maxConcurrentJobs")
+        if not isinstance(row.get("queueName"), str) or not isinstance(row.get("deadLetterQueueName"), str):
+            raise ValueError(f"job-profiles.json profile {profile_id} has invalid queue names")
+        profile_rows[profile_id] = row
+
+    app_for_profile = {
+        "free": ("meeshogi-analysis-mvp-staging-job-free", "FreeJobContainer"),
+        "precision": ("meeshogi-analysis-mvp-staging-job-precision", "PrecisionJobContainer"),
+    }
+    for profile_id, (app_name, class_name) in app_for_profile.items():
+        row = next(row for row in containers if row.get("name") == app_name and row.get("class_name") == class_name)
+        row["max_instances"] = profile_rows[profile_id]["maxConcurrentJobs"]
+    for row in containers:
+        if row.get("class_name") not in {"FreeJobContainer", "PrecisionJobContainer"}:
+            if row.get("max_instances") != 1:
+                print("Refusing to change the existing normal or benchmark Container instance cap.", file=sys.stderr)
+                return 1
+
+    queues = config.get("queues")
+    if not isinstance(queues, dict):
+        raise ValueError("queues must be an object")
+    producers, consumers = queues.get("producers"), queues.get("consumers")
+    expected_queue_bindings = {
+        profile_rows["free"]["queueName"]: "JOBS_FREE_QUEUE",
+        profile_rows["precision"]["queueName"]: "JOBS_PRECISION_QUEUE",
+    }
+    if not isinstance(producers, list) or len(producers) != 2:
+        raise ValueError("expected exactly two job Queue producers")
+    if {(row.get("queue"), row.get("binding")) for row in producers if isinstance(row, dict)} != set(expected_queue_bindings.items()):
+        raise ValueError("job Queue producers do not match job-profiles.json")
+    if not isinstance(consumers, list) or len(consumers) != 2:
+        raise ValueError("expected exactly two job Queue consumers")
+    consumers_by_queue = {row.get("queue"): row for row in consumers if isinstance(row, dict)}
+    if set(consumers_by_queue) != set(expected_queue_bindings):
+        raise ValueError("job Queue consumers do not match job-profiles.json")
+    for profile_id, profile in profile_rows.items():
+        consumer = consumers_by_queue[profile["queueName"]]
+        if consumer.get("dead_letter_queue") != profile["deadLetterQueueName"]:
+            raise ValueError(f"{profile_id} dead-letter queue does not match job-profiles.json")
+        consumer["max_concurrency"] = profile["maxConcurrentJobs"]
+    for profile_id, (app_name, _) in app_for_profile.items():
+        app = next(row for row in containers if row.get("name") == app_name)
+        concurrency = consumers_by_queue[profile_rows[profile_id]["queueName"]]["max_concurrency"]
+        if app["max_instances"] != concurrency:
+            raise ValueError(f"{profile_id} Container and Queue concurrency differ")
     Path(output).write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return 0
 

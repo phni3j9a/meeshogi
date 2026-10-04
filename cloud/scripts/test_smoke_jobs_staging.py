@@ -17,12 +17,29 @@ SPEC.loader.exec_module(SMOKE)
 
 
 class SmokeAccessModeTests(unittest.TestCase):
+    def test_state_route_stop_check_uses_internal_token_and_accepts_stopped_with_code(self) -> None:
+        with patch.dict(os.environ, {"ANALYSIS_INTERNAL_TOKEN": "internal-secret"}), \
+                patch.object(SMOKE, "api", return_value={
+                    "httpStatus": 200,
+                    "body": {"containerState": {"status": "stopped_with_code"}},
+                }) as request:
+            self.assertTrue(SMOKE.wait_for_container_stopped("https://worker.test", "job_" + "a" * 24))
+        request.assert_called_once_with(
+            "https://worker.test", "GET", f"/internal/jobs/{'job_' + 'a' * 24}/container", None, None,
+            internal_token="internal-secret",
+        )
+
+    def test_stop_check_is_unverified_without_internal_token(self) -> None:
+        with patch.dict(os.environ, {}, clear=True), patch.object(SMOKE, "api") as request:
+            self.assertIsNone(SMOKE.wait_for_container_stopped("https://worker.test", "job_" + "b" * 24))
+        request.assert_not_called()
+
     def test_development_precision_uses_a_fresh_owner_without_a_registration_file(self) -> None:
         owner = {"ownerId": "own_test", "credential": "test-only"}
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(SMOKE, "PRECISION_OWNER_FILE", Path(directory) / "owner.json"), \
                 patch.object(SMOKE, "issue_credential", return_value=owner) as issue, \
-                patch.object(SMOKE, "run_job_flow") as flow, \
+                patch.object(SMOKE, "run_job_flow", return_value=[]) as flow, \
                 patch.dict(os.environ, {"ANALYSIS_STAGING_URL": "https://worker.test"}), \
                 patch.object(sys, "argv", ["smoke", "--precision"]), \
                 contextlib.redirect_stdout(io.StringIO()):
@@ -36,7 +53,7 @@ class SmokeAccessModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(SMOKE, "PRECISION_OWNER_FILE", Path(directory) / "owner.json"), \
                 patch.object(SMOKE, "issue_credential", return_value=owner) as issue, \
-                patch.object(SMOKE, "run_job_flow") as flow, \
+                patch.object(SMOKE, "run_job_flow", return_value=[]) as flow, \
                 patch.dict(os.environ, {"ANALYSIS_STAGING_URL": "https://worker.test"}), \
                 patch.object(sys, "argv", ["smoke", "--precision", "--require-precision-allowlist"]), \
                 contextlib.redirect_stdout(io.StringIO()) as output:

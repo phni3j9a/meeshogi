@@ -6,6 +6,7 @@ import { isValidSfen, legalMoves } from './contract';
 import { json, readBody } from './httpUtil';
 import { JOB_LIMITS, type JobProfileId } from './jobConfig';
 import { D1RawDb, JobStore, type JobRow, type OwnerRow } from './jobStore';
+import { stopJobContainer } from './jobContainers';
 import { Position } from 'tsshogi';
 import type { Env, JobQueueMessage } from './index';
 
@@ -22,6 +23,7 @@ const USI_MOVE_RE = /^(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])$/u;
 
 export interface JobApiDeps {
   now?: () => number;
+  waitUntil?: (task: Promise<unknown>) => void;
 }
 
 type JobFailureCode =
@@ -139,11 +141,18 @@ function replayGame(initialSfen: string, moves: string[]): { positions?: Validat
   return { positions };
 }
 
-async function enqueue(env: Env, jobId: string): Promise<Response | null> {
-  if (!env.JOBS_QUEUE) return json(jobFailure('unconfigured', 'Job queue is not configured.'), 503);
+function queueForProfile(env: Env, profileId: JobProfileId): Queue<JobQueueMessage> | undefined {
+  if (profileId === 'free') return env.JOBS_FREE_QUEUE;
+  if (profileId === 'precision') return env.JOBS_PRECISION_QUEUE;
+  return undefined;
+}
+
+async function enqueue(env: Env, jobId: string, profileId: JobProfileId): Promise<Response | null> {
+  const queue = queueForProfile(env, profileId);
+  if (!queue) return json(jobFailure('unconfigured', `The ${profileId} job queue is not configured.`), 503);
   const message: JobQueueMessage = { v: 1, jobId };
   try {
-    await env.JOBS_QUEUE.send(message);
+    await queue.send(message);
   } catch {
     return json(jobFailure('enqueue_failed', 'The job was persisted but could not be enqueued; resubmit with the same idempotency key.'), 503);
   }
@@ -257,7 +266,7 @@ async function handleCreateJob(request: Request, env: Env, now: () => number): P
     admitted = 'skipped';
   }
   if (admitted === 'inserted') {
-    const enqueueFailure = await enqueue(env, jobId);
+    const enqueueFailure = await enqueue(env, jobId, profileId);
     if (enqueueFailure) return enqueueFailure;
     const created = await store.jobById(jobId);
     return json({ ...jobView(created!), idempotentReplay: false }, 201);
@@ -269,7 +278,7 @@ async function handleCreateJob(request: Request, env: Env, now: () => number): P
       return json(jobFailure('idempotency_conflict', 'The idempotency key was already used with a different input.'), 409);
     }
     if (existing.status === 'queued' || existing.status === 'running') {
-      const enqueueFailure = await enqueue(env, existing.job_id);
+      const enqueueFailure = await enqueue(env, existing.job_id, existing.profile_id as JobProfileId);
       if (enqueueFailure) return enqueueFailure;
     }
     return json({ ...jobView(existing, await store.resultCounts(existing.job_id)), idempotentReplay: true }, 200);
@@ -345,7 +354,13 @@ async function handleGetJobResults(request: Request, env: Env, jobId: string): P
   });
 }
 
-async function handleCancelJob(request: Request, env: Env, jobId: string, now: () => number): Promise<Response> {
+async function handleCancelJob(
+  request: Request,
+  env: Env,
+  jobId: string,
+  now: () => number,
+  deps: JobApiDeps,
+): Promise<Response> {
   if (request.method !== 'POST') return json(jobFailure('invalid', 'Method not allowed.'), 405);
   if (!env.JOBS_DB) return json(jobFailure('unconfigured', 'Job database is not configured.'), 503);
   const store = new JobStore(new D1RawDb(env.JOBS_DB));
@@ -355,6 +370,11 @@ async function handleCancelJob(request: Request, env: Env, jobId: string, now: (
   if (!job) return json(jobFailure('not_found', 'Job not found.'), 404);
   await store.cancelJob(jobId, auth.owner_id, isoNow(now));
   const current = await store.jobById(jobId);
+  if (current?.status === 'cancelled' && (current.profile_id === 'free' || current.profile_id === 'precision')) {
+    const stopping = stopJobContainer(env, jobId, current.profile_id);
+    if (deps.waitUntil) deps.waitUntil(stopping);
+    else await stopping;
+  }
   return json({ ...jobView(current!, await store.resultCounts(jobId)), cancelled: current!.status === 'cancelled' });
 }
 
@@ -370,6 +390,6 @@ export async function handleV1Request(request: Request, env: Env, deps: JobApiDe
   }
   const [, jobId, sub] = jobMatch;
   if (sub === '/results') return handleGetJobResults(request, env, jobId);
-  if (sub === '/cancel') return handleCancelJob(request, env, jobId, now);
+  if (sub === '/cancel') return handleCancelJob(request, env, jobId, now, deps);
   return handleGetJob(request, env, jobId);
 }

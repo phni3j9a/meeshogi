@@ -288,11 +288,19 @@ class SessionTests(unittest.TestCase):
         profiles = load_job_profiles(JOB_PROFILES_PATH)
         self.assertEqual(
             profiles["free"],
-            {"instanceType": "standard-2", "threads": 1, "hashMb": 64, "moveTimeMs": 500, "multiPV": 1},
+            {
+                "instanceType": "standard-2", "maxConcurrentJobs": 3,
+                "queueName": "meeshogi-jobs-free-staging", "deadLetterQueueName": "meeshogi-jobs-free-staging-dlq",
+                "threads": 1, "hashMb": 64, "moveTimeMs": 500, "multiPV": 1,
+            },
         )
         self.assertEqual(
             profiles["precision"],
-            {"instanceType": "standard-3", "threads": 2, "hashMb": 64, "moveTimeMs": 2500, "multiPV": 3},
+            {
+                "instanceType": "standard-3", "maxConcurrentJobs": 2,
+                "queueName": "meeshogi-jobs-precision-staging", "deadLetterQueueName": "meeshogi-jobs-precision-staging-dlq",
+                "threads": 2, "hashMb": 64, "moveTimeMs": 2500, "multiPV": 3,
+            },
         )
 
     def test_session_reuses_one_engine_process_for_all_positions(self) -> None:

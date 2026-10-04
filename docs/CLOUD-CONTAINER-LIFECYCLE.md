@@ -90,3 +90,32 @@ minute bucketと取得時刻を保存し、直近の未到着データを0と判
 ## 検証の境界
 
 モバイルコード、native Sekirei統合、production資源は変更していない。今回の両OSビルド・画面操作・実機受入は実行していない。Queue→DLQ、12分を超えるcontinuation、実環境へのネットワーク障害注入は今回の受入に含まない。旧staging Workerのcron整理も別作業である。
+
+## Issue #48: jobごとのContainerと終端停止
+
+Issue #48で、job処理を同期解析用singletonおよびbenchmarkクラスから分離した。Freeは `FreeJobContainer` / standard-2、Precisionは `PrecisionJobContainer` / standard-3を使い、DO名はD1に保存された `jobId` とする。profile設定 `cloud/config/job-profiles.json` の現在の上限はFree 3、Precision 2で、同じ値を `render-config.py` がContainer `max_instances` と対応Queue `max_concurrency` に設定する。この値はDO主導の即時開始が入るまでの暫定値とし、最終値はIssue #24で決める。既存の `AnalysisContainer`、benchmark 2クラス、`/internal/analyze` の経路は維持する。
+
+Queueは `meeshogi-jobs-free-staging` / `meeshogi-jobs-free-staging-dlq` と `meeshogi-jobs-precision-staging` / `meeshogi-jobs-precision-staging-dlq` の4本。producerとcontinuationは保存profileのQueueへ送り、consumerは `batch.queue` とD1 profileの一致を確認する。不一致は `queue_profile_mismatch` として終端化する。旧 `meeshogi-jobs-staging` bindingは外す。staging deploy前に旧Queue backlogがないことを確認する。
+
+完了・失敗・retry枯渇・取消がD1に確定した後、同じjobIdのContainer RPC `terminateJob()` を呼ぶ。DO storageへ終端フラグを永続化してから `destroy()` し、終端後の `/session` と `/session/cancel` fetchはHTTP 410で拒否するため、DO再起動後もContainerを起動しない。停止RPCと `getState()` の確認全体に6秒の期限を設け、pollは100ms間隔とする。期限切れ・RPC失敗は構造化ログに残すが、Queue ack/retry結果は変えない。consumerが410を受けたらD1を再読し、終端なら停止を冪等に再試行してackし、activeなら契約違反として失敗させる。session cleanup前にもD1を読み直し、終端jobへ起動fetchを送らない。`markRunning` が0行を更新した場合もD1を読み直して、終端jobではsessionを開始しない。continuationと通常retryの前には停止しない。jobクラスの `sleepAfter = '1m'` は保険で、設定されている最大retry待ち30秒（10/20/30秒）より長く、同期解析・benchmarkの5分設定には影響しない。
+
+`GET /internal/jobs/:jobId/container` はinternal tokenを要求し、D1からprofileを読み、jobId名stubの `getState()` だけを返す。Container `fetch()` は呼ばないため、停止確認のpollingはアプリを起動・延命しない。計測ログにはdelivery開始、Container fetch開始、session header受信、最初の結果commit、停止結果がjobId/profileと共に記録される。HTTP 503時は最大1KiBの本文を記録し、従来どおりretryする。
+
+**staging実測（2026-10-04、候補 `5d874dc`）:** 1局面jobはjobごとにコールドスタートし、profileごとに60件を逐次実行した。
+
+| Profile | 件数 | POST→最初の結果 p50 / p90 / 最大 | 終端→停止確認 p50 / 最大 | 停止確認 |
+| --- | ---: | ---: | ---: | ---: |
+| Free | 60 | 6.1 / 7.1 / 10.6秒 | 0.49 / 0.75秒 | 60/60 |
+| Precision | 60 | 8.3 / 9.1 / 12.9秒 | 0.46 / 0.55秒 | 60/60 |
+
+長いjobと同時投入では次の結果だった。
+
+| 条件 | POST→最初の結果 | POST→完了 | 補足 |
+| --- | --- | --- | --- |
+| Free 92手 + Precision 92手を同時投入 | Free 6.0秒、Precision 9.0秒 | Free 53秒、Precision 236秒 | 並行して進み、profile間の待ちはなかった。#46の温まったContainerでの値（約50秒、3分55秒）とほぼ同じ。 |
+| Free 92手 ×6（上限3） | 7.9 / 62 / 72 / 116 / 125 / 131秒 | 56 / 110 / 120 / 164 / 173 / 178秒 | 全jobでContainer停止を確認。 |
+| Free 92手 ×3（上限ちょうど） | delivery開始 T+0 / 54 / 65秒 | 59 / 113 / 123秒 | すべてattempt 1、503 retryなし。ほぼ順番に開始。 |
+
+上限ちょうどの3件でもQueue deliveryが順番になったのは、1 deliveryが一局を処理し、Queuesがbatch処理後にconsumerの自動スケールを判断するためである（[Cloudflare Queues consumer concurrency](https://developers.cloudflare.com/queues/configuration/consumer-concurrency/)）。この同一profile内の待ちを解消するDO主導の即時開始は[#49](https://github.com/phni3j9a/meeshogi/issues/49)で実施し、Issue #24のproduction切り替えの前提条件とする。Issue #48の実測ではコールドjobの初回結果までFree 6〜7秒、Precision 8〜9秒（p50/p90）で、warm poolは不要と判断した。#20記録のコールド起動待ちはstandard-2約17秒、standard-3約25秒だった。
+
+5d874dcの再deploy後もFreeの完了・取消とPrecisionのsmokeが成功し、数分後も3つのjob Containerはstoppedのままだった。生データはscratchpadに保管し、リポジトリには上表の集計のみを記録する。
