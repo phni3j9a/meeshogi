@@ -31,6 +31,15 @@ interface JobControl {
   phase: ControlPhase;
   recoveryTaskId: string | null;
   recoveryAt: number | null;
+  capacityWaitCount?: number;
+  capacityWaitStartedAt?: number | null;
+  capacityWaitScheduledMs?: number;
+}
+
+interface CapacityWaitProgress {
+  count: number;
+  startedAt: number;
+  scheduledMs: number;
 }
 
 interface SchedulePayload {
@@ -183,6 +192,9 @@ abstract class JobContainerBase extends Container<Env> {
           phase: 'scheduled',
           recoveryTaskId: null,
           recoveryAt: null,
+          capacityWaitCount: 0,
+          capacityWaitStartedAt: null,
+          capacityWaitScheduledMs: 0,
         };
         await this.doState.storage.put(CONTROL_STORAGE_KEY, control);
         if (this.terminationRequested) return { accepted: true, generation: control.generation };
@@ -409,42 +421,63 @@ abstract class JobContainerBase extends Container<Env> {
       cursor: fresh?.next_ply ?? null,
       attempt: latest.attempt,
     });
+    const capacityWaitReset = outcome.kind !== 'capacity' && (latest.capacityWaitCount ?? 0) > 0
+      ? null
+      : undefined;
     if (fresh && isTerminal(fresh)) {
       await this.terminateJob().catch(() => undefined);
       return;
     }
     if (!isActive(fresh)) {
-      await this.scheduleTransient(latest, 'job_row_missing');
+      await this.scheduleTransient(latest, 'job_row_missing', capacityWaitReset);
       return;
     }
     if (outcome.kind === 'fail') {
-      await this.persistFailure(latest, store, outcome.code, outcome.message);
+      await this.persistFailure(latest, store, outcome.code, outcome.message, capacityWaitReset);
       return;
     }
     if (outcome.kind === 'capacity') {
       const exponential = Math.min(30, 5 * (2 ** Math.min(latest.generation - 1, 3)));
       const delaySeconds = Math.min(30, exponential + Math.floor(Math.random() * 5));
       this.emitControl('job_retry_capacity', latest, { delaySeconds, message: outcome.message.slice(0, 256) });
-      await this.scheduleFollowup(latest, latest.attempt, delaySeconds, 'capacity');
+      const now = Date.now();
+      const previousWaitCount = latest.capacityWaitCount ?? 0;
+      const previousScheduledMs = latest.capacityWaitScheduledMs ?? 0;
+      const safeWaitCount = Number.isSafeInteger(previousWaitCount) && previousWaitCount >= 0 ? previousWaitCount : 0;
+      const safeScheduledMs = Number.isSafeInteger(previousScheduledMs) && previousScheduledMs >= 0 ? previousScheduledMs : 0;
+      const capacityWait: CapacityWaitProgress = {
+        count: safeWaitCount + 1,
+        startedAt: typeof latest.capacityWaitStartedAt === 'number' && Number.isFinite(latest.capacityWaitStartedAt)
+          ? latest.capacityWaitStartedAt
+          : now,
+        scheduledMs: safeScheduledMs + delaySeconds * 1000,
+      };
+      await this.scheduleFollowup(latest, latest.attempt, delaySeconds, 'capacity', capacityWait);
       return;
     }
     if (outcome.kind === 'continue' || outcome.kind === 'resume') {
       if (fresh.next_ply > initialCursor) {
-        await this.scheduleFollowup(latest, 1, 0, 'progress');
+        await this.scheduleFollowup(latest, 1, 0, 'progress', capacityWaitReset);
       } else {
-        await this.scheduleTransient(latest, 'deadline_without_progress');
+        await this.scheduleTransient(latest, 'deadline_without_progress', capacityWaitReset);
       }
       return;
     }
     if (outcome.kind === 'done') {
       if (isTerminal(fresh)) await this.terminateJob().catch(() => undefined);
-      else await this.scheduleTransient(latest, 'done_while_active');
+      else await this.scheduleTransient(latest, 'done_while_active', capacityWaitReset);
       return;
     }
-    await this.scheduleTransient(latest, 'driver_or_transport_failure');
+    await this.scheduleTransient(latest, 'driver_or_transport_failure', capacityWaitReset);
   }
 
-  private async persistFailure(control: JobControl, store: JobStore, code: string, message: string): Promise<void> {
+  private async persistFailure(
+    control: JobControl,
+    store: JobStore,
+    code: string,
+    message: string,
+    capacityWait?: CapacityWaitProgress | null,
+  ): Promise<void> {
     try {
       await store.markFailed(control.jobId, code, message, new Date().toISOString());
       const fresh = await store.jobById(control.jobId);
@@ -452,14 +485,18 @@ abstract class JobContainerBase extends Container<Env> {
         await this.terminateJob().catch(() => undefined);
         return;
       }
-      await this.scheduleTransient(control, 'failure_write_did_not_terminalize');
+      await this.scheduleTransient(control, 'failure_write_did_not_terminalize', capacityWait);
     } catch {
       // Keep the callback-entry recovery schedule if D1 cannot save its terminal state.
-      await this.scheduleTransient(control, 'failure_write_failed').catch(() => undefined);
+      await this.scheduleTransient(control, 'failure_write_failed', capacityWait).catch(() => undefined);
     }
   }
 
-  private async scheduleTransient(control: JobControl, reason: string): Promise<void> {
+  private async scheduleTransient(
+    control: JobControl,
+    reason: string,
+    capacityWait?: CapacityWaitProgress | null,
+  ): Promise<void> {
     if (this.terminationRequested) return;
     if (control.attempt >= JOB_EXECUTION.maxRetries + 1) {
       const store = this.jobStore();
@@ -479,15 +516,22 @@ abstract class JobContainerBase extends Container<Env> {
         control.attempt,
         JOB_EXECUTION.retryDelaySeconds * JOB_EXECUTION.maxRetries,
         reason,
+        capacityWait,
       );
       return;
     }
     const delay = JOB_EXECUTION.retryDelaySeconds * control.attempt;
     this.emitControl('job_retry_transient', control, { reason, delaySeconds: delay, nextAttempt: control.attempt + 1 });
-    await this.scheduleFollowup(control, control.attempt + 1, delay, reason);
+    await this.scheduleFollowup(control, control.attempt + 1, delay, reason, capacityWait);
   }
 
-  private async scheduleFollowup(control: JobControl, attempt: number, delaySeconds: number, reason: string): Promise<void> {
+  private async scheduleFollowup(
+    control: JobControl,
+    attempt: number,
+    delaySeconds: number,
+    reason: string,
+    capacityWait?: CapacityWaitProgress | null,
+  ): Promise<void> {
     if (this.terminationRequested || await this.isDurablyTerminated()) return;
     const latest = await this.readControl();
     if (!latest || latest.generation !== control.generation || latest.runId !== control.runId || latest.phase !== control.phase || latest.phase === 'terminal') return;
@@ -501,6 +545,13 @@ abstract class JobContainerBase extends Container<Env> {
       phase: 'scheduled',
       recoveryTaskId: null,
       recoveryAt: null,
+      ...(capacityWait === null
+        ? { capacityWaitCount: 0, capacityWaitStartedAt: null, capacityWaitScheduledMs: 0 }
+        : capacityWait ? {
+          capacityWaitCount: capacityWait.count,
+          capacityWaitStartedAt: capacityWait.startedAt,
+          capacityWaitScheduledMs: capacityWait.scheduledMs,
+        } : {}),
     };
     await this.doState.storage.put(CONTROL_STORAGE_KEY, next);
     if (this.terminationRequested) {
@@ -526,6 +577,15 @@ abstract class JobContainerBase extends Container<Env> {
     }
     this.deleteSchedules(RECOVERY_CALLBACK);
     this.emitControl('job_followup_reserved', { ...afterSchedule, taskId: task.taskId }, { reason, delaySeconds, attempt });
+    if (reason === 'capacity' && capacityWait) {
+      this.emitControl('job_capacity_wait', { ...afterSchedule, taskId: task.taskId }, {
+        phase: capacityWait.count === 1 ? 'started' : 'continued',
+        waitCount: capacityWait.count,
+        cumulativeWaitMs: Math.max(0, Date.now() - capacityWait.startedAt),
+        cumulativeScheduledWaitMs: capacityWait.scheduledMs,
+        nextDelaySeconds: delaySeconds,
+      });
+    }
   }
 
   private async ensureReservation(

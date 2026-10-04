@@ -19,6 +19,7 @@ const MAX_SESSION_LINE_BYTES = 64 * 1024;
 /** The driver rejects sessions above this position count; extra positions are processed by a later session in the same delivery. */
 const MAX_SESSION_POSITIONS = 512;
 const NO_CONTAINER_INSTANCE = 'there is no container instance that can be provided to this durable object';
+const MAX_RUNNING_CONTAINER_INSTANCES = 'maximum number of running container instances exceeded';
 const CAPACITY_RESPONSE_PREFIX_LIMIT = 1024;
 export type JobRunOutcome =
   | { kind: 'resume' }
@@ -142,7 +143,11 @@ export function capacityWaitMessage(value: unknown): string | null {
   const lower = message.toLowerCase();
   const sdkCapacityResponse = lower.includes('there is no container instance available at this time')
     && lower.includes('max concurrent instance count');
-  return lower.includes(NO_CONTAINER_INSTANCE) || sdkCapacityResponse ? message.slice(0, 1024) : null;
+  return lower.includes(NO_CONTAINER_INSTANCE)
+    || lower.includes(MAX_RUNNING_CONTAINER_INSTANCES)
+    || sdkCapacityResponse
+    ? message.slice(0, 1024)
+    : null;
 }
 
 type PostFailure = { kind: 'capacity'; message: string };
@@ -307,15 +312,19 @@ export async function runSession(
   }
   if (!response.ok) {
     if (response.status === 409 || response.status === 503 || response.status === 429 || response.status >= 500) {
-      if (response.status === 503) {
+      if (response.status >= 500) {
         let bodyPrefix = '';
         try { bodyPrefix = await readResponsePrefix(response, CAPACITY_RESPONSE_PREFIX_LIMIT); } catch { /* retry behavior is unchanged */ }
         controller.abort();
-        emit(deps, {
-          event: 'job_container_retry_response', jobId: job.job_id, profile: job.profile_id,
-          status: response.status, bodyPrefix,
-        });
-        if (capacityWaitMessage(bodyPrefix)) return { kind: 'capacity', message: bodyPrefix.slice(0, 1024) };
+        const capacityMessage = capacityWaitMessage(bodyPrefix);
+        if (response.status === 503 || capacityMessage) {
+          emit(deps, {
+            event: 'job_container_retry_response', jobId: job.job_id, profile: job.profile_id,
+            status: response.status, bodyPrefix: response.status === 503 ? bodyPrefix : '',
+            capacityDetected: capacityMessage !== null,
+          });
+        }
+        if (capacityMessage) return { kind: 'capacity', message: capacityMessage };
       } else {
         controller.abort();
         await cancelBody(response);

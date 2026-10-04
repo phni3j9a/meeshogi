@@ -33,7 +33,7 @@ const RECOVERY_CALLBACK = 'recoverScheduledSlice';
 type PositionRow = { ply: number; sfen: string };
 type Schedule = { taskId: string; callback: string; payload: { schemaVersion: 1; generation: number; runId: string }; time: number };
 type SessionRequest = { contract: string; profileId: JobProfileId; conditions: Record<string, number>; positions: PositionRow[]; deadlineMs: number };
-type Control = { schemaVersion: 1; jobId: string; profileId: JobProfileId; generation: number; attempt: number; notBefore: number; runId: string | null; taskId: string | null; phase: string; recoveryTaskId: string | null; recoveryAt: number | null };
+type Control = { schemaVersion: 1; jobId: string; profileId: JobProfileId; generation: number; attempt: number; notBefore: number; runId: string | null; taskId: string | null; phase: string; recoveryTaskId: string | null; recoveryAt: number | null; capacityWaitCount?: number; capacityWaitStartedAt?: number | null; capacityWaitScheduledMs?: number };
 
 function positionsFor(moves: string[]): PositionRow[] {
   const position = Position.newBySFEN(STARTPOS)!;
@@ -356,6 +356,35 @@ describe('JobContainer durable control state machine', () => {
     expect(capacity.notBefore - Date.now()).toBeGreaterThanOrEqual(4_000);
     expect(capacity.notBefore - Date.now()).toBeLessThanOrEqual(6_000);
 
+    const runtimeCapacityDb = seedJob('do_runtime_capacity');
+    const runtimeCapacityMessage = 'Container error: Maximum number of running container instances exceeded. Try again later.';
+    let runtimeCapacityCalls = 0;
+    const runtimeCapacityHarness = makeDo('do_runtime_capacity', runtimeCapacityDb.d1, async () => {
+      runtimeCapacityCalls += 1;
+      if (runtimeCapacityCalls === 1) throw new Error(runtimeCapacityMessage);
+      if (runtimeCapacityCalls === 2) return new Response(`Cloudflare said: ${runtimeCapacityMessage}`, { status: 500 });
+      return sessionResponse(runtimeCapacityDb.positions, 'free');
+    });
+    await runtimeCapacityHarness.container.startJob({ jobId: 'do_runtime_capacity', profileId: 'free' });
+    await runSchedule(runtimeCapacityHarness);
+    expect(control(runtimeCapacityHarness)).toMatchObject({ phase: 'scheduled', generation: 2, attempt: 1, capacityWaitCount: 1 });
+    await runSchedule(runtimeCapacityHarness);
+    expect(control(runtimeCapacityHarness)).toMatchObject({ phase: 'scheduled', generation: 3, attempt: 1, capacityWaitCount: 2 });
+    expect(control(runtimeCapacityHarness).capacityWaitScheduledMs).toBe(15_000);
+    await runSchedule(runtimeCapacityHarness);
+    expect(runtimeCapacityCalls).toBe(3);
+    expect(await runtimeCapacityHarness.store.jobById('do_runtime_capacity')).toMatchObject({ status: 'completed' });
+    const capacityWaitEvents = vi.mocked(console.log).mock.calls
+      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .filter((entry) => entry.event === 'job_capacity_wait' && entry.jobId === 'do_runtime_capacity');
+    expect(capacityWaitEvents.map(({ phase, waitCount, cumulativeScheduledWaitMs, nextDelaySeconds }) => ({
+      phase, waitCount, cumulativeScheduledWaitMs, nextDelaySeconds,
+    }))).toEqual([
+      { phase: 'started', waitCount: 1, cumulativeScheduledWaitMs: 5_000, nextDelaySeconds: 5 },
+      { phase: 'continued', waitCount: 2, cumulativeScheduledWaitMs: 15_000, nextDelaySeconds: 10 },
+    ]);
+    expect(capacityWaitEvents[1].cumulativeWaitMs).toBeGreaterThanOrEqual(5_000);
+
     const genericDb = seedJob('do_generic_503');
     const genericHarness = makeDo('do_generic_503', genericDb.d1, async () => new Response('ordinary unavailable', { status: 503 }));
     await genericHarness.container.startJob({ jobId: 'do_generic_503', profileId: 'free' });
@@ -363,8 +392,17 @@ describe('JobContainer durable control state machine', () => {
     expect(control(genericHarness)).toMatchObject({ phase: 'scheduled', generation: 2, attempt: 2 });
     expect(control(genericHarness).notBefore - Date.now()).toBeGreaterThanOrEqual(9_000);
     expect(control(genericHarness).notBefore - Date.now()).toBeLessThanOrEqual(11_000);
+    const genericExceptionDb = seedJob('do_generic_exception');
+    const genericExceptionHarness = makeDo('do_generic_exception', genericExceptionDb.d1, async () => {
+      throw new Error('ordinary transport failure');
+    });
+    await genericExceptionHarness.container.startJob({ jobId: 'do_generic_exception', profileId: 'free' });
+    await runSchedule(genericExceptionHarness);
+    expect(control(genericExceptionHarness)).toMatchObject({ phase: 'scheduled', generation: 2, attempt: 2 });
     capacityDb.sqlite.close();
+    runtimeCapacityDb.sqlite.close();
     genericDb.sqlite.close();
+    genericExceptionDb.sqlite.close();
   });
 
   it('aligns fractional retry times to SDK seconds and restores a reservation after an early callback', async () => {
