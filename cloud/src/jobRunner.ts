@@ -424,7 +424,7 @@ export async function runSession(
         // Driver execution failures never advance the cursor: a worker-validated
         // position rejected as invalid, or an identity mismatch reported by the
         // driver, is a permanent contract break; every other failure code is a
-        // transient engine fault retried from this ply by the standard Queue
+        // transient engine fault retried from this ply by the DO's scheduled
         // retry. The failed ply itself is never committed.
         const code = String((validated as DriverFailure).failure?.code ?? 'unknown');
         if (code === 'invalid' || code === 'identity_mismatch') {

@@ -860,6 +860,28 @@ describe('queue start consumer and stale-job recovery', () => {
     expect(job?.failure_code).toBe('queue_profile_mismatch');
   });
 
+  it('routes Precision starts to the job-specific standard-3 binding', async () => {
+    const { d1, sqlite } = createTestDb();
+    const free = startBinding(async () => ({ accepted: true, generation: 1 }));
+    const precision = startBinding(async () => ({ accepted: true, generation: 1 }));
+    const env = makeJobsEnv({
+      d1,
+      freeQueue: queueProbe().queue,
+      precisionQueue: queueProbe().queue,
+      jobFree: free,
+      jobPrecision: precision,
+      access: STAGING_JOB_VARS,
+    });
+    const { credential, ownerId } = await issueCredential(env);
+    sqlite.prepare('UPDATE owners SET precision_allowed = 1 WHERE owner_id = ?').run(ownerId);
+    const { jobId } = await createGame(env, credential, ['2g2f'], { profileId: 'precision' });
+    const delivery = fakeBatch([{ v: 1, jobId }], 1, JOB_PROFILES.precision.queueName);
+    await handleJobBatch(delivery.batch, env);
+    expect(delivery.messages[0].acked).toBe(true);
+    expect(precision.calls).toEqual([{ name: jobId, jobId, profileId: 'precision' }]);
+    expect(free.calls).toEqual([]);
+  });
+
   it('leaves an active job queued when the final Queue start attempt fails', async () => {
     const { d1 } = createTestDb();
     const binding = startBinding(async () => { throw new Error('RPC unavailable'); });
@@ -896,6 +918,105 @@ describe('queue start consumer and stale-job recovery', () => {
       { status: 'queued', updated_at: '2026-10-01T00:00:00.000Z' },
       { status: 'queued', updated_at: '2026-10-01T00:00:00.000Z' },
     ]);
+  });
+
+  it('includes the stale cutoff boundary and enforces the bounded scan limit', async () => {
+    const { d1, sqlite } = createTestDb();
+    const freeQueue = queueProbe();
+    const env = makeJobsEnv({ d1, freeQueue: freeQueue.queue, precisionQueue: freeQueue.queue, access: STAGING_JOB_VARS });
+    const owners = await Promise.all([issueCredential(env), issueCredential(env), issueCredential(env)]);
+    const atBoundary = await createGame(env, owners[0].credential, ['2g2f']);
+    const newer = await createGame(env, owners[1].credential, ['2g2f']);
+    const older = await createGame(env, owners[2].credential, ['2g2f']);
+    const cutoff = Date.parse('2026-10-04T00:00:00.000Z') - 15 * 60_000;
+    sqlite.prepare('UPDATE jobs SET updated_at = ? WHERE job_id = ?').run(new Date(cutoff).toISOString(), atBoundary.jobId);
+    sqlite.prepare('UPDATE jobs SET updated_at = ? WHERE job_id = ?').run(new Date(cutoff + 1).toISOString(), newer.jobId);
+    sqlite.prepare('UPDATE jobs SET updated_at = ?, status = \'running\' WHERE job_id = ?')
+      .run(new Date(cutoff - 1).toISOString(), older.jobId);
+
+    freeQueue.sent.length = 0;
+    const allStale = await requeueStaleJobs(env, { now: () => Date.parse('2026-10-04T00:00:00.000Z'), limit: 100 });
+    expect(allStale).toEqual({ scanned: 2, sent: 2 });
+    expect(freeQueue.sent).toEqual([
+      { v: 1, jobId: older.jobId },
+      { v: 1, jobId: atBoundary.jobId },
+    ]);
+
+    freeQueue.sent.length = 0;
+    const bounded = await requeueStaleJobs(env, { now: () => Date.parse('2026-10-04T00:00:00.000Z'), limit: 1 });
+    expect(bounded).toEqual({ scanned: 1, sent: 1 });
+    expect(freeQueue.sent).toEqual([{ v: 1, jobId: older.jobId }]);
+    expect((await new JobStore(d1.rawDb).jobById(newer.jobId))?.updated_at).toBe(new Date(cutoff + 1).toISOString());
+  });
+
+  it('waits for D1 cancellation confirmation before scheduling the stop task', async () => {
+    const { d1, sqlite } = createTestDb();
+    let stopCalls = 0;
+    const binding = {
+      getByName: () => ({
+        terminateJob: async () => { stopCalls += 1; },
+        getState: async () => ({ status: 'stopped' }),
+      }),
+    };
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, jobFree: binding, access: STAGING_JOB_VARS });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    const scheduled: Promise<unknown>[] = [];
+    const response = await handleV1Request(postJson(`/v1/jobs/${jobId}/cancel`, credential, {}), env, {
+      waitUntil: (task) => {
+        expect(sqlite.prepare('SELECT status FROM jobs WHERE job_id = ?').get(jobId)).toEqual({ status: 'cancelled' });
+        scheduled.push(task);
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(scheduled).toHaveLength(1);
+    await Promise.all(scheduled);
+    expect(stopCalls).toBe(1);
+
+    const second = await createGame(env, credential, ['2g2f']);
+    const originalPrepare = d1.prepare.bind(d1);
+    d1.prepare = ((sql: string) => {
+      if (sql.includes("SET status = 'cancelled'")) {
+        return { bind: () => ({ run: async () => ({ success: true, meta: { changes: 0 } }) }) } as never;
+      }
+      return originalPrepare(sql);
+    }) as typeof d1.prepare;
+    const noStop: Promise<unknown>[] = [];
+    const unchanged = await handleV1Request(postJson(`/v1/jobs/${second.jobId}/cancel`, credential, {}), env, {
+      waitUntil: (task) => { noStop.push(task); },
+    });
+    expect(unchanged.status).toBe(200);
+    expect(noStop).toHaveLength(0);
+    expect(stopCalls).toBe(1);
+  });
+
+  it('acks terminal deliveries when container stop reaches its finite deadline and handles a late rejection', async () => {
+    const { d1, sqlite } = createTestDb();
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, jobFree: {
+      getByName: () => ({
+        terminateJob: () => new Promise<void>((_resolve, reject) => { setTimeout(() => reject(new Error('late stop rejection')), 7_000); }),
+        getState: async () => ({ status: 'healthy' }),
+      }),
+    } });
+    const { credential } = await issueCredential(env);
+    const { jobId } = await createGame(env, credential, ['2g2f']);
+    sqlite.prepare("UPDATE jobs SET status = 'completed' WHERE job_id = ?").run(jobId);
+    const delivery = fakeBatch([{ v: 1, jobId }]);
+    const logs: Record<string, unknown>[] = [];
+    vi.useFakeTimers();
+    try {
+      const pending = handleJobBatch(delivery.batch, env, { log: (entry) => logs.push(entry) });
+      await vi.advanceTimersByTimeAsync(6_000);
+      await pending;
+      expect(delivery.messages[0].acked).toBe(true);
+      expect(delivery.messages[0].retried).toBe(false);
+      expect(logs).toContainEqual(expect.objectContaining({
+        event: 'job_container_stop_result', jobId, profile: 'free', stopped: false, timedOut: true,
+      }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+      expect(delivery.messages[0].acked).toBe(true);
+    } finally { vi.useRealTimers(); }
   });
 
   it('acks malformed and missing-job messages without starting a Container', async () => {
