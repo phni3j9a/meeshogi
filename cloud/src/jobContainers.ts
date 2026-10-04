@@ -7,6 +7,13 @@ export const PRECISION_JOB_INSTANCE_TYPE = 'standard-3' as const;
 
 const TERMINATED_STORAGE_KEY = 'job:terminated';
 const TERMINATED_RESPONSE_BODY = JSON.stringify({ status: 'terminated' });
+const IN_FLIGHT_FETCH_SETTLE_TIMEOUT_MS = 5_000;
+
+type InFlightJobFetch = {
+  controller: AbortController;
+  settled: Promise<void>;
+  settle: () => void;
+};
 
 abstract class JobContainerBase extends Container<Env> {
   defaultPort = 8080;
@@ -14,6 +21,8 @@ abstract class JobContainerBase extends Container<Env> {
   // process across redelivery while bounding idle capacity after a lost message.
   sleepAfter = '1m';
   private terminationRequested = false;
+  private terminationPromise: Promise<void> | undefined;
+  private readonly inFlightFetches = new Set<InFlightJobFetch>();
 
   protected constructor(ctx: DurableObjectState<{}>, env: Env, expectedInstanceType: string) {
     super(ctx, env);
@@ -23,26 +32,61 @@ abstract class JobContainerBase extends Container<Env> {
   /** Persist the terminal fence before destroying the Container. Safe to retry. */
   async terminateJob(): Promise<void> {
     this.terminationRequested = true;
-    await this.ctx.storage.put(TERMINATED_STORAGE_KEY, true);
-    await this.destroy();
+    if (!this.terminationPromise) {
+      this.terminationPromise = this.persistAbortAndDestroy();
+    }
+    const pending = this.terminationPromise;
+    try {
+      await pending;
+    } catch (error) {
+      if (this.terminationPromise === pending) this.terminationPromise = undefined;
+      throw error;
+    }
   }
 
   override async fetch(request: Request): Promise<Response> {
     if (this.terminationRequested) return this.terminatedResponse();
+    const controller = new AbortController();
+    const propagateRequestAbort = () => controller.abort(request.signal.reason);
+    if (request.signal.aborted) propagateRequestAbort();
+    else request.signal.addEventListener('abort', propagateRequestAbort, { once: true });
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
+    const inFlight: InFlightJobFetch = { controller, settled, settle };
+    this.inFlightFetches.add(inFlight);
     try {
-      const terminated = await this.ctx.storage.get<boolean>(TERMINATED_STORAGE_KEY);
+      let terminated: boolean | undefined;
+      try {
+        terminated = await this.ctx.storage.get<boolean>(TERMINATED_STORAGE_KEY);
+      } catch {
+        // Fail closed: an unavailable DO storage read must never start a job
+        // Container whose terminal status cannot be checked.
+        return new Response(TERMINATED_RESPONSE_BODY, {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       // Check the in-memory latch again after the storage await so a concurrent
       // terminateJob RPC cannot let a late fetch reach the Container.
       if (terminated === true || this.terminationRequested) return this.terminatedResponse();
-    } catch {
-      // Fail closed: an unavailable DO storage read must never start a job
-      // Container whose terminal status cannot be checked.
-      return new Response(TERMINATED_RESPONSE_BODY, {
-        status: 503,
-        headers: { 'content-type': 'application/json' },
-      });
+      if (controller.signal.aborted) {
+        throw controller.signal.reason ?? new DOMException('The request was aborted.', 'AbortError');
+      }
+      return await super.fetch(new Request(request, { signal: controller.signal }));
+    } finally {
+      request.signal.removeEventListener('abort', propagateRequestAbort);
+      this.inFlightFetches.delete(inFlight);
+      settle();
     }
-    return super.fetch(request);
+  }
+
+  private async persistAbortAndDestroy(): Promise<void> {
+    await this.ctx.storage.put(TERMINATED_STORAGE_KEY, true);
+    const activeFetches = [...this.inFlightFetches];
+    for (const fetch of activeFetches) fetch.controller.abort();
+    const settled = Promise.all(activeFetches.map((fetch) => fetch.settled)).then(() => undefined);
+    await settleBeforeDeadline(settled, IN_FLIGHT_FETCH_SETTLE_TIMEOUT_MS);
+    await this.destroy();
   }
 
   private terminatedResponse(): Response {
