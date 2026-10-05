@@ -249,7 +249,7 @@ The credential is `mcd1_<43 url-safe characters>` (32 random bytes, unpadded bas
 
 Admission is atomic in D1: the job row and its ply-indexed position rows insert in one batch whose `INSERT ... SELECT ... WHERE` guards re-check the limits at insert time, and `UNIQUE(owner_id, idempotency_key)` protects replays. Idempotency is keyed on the canonical initial SFEN — the replayed position's `position.sfen` — so equivalent spellings (e.g. `/81/` vs `/9/`, reordered hand pieces) replay to the same job while a different move list or profile under the same key is still a conflict. Resubmitting the same key with the same canonical input returns the existing job (`idempotentReplay: true`, HTTP 200) without consuming quota or an active slot; the same key with a different input is a 409 `idempotency_conflict`. A different key creates a separate job. If the job row persists but the Queue send fails, the API returns 503 `enqueue_failed` honestly rather than reporting success; resubmitting the same key retries the enqueue.
 
-The quota thresholds live with the profiles in `cloud/config/job-profiles.json`: when enabled, Free is 5 jobs per owner per Asia/Tokyo calendar day and 5 new jobs per trailing 60 seconds. Each owner may always have 1 active job (queued or running) across both profiles. Development staging disables Free quotas and the Precision allowlist as described below. When the allowlist is enabled, an operator grants Precision access on the owner row:
+The quota thresholds live with the profiles in `cloud/config/job-profiles.json`: Free is 10 jobs per owner per Asia/Tokyo calendar day (Issue #45) and 5 new jobs per trailing 60 seconds. Each owner may always have 1 active job (queued or running) across both profiles. Staging enforces the Free quotas and disables the Precision allowlist as described below. There is no per-IP rate limit or global busy rejection: reinstalling the app to get a new anonymous credential is accepted, and jobs beyond a profile's `max_instances` wait in the DO capacity loop. When the allowlist is enabled, an operator grants Precision access on the owner row:
 
 ```sh
 cd cloud
@@ -259,12 +259,12 @@ cd cloud
 
 ### Development staging access (Issue #34)
 
-Staging is currently used only for development. Its checked-in `wrangler.staging.jsonc` sets these **Worker vars**:
+Staging is currently used only for development. Its checked-in `wrangler.staging.jsonc` sets these **Worker vars** (Free quotas are enforced since Issue #45):
 
-| Variable | Development staging value | When omitted or set to `"true"` |
-| --- | --- | --- |
-| `JOBS_ENFORCE_FREE_QUOTAS` | `"false"`: no daily or trailing-window Free job quota | Enforce the 5 jobs/JST day and 5 jobs/60 seconds thresholds |
-| `JOBS_REQUIRE_PRECISION_ALLOWLIST` | `"false"`: any authenticated owner can use Precision | Require `owners.precision_allowed = 1` |
+| Variable | Development staging value | When `"false"` | When omitted or set to `"true"` |
+| --- | --- | --- | --- |
+| `JOBS_ENFORCE_FREE_QUOTAS` | `"true"` | No daily or trailing-window Free job quota | Enforce the 10 jobs/JST day and 5 jobs/60 seconds thresholds |
+| `JOBS_REQUIRE_PRECISION_ALLOWLIST` | `"false"` | Any authenticated owner can use Precision | Require `owners.precision_allowed = 1` |
 
 Only the exact string `"false"` disables a check; other values keep it enabled. The two switches are independent and apply to both existing and newly issued credentials. They do not modify owner allowlist flags or delete usage records. All created Free jobs, including failed and cancelled jobs and those created while quotas were disabled, count when quotas are re-enabled. Idempotent replays do not create a new job or consume additional quota.
 
@@ -295,7 +295,7 @@ Before committing each non-terminal result, the runner replaces any driver-suppl
 
 Completed, failed, retry-exhausted, and cancelled jobs persist the D1 terminal state, then call the Container RPC `terminateJob()`, which stores a DO terminal flag before `destroy()`. Termination plus `getState()` polling shares a 6-second total deadline; session cancellation is bounded to 5 seconds, and its `AbortSignal` remains active through response-body EOF. `sleepAfter: '1m'` is a fallback. A 410 response is checked against D1: terminal jobs ack and retry the idempotent stop, while an active job is treated as a contract violation. `GET /internal/jobs/:jobId/container` requires the internal token and reads D1 profile plus DO `getState()` only; it does not call Container `fetch()`.
 
-Staging sets `observability.head_sampling_rate: 0`; use `wrangler tail` while investigating live behavior instead of relying on sampled dashboard logs. The 2026-10-04 staging measurements for the DO start path, including capacity waits, restart recovery, cancellation, and start-latency breakdown, are recorded in [the Issue #49 lifecycle section](../docs/CLOUD-CONTAINER-LIFECYCLE.md#issue-49-do-driven-start). The safe caps and disabled development quotas are staging settings; production resource limits remain in Issue #24 and user quotas in Issue #45.
+Staging sets `observability.head_sampling_rate: 0`; use `wrangler tail` while investigating live behavior instead of relying on sampled dashboard logs. The 2026-10-04 staging measurements for the DO start path, including capacity waits, restart recovery, cancellation, and start-latency breakdown, are recorded in [the Issue #49 lifecycle section](../docs/CLOUD-CONTAINER-LIFECYCLE.md#issue-49-do-driven-start). The safe caps are staging settings; production resource limits remain in Issue #24.
 
 ### Deploy and smoke
 

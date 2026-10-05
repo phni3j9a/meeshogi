@@ -16,12 +16,12 @@ become readable while non-terminal) are reported as UNVERIFIED: the script
 prints "smoke passed with UNVERIFIED items" and exits 3 instead of 0, so a
 green run always means every check was actually observed.
 
-Daily quota exhaustion is intentionally not exercised. Development staging
-disables Free quotas and the Precision allowlist. To test the restrictions,
-enable JOBS_ENFORCE_FREE_QUOTAS / JOBS_REQUIRE_PRECISION_ALLOWLIST in the
-Worker config and redeploy. With quotas enabled, five created (even cancelled)
-Free jobs exhaust one owner's daily allowance; the sixth must return HTTP
-429 with failure.code == "daily_quota_exceeded".
+Daily quota exhaustion is intentionally not exercised. Staging enforces the
+Free quota (Issue #45) but disables the Precision allowlist; to test the
+allowlist, enable JOBS_REQUIRE_PRECISION_ALLOWLIST in the Worker config and
+redeploy. Ten created (even cancelled) Free jobs exhaust one owner's daily
+allowance; the eleventh must return HTTP 429 with
+failure.code == "daily_quota_exceeded".
 
 Usage:
     ANALYSIS_STAGING_URL=https://<worker>.workers.dev python3 smoke-jobs-staging.py

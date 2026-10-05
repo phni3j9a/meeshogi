@@ -7,7 +7,7 @@
 ## 現在の状態
 
 - 端末内Sekirei（既定）、Cloud Free、Cloud Precisionを選択できます。分岐は評価値なしで盤上の合法手を試す機能で、局面単位の追加解析（深掘り）はありません。証明済み1手／3手詰めは、SekireiではSekireiの全局解析、Cloudではサーバーの証明から作ります。
-- Cloudは開発用stagingです。匿名認証で利用し、現在は回数制限・Precisionの個別許可を無効化しています。同時active 1局・512手上限は維持します。
+- Cloudは開発用stagingです。匿名認証で利用し、Cloud・無料は1日10局（日本時間）までです。Precisionの個別許可は無効化しています。同時active 1局・512手上限は維持します。
 - 今後はCloudへ一本化します。Sekirei撤去後の解析仕様（サーバー詰み判定・オフライン・利用条件）は [Issue #45](https://github.com/phni3j9a/meeshogi/issues/45) で実装中、本番切替とSekirei撤去は [Issue #24](https://github.com/phni3j9a/meeshogi/issues/24) です。LLM解説・課金・同期は未実装です。
 - M1〜M3（棋譜管理・解析・戦績）は実装済みです。両OSの過去の受入は [PR #12](https://github.com/phni3j9a/meeshogi/pull/12)・[PR #13](https://github.com/phni3j9a/meeshogi/pull/13)・[Issue #22の記録](docs/ISSUE-22-ACCEPTANCE.md) を参照できます。
 - 最新のCloud結果処理の軽量化は共通テストまで確認済みです。Fold7での改善効果や両OSでの操作、実機の性能・発熱は未確認です。

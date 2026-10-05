@@ -54,7 +54,7 @@ class RenderConfigTests(unittest.TestCase):
         self.assertNotIn("ANALYSIS_BENCHMARK_BUILD_ID", normal.get("vars", {}))
         self.assertNotIn("ANALYSIS_BENCHMARK_TARGETS", normal.get("vars", {}))
         self.assertEqual(normal["vars"]["ANALYSIS_EXPECTED_INSTANCE_TYPE"], "standard-2")
-        self.assertEqual(normal["vars"]["JOBS_ENFORCE_FREE_QUOTAS"], "false")
+        self.assertEqual(normal["vars"]["JOBS_ENFORCE_FREE_QUOTAS"], "true")
         self.assertEqual(normal["vars"]["JOBS_REQUIRE_PRECISION_ALLOWLIST"], "false")
         self.assertEqual({row["class_name"]: row["instance_type"] for row in normal["containers"]}, {
             "AnalysisContainer": "standard-2",
@@ -85,7 +85,7 @@ class RenderConfigTests(unittest.TestCase):
         benchmark = self.render(inherited_flag="1", verification=False, benchmark="both")
         self.assertEqual(benchmark["vars"]["ANALYSIS_BENCHMARK_ENABLED"], "1")
         self.assertEqual(benchmark["vars"]["ANALYSIS_EXPECTED_INSTANCE_TYPE"], "standard-2")
-        self.assertEqual(benchmark["vars"]["JOBS_ENFORCE_FREE_QUOTAS"], "false")
+        self.assertEqual(benchmark["vars"]["JOBS_ENFORCE_FREE_QUOTAS"], "true")
         self.assertEqual(benchmark["vars"]["JOBS_REQUIRE_PRECISION_ALLOWLIST"], "false")
         self.assertEqual({row["class_name"]: row["max_instances"] for row in benchmark["containers"]}, {
             "AnalysisContainer": 1,
