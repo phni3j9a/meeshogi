@@ -19,8 +19,8 @@ type SessionRequest = {
   deadlineMs: number;
 };
 
-function positionsFor(moves: string[]): PositionRow[] {
-  const position = Position.newBySFEN(STARTPOS)!;
+function positionsFor(moves: string[], initial = STARTPOS): PositionRow[] {
+  const position = Position.newBySFEN(initial)!;
   const rows: PositionRow[] = [{ ply: 0, sfen: position.sfen }];
   for (const usi of moves) {
     const move = position.createMoveByUSI(usi);
@@ -31,12 +31,12 @@ function positionsFor(moves: string[]): PositionRow[] {
   return rows;
 }
 
-function seedJob(jobId: string, moves: string[] = ['2g2f', '8c8d'], profileId: JobProfileId = 'free') {
+function seedJob(jobId: string, moves: string[] = ['2g2f', '8c8d'], profileId: JobProfileId = 'free', initial = STARTPOS) {
   const db = createTestDb();
   const ownerId = `own_${jobId}`;
   db.sqlite.prepare('INSERT INTO owners (owner_id, credential_hash, precision_allowed, created_at) VALUES (?, ?, 1, ?)')
     .run(ownerId, `hash_${jobId}`, '2026-10-04T00:00:00.000Z');
-  const rows = positionsFor(moves);
+  const rows = positionsFor(moves, initial);
   db.sqlite.prepare(`INSERT INTO jobs (
     job_id, owner_id, idempotency_key, input_hash, profile_id, initial_sfen, moves_json,
     total_plies, status, next_ply, jst_day, created_ms, created_at, updated_at
@@ -115,7 +115,10 @@ function runner(
   store: JobStore,
   jobId: string,
   transport: JobRunnerDeps['transport'],
-  options: { profileId?: JobProfileId; budgetMs?: number; tailMarginMs?: number; now?: () => number; onTerminal?: () => void } = {},
+  options: {
+    profileId?: JobProfileId; budgetMs?: number; tailMarginMs?: number; now?: () => number; onTerminal?: () => void;
+    sessionProofNodeBudget?: number;
+  } = {},
 ) {
   const profileId = options.profileId ?? 'free';
   return runJobSlice({
@@ -128,6 +131,7 @@ function runner(
     instanceType: profileId === 'free' ? 'standard-2' : 'standard-3',
     now: options.now ?? (() => Date.now()),
     onTerminal: options.onTerminal,
+    sessionProofNodeBudget: options.sessionProofNodeBudget,
   });
 }
 
@@ -160,6 +164,45 @@ describe('queue-independent job runner', () => {
     expect((await store.jobById('runner_all_positions'))?.status).toBe('completed');
     expect((await resultRows(sqlite, 'runner_all_positions')).map(({ ply, status }) => [ply, status]))
       .toEqual([[0, 'success'], [1, 'success'], [2, 'success']]);
+    sqlite.close();
+  });
+
+  it('commits the server mate proof with every result, overriding driver data', async () => {
+    // Black to move mates with L*1b; after it, White has no legal move (terminal).
+    const { store, sqlite, rows } = seedJob('runner_mate_proof', [], 'free', '7nk/9/7G1/9/9/9/9/9/K8 b L 1');
+    const forged = sessionBody(rows, 'free').trim().split('\n').map((text) => {
+      const line = JSON.parse(text);
+      if (line.type === 'result') {
+        line.result.mateProof = { version: 1, status: 'proven', plies: 1, side: 'sente', pv: ['9i9h'] };
+      }
+      return JSON.stringify(line);
+    }).join('\n') + '\n';
+    expect(forged).toContain('9i9h');
+    const outcome = await runner(store, 'runner_mate_proof', async () => ndjson(forged));
+    expect(outcome.kind).toBe('done');
+    const [row] = await resultRows(sqlite, 'runner_mate_proof');
+    expect(JSON.parse(row.result_json).mateProof).toEqual({
+      version: 1, status: 'proven', plies: 1, side: 'sente', pv: ['L*1b'],
+    });
+    sqlite.close();
+  });
+
+  it('records not-found proofs for ordinary positions', async () => {
+    const { store, sqlite, rows } = seedJob('runner_no_mate', ['2g2f']);
+    await runner(store, 'runner_no_mate', async () => ndjson(sessionBody(rows, 'free')));
+    const proofs = (await resultRows(sqlite, 'runner_no_mate')).map((row) => JSON.parse(row.result_json).mateProof);
+    expect(proofs).toEqual([{ version: 1, status: 'not-found' }, { version: 1, status: 'not-found' }]);
+    sqlite.close();
+  });
+
+  it('ends the session at a committed boundary once the proof work budget is spent', async () => {
+    const { store, sqlite, rows } = seedJob('runner_proof_budget', ['2g2f', '8c8d']);
+    const outcome = await runner(store, 'runner_proof_budget', async () => ndjson(sessionBody(rows, 'free')), {
+      sessionProofNodeBudget: 1,
+    });
+    expect(outcome.kind).toBe('continue');
+    expect((await resultRows(sqlite, 'runner_proof_budget')).map(({ ply }) => ply)).toEqual([0]);
+    expect((await store.jobById('runner_proof_budget'))?.next_ply).toBe(1);
     sqlite.close();
   });
 

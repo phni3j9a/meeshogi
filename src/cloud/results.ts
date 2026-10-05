@@ -1,4 +1,4 @@
-import type { AnalysisCandidate } from '../domain/model';
+import type { AnalysisCandidate, MateProof } from '../domain/model';
 import {
   CLOUD_EXPECTED_IDENTITY,
   CLOUD_PROFILES,
@@ -12,6 +12,7 @@ import {
  * A persisted Cloud result prepared for display. Candidates keep the raw
  * engine scores already normalized to sente (black) perspective by the server;
  * the app never flips them again and never synthesizes mateProof from them.
+ * `mateProof` comes only from the server's own 1/3-ply proof.
  */
 export interface CloudPositionResult {
   ply: number;
@@ -21,6 +22,7 @@ export interface CloudPositionResult {
   candidates: AnalysisCandidate[];
   meta: { nodes: number | null; completedDepth: number | null; elapsedMs: number | null };
   engineLaunch: number | null;
+  mateProof?: MateProof;
 }
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -68,6 +70,30 @@ function decodePv(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.length === 0 || value.length > 256) return null;
   if (!value.every(isUsiMove)) return null;
   return value as string[];
+}
+
+/**
+ * The server's proof that the side to move mates in 1 or 3 (version 1).
+ * `undefined`: absent, not proven, or an unknown future version (no badge).
+ * `null`: a malformed version-1 proof, which rejects the whole row. Move
+ * legality is the server's; the app checks shape and side to move only.
+ */
+function decodeMateProof(value: unknown, sfen: string): MateProof | undefined | null {
+  if (value === undefined) return undefined;
+  if (!object(value)) return null;
+  if (value.version !== 1) return undefined;
+  if (value.status === 'not-found' || value.status === 'incomplete') return undefined;
+  if (value.status !== 'proven' || (value.plies !== 1 && value.plies !== 3)) return null;
+  const sideToMove = sfen.split(' ')[1] === 'w' ? 'gote' : 'sente';
+  if (value.side !== sideToMove) return null;
+  const pv = decodePv(value.pv);
+  if (!pv || pv.length !== value.plies) return null;
+  return {
+    status: 'proven',
+    plies: value.plies,
+    side: sideToMove === 'sente' ? 'black' : 'white',
+    pv: [...pv],
+  };
 }
 
 function requestedMatch(requested: unknown, profileId: CloudProfileId): boolean {
@@ -182,6 +208,7 @@ export function validateCloudResult(
     if (seenMoves.has(candidate.move)) return null;
     seenMoves.add(candidate.move);
   }
+  if (decodeMateProof(result.mateProof, row.sfen) === null) return null;
   return { ply: row.ply, sfen: row.sfen, status, engineLaunch: row.engineLaunch, result };
 }
 
@@ -203,6 +230,8 @@ export function toCloudPositionResult(row: CloudResultRow): CloudPositionResult 
       });
     }
   }
+  const mateProof =
+    row.status === 'terminal' ? undefined : decodeMateProof(result.mateProof, row.sfen);
   return {
     ply: row.ply,
     sfen: row.sfen,
@@ -217,5 +246,6 @@ export function toCloudPositionResult(row: CloudResultRow): CloudPositionResult 
       elapsedMs: meta.elapsedMs as number | null,
     },
     engineLaunch: row.engineLaunch,
+    ...(mateProof ? { mateProof } : {}),
   };
 }
