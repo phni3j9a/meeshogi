@@ -12,7 +12,7 @@ export class AnalysisBudgetIncompleteError extends Error {
 
   constructor(sfen: string, conditions: AnalysisConditions, meta: AnalysisMeta) {
     super(
-      'この局面は探索量が不足して成立しませんでした。設定の解析量（ノード数）を増やすか、「この局面を深く解析」をお試しください。',
+      'この局面は探索量が不足して成立しませんでした。設定の解析量（ノード数）を増やして解析し直してください。',
     );
     this.name = 'AnalysisBudgetIncompleteError';
     this.sfen = sfen;

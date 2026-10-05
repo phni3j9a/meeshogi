@@ -147,7 +147,7 @@ export default function SettingsScreen() {
           {settings.analysisMethod === 'sekirei'
             ? '端末内で解析します。解析中も棋譜を操作できます。'
             : profileId
-              ? `${CLOUD_PROFILE_LABELS[profileId]}：サーバーの解析エンジンで1局をまとめて解析します。解析中にアプリを閉じてもサーバーで処理が継続し、次回起動時に続きを受け取ります。分岐検討と「この局面を深く解析」は常に端末内（Sekirei）で行います。`
+              ? `${CLOUD_PROFILE_LABELS[profileId]}：サーバーの解析エンジンで1局をまとめて解析します。解析中にアプリを閉じてもサーバーで処理が継続し、次回起動時に続きを受け取ります。`
               : null}
           {!cloudEndpoint() && profileId
             ? '現在Cloud解析の接続先が設定されていないため、開始できません。'

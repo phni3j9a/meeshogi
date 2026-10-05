@@ -21,5 +21,5 @@ export function partialAnalysisMessage(
   job: Pick<AnalysisJob, 'completed' | 'total' | 'budgetShortfallPlies'>,
 ): string {
   const shortfalls = job.budgetShortfallPlies.length;
-  return `解析処理が終了しました。${job.completed} / ${job.total}局面を解析済み、${shortfalls}局面は探索量不足です。設定の解析量（ノード数）を増やすか、「この局面を深く解析」をお試しください。`;
+  return `解析処理が終了しました。${job.completed} / ${job.total}局面を解析済み、${shortfalls}局面は探索量不足です。設定の解析量（ノード数）を増やして解析し直してください。`;
 }

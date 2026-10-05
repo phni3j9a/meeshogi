@@ -584,7 +584,7 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
     if (!game) throw new Error('棋譜が見つかりません。');
     if (game.moves.length > CLOUD_MAX_MOVES) {
       throw new Error(
-        `Cloud解析は${CLOUD_MAX_MOVES}手までの棋譜に対応しています。この棋譜は${game.moves.length}手です。端末内（Sekirei）をお使いください。`,
+        `Cloud解析は${CLOUD_MAX_MOVES}手までの棋譜に対応しています。`,
       );
     }
     const reusableActive = () => {
