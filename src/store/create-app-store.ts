@@ -18,8 +18,11 @@ import {
   attemptBlocksDelete,
   attemptServerUnconfirmed,
   cloudContractEpoch,
+  CLOUD_PENDING_META_KEY,
   isActiveAttempt,
+  parseCloudPendingQueue,
   type CloudAttempt,
+  type CloudPendingEntry,
   type CloudProfileId,
 } from '../cloud/contract';
 import {
@@ -137,6 +140,10 @@ export interface AppState {
   /** Validated display rows keyed by attemptId; incomplete plies are absent. */
   cloudResults: Record<string, CloudPositionResult[]>;
   cloudLoadError: string | null;
+  /** Games waiting on this device to be sent, in sending order (Issue #45). */
+  cloudPending: CloudPendingEntry[];
+  /** Why a queued game was dropped without being sent, keyed by gameId. */
+  cloudPendingErrors: Record<string, string>;
   initialize(): Promise<void>;
   saveImport(parsed: ParsedGame, options: ImportOptions): Promise<GameRecord>;
   updateGame(id: string, patch: GamePatch): Promise<void>;
@@ -165,9 +172,14 @@ export interface AppState {
   setLastViewed(id: string, ply: number): Promise<void>;
   startAnalysis(id: string): Promise<void>;
   stopAnalysis(): void;
-  /** Start or reconnect a Cloud attempt for the game under the selected method. */
-  startCloudAnalysis(id: string): Promise<void>;
+  /**
+   * Start or reconnect a Cloud attempt for the game under the selected method.
+   * Resolves 'queued' when the game was kept in the pending queue instead.
+   */
+  startCloudAnalysis(id: string): Promise<'started' | 'queued'>;
   cancelCloudAnalysis(attemptId: string): Promise<void>;
+  /** Remove a game from the pending queue before it is sent. */
+  cancelCloudPending(gameId: string): Promise<void>;
   loadCloudResults(gameId: string): Promise<void>;
   resumeCloudJobs(): void;
   pauseCloudJobs(): void;
@@ -241,6 +253,13 @@ export function makeAppStore(deps: Dependencies) {
           repo,
           write,
           setAttempts: (fn) => set((state) => ({ cloudAttempts: fn(state.cloudAttempts) })),
+          getPending: () => get().cloudPending,
+          setPending: (entries) => set({ cloudPending: entries }),
+          setPendingError: (gameId, message) =>
+            set((state) => {
+              const { [gameId]: _previous, ...rest } = state.cloudPendingErrors;
+              return { cloudPendingErrors: message ? { ...rest, [gameId]: message } : rest };
+            }),
           onResultsCommitted: (attemptId, rows) =>
             set((state) => {
               const byPly = new Map<number, CloudPositionResult>();
@@ -280,6 +299,8 @@ export function makeAppStore(deps: Dependencies) {
       cloudAttempts: [],
       cloudResults: {},
       cloudLoadError: null,
+      cloudPending: [],
+      cloudPendingErrors: {},
       clearError: () => set({ error: null }),
       initialize: () => {
         if (!initialization)
@@ -288,10 +309,14 @@ export function makeAppStore(deps: Dependencies) {
               repository = await deps.openRepository();
               const data = await repository.load();
               let cloudAttempts: CloudAttempt[] = [];
+              let cloudPending: CloudPendingEntry[] = [];
               let cloudLoadError: string | null = null;
               if (deps.cloud && repository.cloud) {
                 try {
                   cloudAttempts = await repository.cloud.attempts();
+                  cloudPending = parseCloudPendingQueue(
+                    await repository.cloud.metaGet(CLOUD_PENDING_META_KEY),
+                  );
                   // valid_count was computed under the contract in force at
                   // ingest time; when the contract constants changed since the
                   // last recount, re-validate stored rows once so completion
@@ -325,7 +350,14 @@ export function makeAppStore(deps: Dependencies) {
                     'Cloud解析の保存データを読み込めませんでした。端末内解析と棋譜は通常どおり使えます。';
                 }
               }
-              set({ ...data, cloudAttempts, cloudLoadError, ready: true, error: null });
+              set({
+                ...data,
+                cloudAttempts,
+                cloudPending,
+                cloudLoadError,
+                ready: true,
+                error: null,
+              });
               cloud?.resume();
             } catch (error) {
               report(error);
@@ -444,6 +476,12 @@ export function makeAppStore(deps: Dependencies) {
           if (get().analysisJob?.gameId === id) {
             get().stopAnalysis();
             set({ analysisJob: null });
+          }
+          // A queued game has no server job yet; dropping it needs no confirmation.
+          if (get().cloudPending.some((entry) => entry.gameId === id)) {
+            const remaining = get().cloudPending.filter((entry) => entry.gameId !== id);
+            await repo().cloud?.metaSet(CLOUD_PENDING_META_KEY, JSON.stringify(remaining));
+            set({ cloudPending: remaining });
           }
           await repo().delete(id);
           // The FK cascade removes attempt/result rows; drop their in-memory
@@ -671,7 +709,11 @@ export function makeAppStore(deps: Dependencies) {
       },
       startCloudAnalysis: async (id) => {
         if (!cloud) throw new Error('Cloud解析はこの環境では利用できません。');
-        await cloud.start(id);
+        return cloud.start(id);
+      },
+      cancelCloudPending: async (gameId) => {
+        if (!cloud) return;
+        await cloud.removePending(gameId);
       },
       cancelCloudAnalysis: async (attemptId) => {
         if (!cloud) return;

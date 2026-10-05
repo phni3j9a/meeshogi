@@ -416,3 +416,162 @@ describe('Cloud解析のライフサイクル', () => {
     await settle(store);
   });
 });
+
+describe('Cloud解析待ち（オフライン・順次送信）', () => {
+  /** Distinct games: prefixes of the fixture with different lengths. */
+  async function saveGame(store: Store, moves: number) {
+    const parsed = fixture();
+    return store.getState().saveImport(
+      {
+        ...parsed,
+        identity: `${parsed.identity}-queue-${moves}`,
+        moves: parsed.moves.slice(0, moves),
+        positions: parsed.positions.slice(0, moves + 1),
+      },
+      { service: 'shogiwars', autoAnalyze: false, allowCollision: true },
+    );
+  }
+  const active = (store: Store) =>
+    store
+      .getState()
+      .cloudAttempts.filter((item) => ['requesting', 'queued', 'running', 'cancel-requested'].includes(item.status));
+
+  it('初回のcredential発行がオフラインで失敗したら解析待ちにし、オンライン復帰後のforegroundで送信する', async () => {
+    let offline = true;
+    const { store, fake, adapter } = await setup({ offline: () => offline, perPollAdvance: 10 });
+    await store.getState().initialize();
+    await store.getState().updateSettings({ analysisMethod: 'cloud-free' });
+    const game = await saveGame(store, 2);
+    await expect(store.getState().startCloudAnalysis(game.id)).resolves.toBe('queued');
+    expect(store.getState().cloudPending.map((entry) => entry.gameId)).toEqual([game.id]);
+    expect(store.getState().cloudAttempts).toHaveLength(0);
+    const persisted = await new CloudRepository(adapter).metaGet('pending_queue');
+    expect(JSON.parse(persisted!)).toMatchObject([{ gameId: game.id, profileId: 'free' }]);
+
+    offline = false;
+    store.getState().resumeCloudJobs();
+    await vi.waitFor(() => expect(attempt(store)?.status).toBe('completed'), { timeout: 3000 });
+    expect(store.getState().cloudPending).toEqual([]);
+    expect(fake.counts.createJob).toBe(1);
+    await settle(store);
+  });
+
+  it('別の棋譜の解析中に開始した棋譜は解析待ちになり、先行jobの終了後に自動送信される', async () => {
+    const { store, fake } = await setup({ perPollAdvance: 0 });
+    await store.getState().initialize();
+    await store.getState().updateSettings({ analysisMethod: 'cloud-free' });
+    const first = await saveGame(store, 2);
+    const second = await saveGame(store, 3);
+    await expect(store.getState().startCloudAnalysis(first.id)).resolves.toBe('started');
+    await vi.waitFor(() => expect(attempt(store).jobId).toBe('job_1'), { timeout: 3000 });
+    await expect(store.getState().startCloudAnalysis(second.id)).resolves.toBe('queued');
+    expect(store.getState().cloudPending.map((entry) => entry.gameId)).toEqual([second.id]);
+    expect(fake.counts.createJob).toBe(1);
+
+    fake.jobList()[0].advance(10);
+    await vi.waitFor(
+      () => expect(store.getState().cloudAttempts.find((item) => item.gameId === second.id)?.jobId).toBe('job_2'),
+      { timeout: 3000 },
+    );
+    expect(store.getState().cloudPending).toEqual([]);
+    await settle(store);
+  });
+
+  it('オフラインで取り込んだ複数の棋譜を、復帰後に1局ずつ順に送信する', async () => {
+    let offline = true;
+    const { store, fake } = await setup({ offline: () => offline, perPollAdvance: 10 });
+    await store.getState().initialize();
+    await store.getState().updateSettings({ analysisMethod: 'cloud-free' });
+    const games = [await saveGame(store, 2), await saveGame(store, 3), await saveGame(store, 4)];
+    for (const game of games) {
+      await expect(store.getState().startCloudAnalysis(game.id)).resolves.toBe('queued');
+    }
+    expect(store.getState().cloudPending.map((entry) => entry.gameId)).toEqual(games.map((g) => g.id));
+
+    let maxActive = 0;
+    const unsubscribe = store.subscribe((state) => {
+      maxActive = Math.max(
+        maxActive,
+        state.cloudAttempts.filter((item) => ['requesting', 'queued', 'running'].includes(item.status)).length,
+      );
+    });
+    offline = false;
+    store.getState().resumeCloudJobs();
+    await vi.waitFor(
+      () => {
+        expect(store.getState().cloudAttempts.filter((item) => item.status === 'completed')).toHaveLength(3);
+      },
+      { timeout: 5000 },
+    );
+    unsubscribe();
+    expect(maxActive).toBe(1);
+    expect(store.getState().cloudPending).toEqual([]);
+    const sentOrder = fake.jobList().map((job) => job.moves.length);
+    expect(sentOrder).toEqual([2, 3, 4]);
+    await settle(store);
+  });
+
+  it('background中は送信せず、再起動後も解析待ちを復元してforegroundで送信する', async () => {
+    let offline = true;
+    const first = await setup({ offline: () => offline, perPollAdvance: 10 });
+    await first.store.getState().initialize();
+    await first.store.getState().updateSettings({ analysisMethod: 'cloud-free' });
+    const game = await saveGame(first.store, 2);
+    await first.store.getState().startCloudAnalysis(game.id);
+    first.store.getState().pauseCloudJobs();
+    offline = false;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(first.fake.counts.createJob).toBe(0);
+
+    // Process restart on the same database and credential store.
+    const restarted = makeAppStore({
+      openRepository: first.openRepository,
+      analyze: first.analyze,
+      cancel: first.cancel,
+      createId: () => 'restart-id',
+      cloud: first.cloud,
+    });
+    await restarted.getState().initialize();
+    expect(restarted.getState().cloudPending.map((entry) => entry.gameId)).toEqual([game.id]);
+    await vi.waitFor(() => expect(restarted.getState().cloudAttempts[0]?.status).toBe('completed'), {
+      timeout: 3000,
+    });
+    expect(restarted.getState().cloudPending).toEqual([]);
+    await settle(restarted);
+  });
+
+  it('解析待ちは取消・棋譜削除でキューから外れ、送信されない', async () => {
+    const offline = true;
+    const { store, fake, adapter } = await setup({ offline: () => offline });
+    await store.getState().initialize();
+    await store.getState().updateSettings({ analysisMethod: 'cloud-free' });
+    const a = await saveGame(store, 2);
+    const b = await saveGame(store, 3);
+    await store.getState().startCloudAnalysis(a.id);
+    await store.getState().startCloudAnalysis(b.id);
+    await store.getState().cancelCloudPending(a.id);
+    expect(store.getState().cloudPending.map((entry) => entry.gameId)).toEqual([b.id]);
+    await store.getState().deleteGame(b.id);
+    expect(store.getState().cloudPending).toEqual([]);
+    expect(await new CloudRepository(adapter).metaGet('pending_queue')).toBe('[]');
+    expect(fake.counts.createJob).toBe(0);
+    await settle(store);
+  });
+
+  it('通信以外の理由で送信できない解析待ちは外し、その棋譜に理由を残す', async () => {
+    let offline = true;
+    let endpoint: string | null = ENDPOINT;
+    const { store } = await setup({ offline: () => offline }, { endpoint: () => endpoint });
+    await store.getState().initialize();
+    await store.getState().updateSettings({ analysisMethod: 'cloud-free' });
+    const game = await saveGame(store, 2);
+    await expect(store.getState().startCloudAnalysis(game.id)).resolves.toBe('queued');
+    endpoint = null;
+    offline = false;
+    store.getState().resumeCloudJobs();
+    await vi.waitFor(() => expect(store.getState().cloudPending).toEqual([]), { timeout: 3000 });
+    expect(store.getState().cloudPendingErrors[game.id]).toMatch(/接続先/u);
+    expect(active(store)).toHaveLength(0);
+    await settle(store);
+  });
+});

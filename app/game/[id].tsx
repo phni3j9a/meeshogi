@@ -63,7 +63,10 @@ function latestAttempt(attempts: CloudAttempt[], profileId: 'free' | 'precision'
 function cloudStatusLabel(attempt: CloudAttempt): string {
   switch (attempt.status) {
     case 'requesting':
-      return 'Cloud解析を開始しています';
+      // A transient failure (e.g. offline) keeps retrying the same request.
+      return attempt.lastError
+        ? 'Cloud解析待ち・通信の回復を待っています'
+        : 'Cloud解析を開始しています';
     case 'queued':
       return 'Cloud解析の順番を待っています';
     case 'running':
@@ -123,6 +126,9 @@ export default function GameScreen() {
   const updateSettings = useAppStore((state) => state.updateSettings);
   const startCloudAnalysis = useAppStore((state) => state.startCloudAnalysis);
   const cancelCloudAnalysis = useAppStore((state) => state.cancelCloudAnalysis);
+  const cancelCloudPending = useAppStore((state) => state.cancelCloudPending);
+  const cloudPending = useAppStore((state) => state.cloudPending);
+  const pendingError = useAppStore((state) => state.cloudPendingErrors[id]);
   const cloudRecoveryState = useAppStore((state) => state.cloudRecoveryState);
   const loadCloudResults = useAppStore((state) => state.loadCloudResults);
   const cloudAttempts = useAppStore((state) => state.cloudAttempts);
@@ -209,6 +215,11 @@ export default function GameScreen() {
       ),
     [cloudAttempts, id],
   );
+  const pendingIndex = cloudPending.findIndex((entry) => entry.gameId === id);
+  const pendingEntry = pendingIndex >= 0 ? cloudPending[pendingIndex] : undefined;
+  // Starting now only adds to the queue: another job holds the owner's single
+  // active slot, or earlier games are already waiting.
+  const startWouldQueue = !!runningElsewhere || cloudPending.length > 0;
   const cloudRows = useAppStore((state) =>
     attempt ? state.cloudResults[attempt.attemptId] : undefined,
   );
@@ -463,9 +474,11 @@ export default function GameScreen() {
         ? theme.loss
         : theme.win;
   const statusLabel = profileId
-    ? attempt
-      ? cloudStatusLabel(attempt)
-      : 'この棋譜はCloud未解析です'
+    ? pendingEntry && !(attempt && isActiveAttempt(attempt.status))
+      ? `${CLOUD_PROFILE_LABELS[pendingEntry.profileId]}の解析待ち（${pendingIndex === 0 ? '次に送信' : `${pendingIndex + 1}番目`}）`
+      : attempt
+        ? cloudStatusLabel(attempt)
+        : 'この棋譜はCloud未解析です'
     : partial
       ? '解析処理が終了しました'
       : fullyAnalyzed
@@ -889,12 +902,17 @@ export default function GameScreen() {
                   }
                 />
               )}
-              {profileId &&
+              {pendingEntry ? (
+                <Notice text="オフライン中や別の棋譜の解析中は、解析待ちとして端末に保存します。アプリを開いている間に、オンラインで実行中の解析がなければ1局ずつ送信します。" />
+              ) : (
+                profileId &&
                 runningElsewhere &&
                 !(attempt && isActiveAttempt(attempt.status)) &&
                 !otherProfileActive && (
-                  <Notice text="別の棋譜のCloud解析を実行中です。その解析の終了または取消を待ってから開始できます。" />
-                )}
+                  <Notice text="別の棋譜のCloud解析を実行中です。開始すると解析待ちに追加し、その解析の終了後に送信します。" />
+                )
+              )}
+              {pendingError && <Notice text={pendingError} error />}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="解析方式を変更"
@@ -1048,22 +1066,32 @@ export default function GameScreen() {
                         Cloud解析の復帰可否を確認しています。しばらくしてから開き直してください。
                       </AppText>
                     )
+                  ) : pendingEntry ? (
+                    <TextButton
+                      label="解析待ちを取消"
+                      testID="cloud-pending-cancel"
+                      onPress={() =>
+                        void cancelCloudPending(id).catch((e) => setError(errorMessage(e)))
+                      }
+                      icon="pause"
+                    />
                   ) : (
                     <>
                       <TextButton
                         label={
                           fullyAnalyzed
                             ? 'Cloud解析済み'
-                            : attempt
-                              ? 'Cloud解析を再試行'
-                              : 'Cloud解析を開始'
+                            : startWouldQueue
+                              ? '解析待ちに追加'
+                              : attempt
+                                ? 'Cloud解析を再試行'
+                                : 'Cloud解析を開始'
                         }
                         disabled={
                           cloudStarting ||
                           fullyAnalyzed ||
                           !cloudEndpoint() ||
                           game.moves.length > CLOUD_MAX_MOVES ||
-                          !!runningElsewhere ||
                           !!otherProfileActive
                         }
                         testID="cloud-start"

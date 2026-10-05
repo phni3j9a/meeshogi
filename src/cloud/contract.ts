@@ -287,3 +287,48 @@ export interface CloudResultsPage {
   nextAfterPly: number;
   hasMore: boolean;
 }
+
+/**
+ * A game waiting on this device to be sent as a Cloud job (Issue #45): the
+ * device was offline when analysis was requested, or another job was active
+ * (1 owner 1 active job). Entries are sent one at a time, in order, while the
+ * app is in the foreground; no idempotency key exists until one is sent.
+ */
+export interface CloudPendingEntry {
+  gameId: string;
+  gameIdentity: string;
+  profileId: CloudProfileId;
+  requestedAt: string;
+}
+
+export const CLOUD_PENDING_META_KEY = 'pending_queue';
+
+/** Decode the persisted queue, dropping malformed or duplicate entries. */
+export function parseCloudPendingQueue(json: string | null): CloudPendingEntry[] {
+  if (!json) return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const entries: CloudPendingEntry[] = [];
+  for (const item of value) {
+    if (item === null || typeof item !== 'object') continue;
+    const { gameId, gameIdentity, profileId, requestedAt } = item as Record<string, unknown>;
+    if (
+      typeof gameId !== 'string' ||
+      typeof gameIdentity !== 'string' ||
+      (profileId !== 'free' && profileId !== 'precision') ||
+      typeof requestedAt !== 'string' ||
+      seen.has(gameId)
+    ) {
+      continue;
+    }
+    seen.add(gameId);
+    entries.push({ gameId, gameIdentity, profileId, requestedAt });
+  }
+  return entries;
+}

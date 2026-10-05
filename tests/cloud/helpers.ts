@@ -148,6 +148,8 @@ export interface FakeCloudOptions {
   /** Extra per-call hooks for edge cases. */
   getResultsError?: (call: number) => Error | null;
   cancelJobResult?: (job: FakeJob) => void;
+  /** While true, every request fails as if the device were offline. */
+  offline?: () => boolean;
 }
 
 export function fakeCloud(options: FakeCloudOptions = {}) {
@@ -185,12 +187,17 @@ export function fakeCloud(options: FakeCloudOptions = {}) {
       : {}),
     ...(job.failure ? { failure: job.failure } : {}),
   });
+  const reachable = () => {
+    if (options.offline?.()) throw new CloudApiError(0, 'network', 'network');
+  };
   const client: CloudClient = {
     async createCredential() {
+      reachable();
       calls.push({ method: 'createCredential', detail: '' });
       return credential;
     },
     async createJob(_credential, body) {
+      reachable();
       createCalls += 1;
       calls.push({ method: 'createJob', detail: body.idempotencyKey });
       options.createJobError?.(createCalls, body);
@@ -250,6 +257,7 @@ export function fakeCloud(options: FakeCloudOptions = {}) {
       return view(job);
     },
     async getJob(_credential, jobId) {
+      reachable();
       getJobCalls += 1;
       calls.push({ method: 'getJob', detail: jobId });
       const job = findJob(jobId);
@@ -257,6 +265,7 @@ export function fakeCloud(options: FakeCloudOptions = {}) {
       return view(job);
     },
     async getResults(_credential, jobId, afterPly, limit) {
+      reachable();
       getResultsCalls += 1;
       calls.push({ method: 'getResults', detail: `${jobId}:${afterPly}` });
       const injected = options.getResultsError?.(getResultsCalls);
@@ -275,6 +284,7 @@ export function fakeCloud(options: FakeCloudOptions = {}) {
       } satisfies CloudResultsPage;
     },
     async cancelJob(_credential, jobId) {
+      reachable();
       calls.push({ method: 'cancelJob', detail: jobId });
       const job = findJob(jobId);
       options.cancelJobResult?.(job);
