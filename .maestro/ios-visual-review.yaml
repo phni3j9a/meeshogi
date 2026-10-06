@@ -117,8 +117,7 @@ appId: com.meeshogi.app
 - takeScreenshot: ios-visual-opening-detail
 
 # The initial cached result is enough to show the board and analysis panel.
-# Only the selected 67th-ply position is deep-analyzed; the proof badge is
-# accepted only after focused-analysis-ready appears.
+# Mate badges need proven results; analysis-review covers them.
 - stopApp
 - launchApp
 - extendedWaitUntil:
@@ -145,44 +144,8 @@ appId: com.meeshogi.app
     direction: DOWN
     timeout: 30000
 - takeScreenshot: ios-visual-game-board-analysis
-- tapOn:
-    id: move-last
-# Check the displayed ply between individual taps. A burst of repeated taps
-# can stop at the wrong ply on a loaded Simulator.
-- repeat:
-    times: 20
-    while:
-      notVisible: '67 / 80手'
-    commands:
-      - tapOn:
-          id: move-prev
-- assertVisible: '67 / 80手'
-- scrollUntilVisible:
-    element:
-      id: analysis-focus
-    direction: DOWN
-    timeout: 30000
-- tapOn:
-    id: analysis-focus
-- extendedWaitUntil:
-    visible:
-      id: focused-analysis-ready
-    timeout: 180000
-- scrollUntilVisible:
-    element:
-      text: '後手・3手詰め ›'
-    direction: UP
-    timeout: 30000
-- assertVisible: '後手・3手詰め ›'
-- takeScreenshot: ios-visual-mate-badge
-- tapOn: '後手・3手詰め ›'
-- assertVisible: '0 / 3手'
-- takeScreenshot: ios-visual-mate-answer
-- tapOn: 詰め手順を閉じる
-- assertVisible: '67 / 80手'
-
-# Close the proof, return to the first position, and open a real candidate
-# variation from the cached initial analysis.
+# Return to the first position and open a real candidate variation from the
+# cached initial analysis.
 - tapOn:
     id: move-first
 - scrollUntilVisible:

@@ -470,53 +470,6 @@ describe('棋譜の更新と解析の隔離', () => {
     expect(store.getState().games[0].analysis).toEqual({});
     expect(store.getState().analysisJob?.status).toBe('paused');
   });
-  it('分岐の追加解析は本譜の保存結果を書き換えない', async () => {
-    const { store } = setup();
-    await store.getState().initialize();
-    await store.getState().saveImport(fixture(), { service: 'shogiwars' });
-    const result = await store.getState().analyzePosition(fixture().positions[1]);
-    expect(result.sfen).toBe(fixture().positions[1]);
-    expect(store.getState().games[0].analysis).toEqual({});
-  });
-  it('旧キャンセルが完了するまで新しい局面解析を開始しない', async () => {
-    const { store, analyze, cancel } = setup();
-    await store.getState().initialize();
-    const game = await store.getState().saveImport(fixture(), { service: 'shogiwars' });
-    const initial = deferred<PositionAnalysis>();
-    const entered = deferred<void>();
-    analyze.mockImplementationOnce(async () => {
-      entered.resolve();
-      return initial.promise;
-    });
-    const run = store.getState().startAnalysis(game.id);
-    await entered.promise;
-    const cancellation = deferred<void>();
-    cancel.mockImplementationOnce(() => cancellation.promise);
-    const focused = store.getState().analyzePosition(game.positions[1]);
-    initial.resolve({
-      sfen: game.positions[0],
-      ...CURRENT_ANALYSIS_IDENTITY,
-      status: 'complete',
-      meta: {
-        requestedNodes: 10000,
-        nodes: 1,
-        completedDepth: 1,
-        fallback: false,
-        budgetReached: false,
-      },
-      conditions: { nodes: 10000, multiPV: 2 },
-      candidates: [],
-      mateProof: null,
-      completedAt: 'now',
-    });
-    await run;
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(analyze).toHaveBeenCalledTimes(1);
-    cancellation.resolve();
-    expect((await focused).sfen).toBe(game.positions[1]);
-    store.getState().stopAnalysis();
-    expect(store.getState().games[0].analysis).toEqual({});
-  });
   it('名前変更で手動帰属を保持し自動帰属のみ更新する', async () => {
     const { store, repository } = setup();
     await store.getState().initialize();
@@ -549,54 +502,6 @@ describe('棋譜の更新と解析の隔離', () => {
     });
     await store.getState().updateGame(game.id, { manualResult: null });
     expect(getStatistics(store.getState().games).wins).toBe(1);
-  });
-  it('連続した局面解析の置換後も中断した全局解析へ戻る', async () => {
-    const { store, analyze } = setup();
-    await store.getState().initialize();
-    const game = await store.getState().saveImport(fixture(), { service: 'shogiwars' });
-    const pending = Array.from({ length: 4 }, () => deferred<PositionAnalysis>());
-    const entered = Array.from({ length: 4 }, () => deferred<void>());
-    let call = 0;
-    analyze.mockImplementation(async () => {
-      const index = call++;
-      entered[index].resolve();
-      return pending[index].promise;
-    });
-    const result = (sfen: string): PositionAnalysis => ({
-      sfen,
-      ...CURRENT_ANALYSIS_IDENTITY,
-      status: 'complete',
-      meta: {
-        requestedNodes: 50000,
-        nodes: 1,
-        completedDepth: 1,
-        fallback: false,
-        budgetReached: false,
-      },
-      conditions: { nodes: 50000, multiPV: 2 },
-      candidates: [],
-      mateProof: null,
-      completedAt: 'now',
-    });
-    const all = store.getState().startAnalysis(game.id);
-    await entered[0].promise;
-    const firstFocus = store.getState().analyzePosition(game.positions[1]);
-    const firstCancelled = expect(firstFocus).rejects.toThrow('中止');
-    pending[0].resolve(result(game.positions[0]));
-    await all;
-    await entered[1].promise;
-    const secondFocus = store.getState().analyzePosition(game.positions[2]);
-    pending[1].resolve(result(game.positions[1]));
-    await firstCancelled;
-    await entered[2].promise;
-    pending[2].resolve(result(game.positions[2]));
-    await secondFocus;
-    await entered[3].promise;
-    expect(store.getState().analysisJob).toMatchObject({ gameId: game.id, status: 'running' });
-    store.getState().stopAnalysis();
-    pending[3].resolve(result(game.positions[0]));
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(store.getState().games[0].analysis).toEqual({});
   });
 });
 

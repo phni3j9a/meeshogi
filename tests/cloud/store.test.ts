@@ -245,21 +245,6 @@ describe('Cloud解析のライフサイクル', () => {
     await settle(store);
   });
 
-  it('Cloud実行中にローカル局面解析を実行しても互いに干渉しない', async () => {
-    const { store } = await setup({ perPollAdvance: 0 });
-    await store.getState().initialize();
-    await store.getState().updateSettings({ analysisMethod: 'cloud-free' });
-    const game = await saveSmallGame(store);
-    await store.getState().startCloudAnalysis(game.id);
-    await vi.waitFor(() => expect(attempt(store).jobId).toBe('job_1'), { timeout: 3000 });
-    const focused = await store.getState().analyzePosition(game.positions[0]);
-    expect(focused.sfen).toBe(game.positions[0]);
-    // 局面解析は表示用の結果を返すだけで game.analysis を汚さない
-    expect(store.getState().games.find((g) => g.id === game.id)!.analysis).toEqual({});
-    expect(attempt(store).jobId).toBe('job_1');
-    expect(['queued', 'running']).toContain(attempt(store).status);
-    await settle(store);
-  });
 
   it('取消はサーバーにcancelを送り、遅延結果を取り込んで終了する', async () => {
     const { store, fake } = await setup({ perPollAdvance: 0 });

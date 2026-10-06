@@ -165,7 +165,6 @@ export interface AppState {
   setLastViewed(id: string, ply: number): Promise<void>;
   startAnalysis(id: string): Promise<void>;
   stopAnalysis(): void;
-  analyzePosition(sfen: string): Promise<PositionAnalysis>;
   /** Start or reconnect a Cloud attempt for the game under the selected method. */
   startCloudAnalysis(id: string): Promise<void>;
   cancelCloudAnalysis(attemptId: string): Promise<void>;
@@ -200,8 +199,6 @@ export function makeAppStore(deps: Dependencies) {
   let engineTail: Promise<unknown> = Promise.resolve();
   let cancellationBarrier: Promise<void> = Promise.resolve();
   let generation = 0;
-  let focusGeneration = 0;
-  let focusResumeId: string | undefined;
   // The newest whole-game analysis run started per game. A stale run's
   // finally may only persist its record while it still owns this slot.
   const latestRunByGame = new Map<string, string>();
@@ -535,8 +532,6 @@ export function makeAppStore(deps: Dependencies) {
         get().updateGame(id, { lastViewedPly: ply, lastOpenedAt: new Date().toISOString() }),
       stopAnalysis: () => {
         generation++;
-        focusGeneration++;
-        focusResumeId = undefined;
         cancel();
         const job = get().analysisJob;
         if (job?.status === 'running') set({ analysisJob: { ...job, status: 'paused' } });
@@ -671,32 +666,6 @@ export function makeAppStore(deps: Dependencies) {
               // analysis results. Surface it like other store errors.
               report(error);
             }
-          }
-        }
-      },
-      analyzePosition: async (sfen) => {
-        const resumeId =
-          get().analysisJob?.status === 'running' ? get().analysisJob?.gameId : focusResumeId;
-        get().stopAnalysis();
-        focusResumeId = resumeId;
-        const focus = ++focusGeneration;
-        const conditions = {
-          nodes: Math.min(1000000, get().settings.analysisNodes * 5),
-          multiPV: get().settings.multiPV,
-        };
-        try {
-          const result = await engine(async () => {
-            if (focus !== focusGeneration) throw new Error('局面の解析を中止しました。');
-            return deps.analyze(sfen, conditions);
-          });
-          if (focus !== focusGeneration) throw new Error('局面の解析を中止しました。');
-          if (!isCompatibleAnalysis(result, sfen, conditions))
-            throw new Error('解析結果の局面・モデル・条件が一致しません。');
-          return result;
-        } finally {
-          if (focus === focusGeneration) {
-            focusResumeId = undefined;
-            if (resumeId) void get().startAnalysis(resumeId);
           }
         }
       },

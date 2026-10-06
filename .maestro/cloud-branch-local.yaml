@@ -2,10 +2,11 @@ appId: com.meeshogi.app
 env:
   INITIAL_READY_TIMEOUT: ${INITIAL_READY_TIMEOUT || 60000}
 ---
-# Issue #22: while a Cloud method is selected, branch analysis and the
-# per-position deep analysis must stay on the local Sekirei engine — the UI
-# labels must say so. The acceptance script snapshots cloud_attempts before
-# and after this flow to prove no new Cloud job was created.
+# Issue #45: while a Cloud method is selected, a branch only lets the user try
+# legal moves — no evaluation or candidates are shown and nothing is analyzed.
+# The acceptance script snapshots cloud_attempts before and after this flow to
+# prove no new Cloud job was created. (Issue #22 originally checked the local
+# Sekirei labels here; the flow name is kept for the acceptance scripts.)
 - launchApp
 - extendedWaitUntil:
     visible:
@@ -14,9 +15,8 @@ env:
 - extendedWaitUntil:
     visible: '.*KeroPona.*'
     timeout: 30000
-# The branch screen only carries the （ローカル・Sekirei） markers when the
-# stored method is a Cloud profile; cloud-free-verify leaves Sekirei
-# persisted, so this flow re-selects Cloud・無料 before entering the game.
+# cloud-free-verify leaves Sekirei persisted, so this flow re-selects
+# Cloud・無料 before entering the game.
 # iOS selects via the settings picker, not the review screen row: on the
 # completed-job layout the method row sits deep in the ScrollView and its
 # a11y frame lags the rendered position while scroll momentum decays, so
@@ -138,11 +138,14 @@ env:
     visible: 分岐検討
     timeout: 10000
 - assertVisible: '0手目から分岐'
-# Branch analysis label must carry the local-Sekirei marker under Cloud.
-# Wait for the completed label only — '分岐を解析中' would match too early.
+# The branch shows neither an evaluation nor candidates.
+- assertNotVisible:
+    id: current-evaluation
+- assertNotVisible:
+    id: candidate-0
 - scrollUntilVisible:
     element:
-      id: analysis-status
+      text: '分岐では評価値・候補手を表示しません.*'
     direction: DOWN
 - runFlow:
     when:
@@ -154,54 +157,8 @@ env:
             - swipe:
                 start: 50%, 82%
                 end: 50%, 55%
-- extendedWaitUntil:
-    visible: '分岐の解析結果（ローカル・Sekirei）'
-    timeout: 180000
-- takeScreenshot: c30-branch-local-label
-# The evaluation caption sits above the analysis section; scroll it back.
-- scrollUntilVisible:
-    element:
-      text: '分岐の評価・ローカル'
-    direction: UP
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - repeat:
-          times: 3
-          commands:
-            - swipe:
-                start: 50%, 55%
-                end: 50%, 82%
-- assertVisible: '分岐の評価・ローカル'
-- takeScreenshot: c30b-branch-eval-local
-# Deep-analysis button label must carry the local-Sekirei marker too.
-- scrollUntilVisible:
-    element:
-      id: analysis-focus
-    direction: DOWN
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - repeat:
-          times: 3
-          commands:
-            - swipe:
-                start: 50%, 82%
-                end: 50%, 55%
-- assertVisible: 'この局面を深く解析（ローカル・Sekirei）'
-- tapOn:
-    id: analysis-focus
-# In branch mode the deep-analysis result feeds the candidate list; the
-# 'focused-analysis-ready' banner only renders on the mainline view
-# ({!branch && ...} in app/game/[id].tsx). Completion is observable as the
-# button's busy label ('追加解析中…') clearing back to the local label.
-- extendedWaitUntil:
-    visible: 'この局面を深く解析（ローカル・Sekirei）'
-    timeout: 180000
-- assertVisible: '.*(第一候補|候補1).*'
-- takeScreenshot: c31-focus-local-label
+- assertVisible: '分岐では評価値・候補手を表示しません.*'
+- takeScreenshot: c30-branch-no-evaluation
 - scrollUntilVisible:
     element:
       text: 本譜に戻る
