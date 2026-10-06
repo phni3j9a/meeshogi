@@ -2,7 +2,7 @@
 
 **meeshogi**はミーアキャットをマスコットにしたiOS・Android向け棋譜解析・戦績管理アプリ。無料で棋譜を取り込み、検討し、記録を蓄積する体験を土台とする。
 
-現在は端末内SekireiとCloud Free／Precisionが共存する。今後はCloudへ一本化する方針で、Sekirei撤去後の解析仕様（サーバー詰み判定・オフライン・利用条件）は [Issue #45](https://github.com/phni3j9a/meeshogi/issues/45) で実装中、Sekirei撤去は [Issue #24](https://github.com/phni3j9a/meeshogi/issues/24) の後続作業。以下は現在維持する仕様であり、将来機能を追加の完了条件にしない。
+現在は端末内SekireiとCloud Free／Precisionが共存する。今後はCloudへ一本化する方針で、Sekirei撤去後の解析仕様（分岐・サーバー詰み判定・オフライン・利用条件）は [Issue #45](https://github.com/phni3j9a/meeshogi/issues/45) で実装済み、Sekirei撤去は [Issue #24](https://github.com/phni3j9a/meeshogi/issues/24) の後続作業。以下は現在維持する仕様であり、将来機能を追加の完了条件にしない。
 
 ## 棋譜と保存
 
@@ -33,6 +33,7 @@
 - 512手を超える棋譜はCloudを開始せず「Cloud解析は512手までの棋譜に対応しています」と案内する。棋譜の保存・閲覧・戦績は従来どおり使える。
 - Cloud結果の合法PV・合法手数に応じた候補数・終局判定はサーバーが確定する。端末は形式・局面・identity・profile・評価値・実効候補数を確認し、全合法手生成・全PV再生を繰り返さない。盤面で実際に指す手の合法性は確認する。
 - Cloud jobはアプリ終了・背景移行・通信断でもサーバーで継続し、同じidempotency key／jobIdへ再接続する。明示取消をサーバーが確定するまで取消済みと表示しない。
+- 取り込み・保存・一覧・保存済み解析／グラフの閲覧・戦績・KIF共有はオフラインでも使える。新しいCloud解析は、オフラインで送れないときや別の棋譜を解析中（1 owner 1 active job）のときに「解析待ち」として端末に保存する。アプリがforegroundにあり、実行中の解析がなく、サーバーへ届くときに、保存順に1局ずつ自動送信する。background送信はしない。解析待ちは取消でき、棋譜を削除するとキューから外れる。
 - active／送信結果未確認のjobに対応する棋譜は、サーバーの終了／取消を確認するまで保持する。ownerのcredential喪失・認証拒否で再接続不能と識別できた場合に限り、jobが継続し得ること・復帰を放棄することを説明して、明示確認後に端末内データを削除できる。一時障害・一般エラー・単なるpoll停止は例外にしない。
 - Cloudの通常mateから1手／3手詰めバッジを作らない。Cloudのバッジは、サーバーが結果の保存時に証明した1手／3手詰め（`mateProof`）だけから作る。証明の予算切れは「詰みなし」にしない。開発用の方式比較exportは [ANALYSIS-COMPARISON.md](ANALYSIS-COMPARISON.md) を参照する。
 

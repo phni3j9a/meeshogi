@@ -2,11 +2,13 @@ import type {
   CloudAttempt,
   CloudAttemptStatus,
   CloudJobView,
+  CloudPendingEntry,
   CloudProfileId,
   CloudResultRow,
 } from '../cloud/contract';
 import {
   CLOUD_MAX_MOVES,
+  CLOUD_PENDING_META_KEY,
   CLOUD_RESULTS_PAGE_LIMIT,
   CLOUD_SERVER_TERMINAL_STATUSES,
   attemptServerUnconfirmed,
@@ -47,6 +49,15 @@ export interface CloudContext {
   write<T>(operation: () => Promise<T>): Promise<T>;
   setAttempts(fn: (attempts: CloudAttempt[]) => CloudAttempt[]): void;
   onResultsCommitted(attemptId: string, rows: CloudResultRow[]): void;
+  getPending(): CloudPendingEntry[];
+  setPending(entries: CloudPendingEntry[]): void;
+  /** A queued game that could not be sent for a non-network reason. */
+  setPendingError(gameId: string, message: string | null): void;
+}
+
+/** No response reached the device: the request may be retried later. */
+function isNetworkFailure(error: unknown): boolean {
+  return error instanceof CloudApiError && error.status === 0;
 }
 
 const TERMINAL_STATUSES: CloudAttemptStatus[] = ['completed', 'failed', 'cancelled'];
@@ -123,6 +134,9 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
   let startQueue: Promise<void> = Promise.resolve();
   // Single in-flight credential issuance per endpoint.
   const credentialIssuance = new Map<string, Promise<CloudCredential>>();
+  // Backoff for retrying the head of the pending queue after a network failure.
+  let queueRetry: object | null = null;
+  let queueDelay = deps.pollIntervalMs;
 
   const attemptById = (attemptId: string) =>
     ctx.getAttempts().find((attempt) => attempt.attemptId === attemptId);
@@ -548,6 +562,8 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       } finally {
         pumps.delete(attemptId);
         wakeUps.delete(attemptId);
+        // A finished attempt frees the owner's single active slot.
+        kickQueue();
       }
     })().catch(() => undefined);
   };
@@ -571,15 +587,12 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
    */
   const unconfirmedError = attemptServerUnconfirmed;
 
-  const doStart = async (gameId: string): Promise<void> => {
-    const profileId = ctx.getCloudMethodProfile();
-    if (!profileId) throw new Error('解析方法がCloudではありません。');
+  /** Checks shared by an immediate start and by adding a game to the queue. */
+  const startable = (gameId: string): { endpoint: string; game: GameRecord } => {
     const endpoint = deps.endpoint();
     if (!endpoint) {
       throw new Error('Cloud解析の接続先が設定されていません。端末内（Sekirei）をお使いください。');
     }
-    // Runs inside the serialized start queue: re-check the latest state at
-    // each stage so a queued second tap collapses into the first attempt.
     const game = ctx.getGame(gameId);
     if (!game) throw new Error('棋譜が見つかりません。');
     if (game.moves.length > CLOUD_MAX_MOVES) {
@@ -587,6 +600,132 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
         `Cloud解析は${CLOUD_MAX_MOVES}手までの棋譜に対応しています。`,
       );
     }
+    return { endpoint, game };
+  };
+
+  /** Read-modify-write inside the serialized writer, like game deletion. */
+  const updatePending = (fn: (entries: CloudPendingEntry[]) => CloudPendingEntry[]) =>
+    ctx.write(async () => {
+      const current = ctx.getPending();
+      const next = fn(current);
+      if (next === current) return;
+      await ctx.repo().cloud.metaSet(CLOUD_PENDING_META_KEY, JSON.stringify(next));
+      ctx.setPending(next);
+    });
+
+  const removePending = (gameId: string) =>
+    updatePending((entries) =>
+      entries.some((entry) => entry.gameId === gameId)
+        ? entries.filter((entry) => entry.gameId !== gameId)
+        : entries,
+    );
+
+  const enqueue = async (game: GameRecord, profileId: CloudProfileId) => {
+    ctx.setPendingError(game.id, null);
+    await updatePending((entries) =>
+      entries.some((entry) => entry.gameId === game.id)
+        ? entries
+        : [
+            ...entries,
+            { gameId: game.id, gameIdentity: game.identity, profileId, requestedAt: deps.nowIso() },
+          ],
+    );
+  };
+
+  const scheduleQueueRetry = () => {
+    if (queueRetry) return;
+    const token = {};
+    queueRetry = token;
+    queueDelay = Math.min(queueDelay * 2, deps.maxBackoffMs);
+    void deps.sleep(queueDelay).then(() => {
+      if (queueRetry !== token) return;
+      queueRetry = null;
+      kickQueue();
+    });
+  };
+
+  /**
+   * Sends the head of the pending queue once no attempt is active. Runs inside
+   * the serialized start queue, only in the foreground; a network failure
+   * keeps the entry and retries with backoff, any other failure drops it and
+   * reports the reason on that game.
+   */
+  const processQueue = async (): Promise<void> => {
+    while (foreground) {
+      const head = ctx.getPending()[0];
+      if (!head) return;
+      if (ctx.getAttempts().some((attempt) => isActiveAttempt(attempt.status))) return;
+      const game = ctx.getGame(head.gameId);
+      if (!game || game.identity !== head.gameIdentity) {
+        await removePending(head.gameId);
+        continue;
+      }
+      try {
+        await doStart(head.gameId, head.profileId);
+      } catch (error) {
+        if (isNetworkFailure(error)) {
+          scheduleQueueRetry();
+          return;
+        }
+        await removePending(head.gameId);
+        ctx.setPendingError(
+          head.gameId,
+          error instanceof CloudApiError
+            ? mapApiError(error)
+            : error instanceof Error
+              ? error.message
+              : 'Cloud解析を開始できませんでした。',
+        );
+        continue;
+      }
+      queueDelay = deps.pollIntervalMs;
+      await removePending(head.gameId);
+      return;
+    }
+  };
+
+  function kickQueue() {
+    if (!foreground || ctx.getPending().length === 0) return;
+    startQueue = startQueue.then(processQueue).catch(() => undefined);
+  }
+
+  /**
+   * User or auto-import request: start now when the owner has no active job
+   * and nothing is already waiting; otherwise, or when the device cannot reach
+   * the server, keep the game in the pending queue.
+   */
+  const startOrQueue = async (gameId: string): Promise<'started' | 'queued'> => {
+    const profileId = ctx.getCloudMethodProfile();
+    if (!profileId) throw new Error('解析方法がCloudではありません。');
+    const { game } = startable(gameId);
+    const existing = latestAttemptFor(gameId, profileId);
+    if (existing && isActiveAttempt(existing.status)) {
+      ensurePump(existing.attemptId);
+      return 'started';
+    }
+    if (ctx.getPending().some((entry) => entry.gameId === gameId)) return 'queued';
+    if (
+      ctx.getPending().length > 0 ||
+      ctx.getAttempts().some((attempt) => isActiveAttempt(attempt.status))
+    ) {
+      await enqueue(game, profileId);
+      return 'queued';
+    }
+    try {
+      await doStart(gameId, profileId);
+      return 'started';
+    } catch (error) {
+      if (!isNetworkFailure(error)) throw error;
+      await enqueue(game, profileId);
+      scheduleQueueRetry();
+      return 'queued';
+    }
+  };
+
+  const doStart = async (gameId: string, profileId: CloudProfileId): Promise<void> => {
+    // Runs inside the serialized start queue: re-check the latest state at
+    // each stage so a queued second tap collapses into the first attempt.
+    const { endpoint, game } = startable(gameId);
     const reusableActive = () => {
       const existing = latestAttemptFor(gameId, profileId);
       if (existing && isActiveAttempt(existing.status)) {
@@ -688,13 +827,24 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
   };
 
   return {
-    /** Start (or reconnect to) a Cloud analysis for a game using the selected method. */
-    start(gameId: string): Promise<void> {
-      const run = startQueue.then(() => doStart(gameId));
+    /**
+     * Start (or reconnect to) a Cloud analysis for a game using the selected
+     * method, or add it to the pending queue when it cannot be sent now.
+     */
+    start(gameId: string): Promise<'started' | 'queued'> {
+      const run = startQueue.then(() => startOrQueue(gameId));
       startQueue = run.then(
         () => undefined,
         () => undefined,
       );
+      return run;
+    },
+
+    /** Remove a game from the pending queue at the user's request. */
+    removePending(gameId: string): Promise<void> {
+      const run = startQueue.then(() => removePending(gameId));
+      startQueue = run.catch(() => undefined);
+      ctx.setPendingError(gameId, null);
       return run;
     },
 
@@ -726,6 +876,10 @@ export function makeCloudController(deps: CloudDeps, ctx: CloudContext) {
       for (const attempt of ctx.getAttempts()) {
         if (pumpEligible(attempt)) ensurePump(attempt.attemptId);
       }
+      // Returning to the foreground retries the queue at once.
+      queueRetry = null;
+      queueDelay = deps.pollIntervalMs;
+      kickQueue();
     },
 
     /** Stop local polling; server jobs keep running and resume on foreground. */
