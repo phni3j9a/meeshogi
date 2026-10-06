@@ -37,6 +37,10 @@ const WORKER = 'https://worker.test';
 const STAGING_JOB_VARS = (JSON.parse(readFileSync(new URL('../wrangler.staging.jsonc', import.meta.url), 'utf8')) as {
   vars: Pick<Env, 'JOBS_ENFORCE_FREE_QUOTAS' | 'JOBS_REQUIRE_PRECISION_ALLOWLIST'>;
 }).vars;
+const QUOTAS_DISABLED_VARS: Pick<Env, 'JOBS_ENFORCE_FREE_QUOTAS' | 'JOBS_REQUIRE_PRECISION_ALLOWLIST'> = {
+  JOBS_ENFORCE_FREE_QUOTAS: 'false',
+  JOBS_REQUIRE_PRECISION_ALLOWLIST: 'false',
+};
 
 interface SessionCall {
   binding: string;
@@ -550,7 +554,8 @@ describe('POST /v1/jobs validation and limits', () => {
         headers: { authorization: `Bearer ${credential}` },
       }), env, deps);
       expect(cancel.status).toBe(200);
-      nowMs += 1000;
+      // Spaced so the trailing window never fills before the daily quota does.
+      nowMs += 15_000;
     }
     const denied = await createJob(env, credential, jobBody(['2g2f']), deps);
     expect(denied.status).toBe(429);
@@ -569,10 +574,10 @@ describe('POST /v1/jobs validation and limits', () => {
     const { credential } = await issueCredential(env);
     let nowMs = Date.parse('2026-09-26T03:00:00Z');
     const deps = { now: () => nowMs };
-    // With equal configured limits (5/day and 5/60s) the daily quota masks the
-    // rate limit at the API boundary; the trailing-window SQL is exercised
-    // separately in jobStore tests with a wider daily limit.
-    for (let index = 0; index < JOB_LIMITS.freeDailyJobs; index += 1) {
+    // The daily quota (10) is wider than the trailing window (5/60s), so the
+    // rate limit is what refuses the next submission here.
+    expect(JOB_LIMITS.freeDailyJobs).toBeGreaterThan(JOB_LIMITS.freeRateMaxJobs);
+    for (let index = 0; index < JOB_LIMITS.freeRateMaxJobs; index += 1) {
       const { jobId } = await createGame(env, credential, ['2g2f'], { idempotencyKey: `rate-${index}` }, deps);
       const cancel = await handleV1Request(new Request(`${WORKER}/v1/jobs/${jobId}/cancel`, {
         method: 'POST',
@@ -583,6 +588,13 @@ describe('POST /v1/jobs validation and limits', () => {
     }
     const denied = await createJob(env, credential, jobBody(['2g2f']), deps);
     expect(denied.status).toBe(429);
+    expect((await denied.json() as { failure: { code: string } }).failure.code).toBe('rate_limited');
+  });
+
+  it('enforces the Free quotas with the checked-in staging settings (Issue #45)', () => {
+    expect(JOB_LIMITS.freeDailyJobs).toBe(10);
+    expect(STAGING_JOB_VARS.JOBS_ENFORCE_FREE_QUOTAS).toBe('true');
+    expect(STAGING_JOB_VARS.JOBS_REQUIRE_PRECISION_ALLOWLIST).toBe('false');
   });
 
   it('gates the precision profile behind the server-side allowlist', async () => {
@@ -599,9 +611,9 @@ describe('POST /v1/jobs validation and limits', () => {
     expect((await allowed.json() as { profileId: string }).profileId).toBe('precision');
   });
 
-  it('admits more than five Free jobs in one minute with staging settings, and can restore quotas', async () => {
+  it('admits more than the quotas when they are disabled, and can restore them', async () => {
     const { d1, sqlite } = createTestDb();
-    const env = makeJobsEnv({ d1, queue: queueProbe().queue, access: STAGING_JOB_VARS });
+    const env = makeJobsEnv({ d1, queue: queueProbe().queue, access: QUOTAS_DISABLED_VARS });
     const { credential } = await issueCredential(env);
     let nowMs = Date.parse('2026-09-27T14:59:59Z');
     const deps = { now: () => nowMs };
@@ -639,7 +651,7 @@ describe('POST /v1/jobs validation and limits', () => {
     const deps = { now: () => Date.parse('2026-09-27T03:00:00Z') };
     const precision = await createJob(env, credential, jobBody([], { profileId: 'precision' }), deps);
     expect(precision.status).toBe(403);
-    for (let index = 0; index < JOB_LIMITS.freeDailyJobs; index += 1) {
+    for (let index = 0; index < Math.min(JOB_LIMITS.freeDailyJobs, JOB_LIMITS.freeRateMaxJobs); index += 1) {
       const { jobId } = await createGame(env, credential, [], { idempotencyKey: `restricted-${index}` }, deps);
       expect((await handleV1Request(postJson(`/v1/jobs/${jobId}/cancel`, credential, {}), env, deps)).status).toBe(200);
     }

@@ -65,7 +65,7 @@ function mapApiError(error: CloudApiError): string {
       case 'profile_not_allowed':
         return '精密解析はこの端末では利用できません（サーバー側の許可が必要です）。';
       case 'daily_quota_exceeded':
-        return '本日のCloud・無料の解析回数（5回）を使い切りました。明日以降に再度お試しください。';
+        return '本日のCloud・無料の解析回数（1日10局）を使い切りました。明日以降に再度お試しください。';
       case 'rate_limited':
         return '短時間に多くの解析要求があったため制限されています。時間をおいて再度お試しください。';
       case 'active_job_limit':

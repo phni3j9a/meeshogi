@@ -15,7 +15,7 @@ focused run・最終候補 `7d35caa` での両OSの受入結果。
   ブランチ・レポートへ書かない**。committed な資料では `<staging>` と表記する。
 - `EXPO_PUBLIC_ENABLE_ANALYSIS_EXPORT=1` — 開発用の比較レポート書き出しを有効にする。
 
-Issue #34以降、開発専用stagingの既定はFree回数制限なし・Precision個別許可不要。同時active 1は維持する。以下のIssue #22の過去受入は、Free 5 job/owner/JST日・Precision allowlist有効時の記録。`cloud-precision-denied`を再実行する場合は、事前にWorkerの`JOBS_REQUIRE_PRECISION_ALLOWLIST`を`"true"`へ戻してdeployし、対象ownerを非許可にする。通常の開発設定では`cloud-precision-denied`を選ばず、`cloud-precision-run`を個別許可なしで実行する。Free quotaの再検証には`JOBS_ENFORCE_FREE_QUOTAS="true"`も必要。詳しくは[設定手順](../cloud/README.md#development-staging-access-issue-34)を参照。
+Issue #34以降、開発専用stagingの既定はPrecision個別許可不要（Free回数制限はIssue #45で1日10局として再び有効化）。同時active 1は維持する。以下のIssue #22の過去受入は、Free 5 job/owner/JST日・Precision allowlist有効時の記録。`cloud-precision-denied`を再実行する場合は、事前にWorkerの`JOBS_REQUIRE_PRECISION_ALLOWLIST`を`"true"`へ戻してdeployし、対象ownerを非許可にする。通常の開発設定では`cloud-precision-denied`を選ばず、`cloud-precision-run`を個別許可なしで実行する。Free quotaの再検証には`JOBS_ENFORCE_FREE_QUOTAS="true"`も必要。詳しくは[設定手順](../cloud/README.md#development-staging-access-issue-34)を参照。
 
 ## Flow 選択（両OS共通の追加フロー）
 

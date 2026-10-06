@@ -1,6 +1,6 @@
 {
   "schema": "meeshogi-job-config-v1",
-  "note": "Profiles approved in Issue #20 and shortened in Issue #46. Quota thresholds apply when JOBS_ENFORCE_FREE_QUOTAS is enabled; development staging disables it (Issue #34). The active-job limit always applies. These are not permanent product limits.",
+  "note": "Profiles approved in Issue #20 and shortened in Issue #46. Free is 10 jobs per owner per JST day (Issue #45); quota thresholds apply unless JOBS_ENFORCE_FREE_QUOTAS is \"false\". The active-job limit always applies.",
   "profiles": {
     "free": {
       "instanceType": "standard-2",
@@ -25,7 +25,7 @@
   },
   "limits": {
     "timeZone": "Asia/Tokyo",
-    "freeDailyJobs": 5,
+    "freeDailyJobs": 10,
     "freeRateWindowSeconds": 60,
     "freeRateMaxJobs": 5,
     "maxActiveJobsPerOwner": 1
