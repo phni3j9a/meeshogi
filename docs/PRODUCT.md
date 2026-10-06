@@ -34,7 +34,7 @@
 - Cloud結果の合法PV・合法手数に応じた候補数・終局判定はサーバーが確定する。端末は形式・局面・identity・profile・評価値・実効候補数を確認し、全合法手生成・全PV再生を繰り返さない。盤面で実際に指す手の合法性は確認する。
 - Cloud jobはアプリ終了・背景移行・通信断でもサーバーで継続し、同じidempotency key／jobIdへ再接続する。明示取消をサーバーが確定するまで取消済みと表示しない。
 - active／送信結果未確認のjobに対応する棋譜は、サーバーの終了／取消を確認するまで保持する。ownerのcredential喪失・認証拒否で再接続不能と識別できた場合に限り、jobが継続し得ること・復帰を放棄することを説明して、明示確認後に端末内データを削除できる。一時障害・一般エラー・単なるpoll停止は例外にしない。
-- Cloudの通常mateから1手／3手詰めバッジを作らない。開発用の方式比較exportは [ANALYSIS-COMPARISON.md](ANALYSIS-COMPARISON.md) を参照する。
+- Cloudの通常mateから1手／3手詰めバッジを作らない。Cloudのバッジは、サーバーが結果の保存時に証明した1手／3手詰め（`mateProof`）だけから作る。証明の予算切れは「詰みなし」にしない。開発用の方式比較exportは [ANALYSIS-COMPARISON.md](ANALYSIS-COMPARISON.md) を参照する。
 
 ## 詰み・戦績・戦型
 

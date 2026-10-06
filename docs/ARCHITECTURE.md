@@ -38,7 +38,7 @@ Sekirei v0.3.37と自作weightを固定し、ResidualMaterialで探索する。�
 - credential喪失・不正・owner不一致・401を区別する。未確認の要求がある間は代替credentialを発行しない。
 - 初回POSTへの確定的な契約4xxだけを`not_created`とする。応答不明や再送拒否では対応を保持する。棋譜削除の例外はPRODUCT.mdに従う。
 
-サーバーは1棋譜を1 jobとしてD1へ保存する。profile別Queue consumerはD1からjobを読み、jobId名のDOへ開始RPCを渡して受理後にackする。DOは制御情報とSDK `schedule()` 予約を永続化し、schedule callbackでrunnerを実行・継続する。D1がjob状態と結果の正本で、DO storageは実行制御を持つ。5分ごとのcronが古いactive jobをprofile別Queueへ戻して回復する。driverはsession内でengine processを再利用し、結果の条件付き書き込みで取消後の遅延結果・重複を排除する。完了・失敗・取消後はContainerを停止し、全経路で`PvInterval 0`を指定する。
+サーバーは1棋譜を1 jobとしてD1へ保存する。profile別Queue consumerはD1からjobを読み、jobId名のDOへ開始RPCを渡して受理後にackする。DOは制御情報とSDK `schedule()` 予約を永続化し、schedule callbackでrunnerを実行・継続する。D1がjob状態と結果の正本で、DO storageは実行制御を持つ。5分ごとのcronが古いactive jobをprofile別Queueへ戻して回復する。driverはsession内でengine processを再利用し、結果の条件付き書き込みで取消後の遅延結果・重複を排除する。完了・失敗・取消後はContainerを停止し、全経路で`PvInterval 0`を指定する。runnerは各結果の保存前に、Worker内のtsshogiで手番側の1手／3手詰めを証明して`mateProof`（version付き）を付ける。探索量は局面ごと・sessionごとに手数で上限を設ける。
 
 DO主導開始とstaging実測は[Issue #49の記録](CLOUD-CONTAINER-LIFECYCLE.md#issue-49-do-driven-start)を参照する。Free / Precisionの上限はContainerの安全上限であり、production値はIssue #24で決める。
 

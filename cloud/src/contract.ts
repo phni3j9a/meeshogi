@@ -1,4 +1,5 @@
 import { handPieceTypes, Position, Square } from 'tsshogi';
+import type { MateProofResult } from './mateProof';
 import benchmarkManifest from '../bench/conditions.json' with { type: 'json' };
 
 export const CONTRACT_VERSION = 'analysis-json-v1';
@@ -108,6 +109,8 @@ export type AnalysisResult = {
   };
   identity: typeof EXPECTED_IDENTITY;
   verification?: DriverVerificationEvidence;
+  /** Added by the job runner before a result is committed; absent on older rows. */
+  mateProof?: MateProofResult;
 };
 
 export type FailureResult = {

@@ -9,6 +9,7 @@ import {
 } from './contract';
 import { JOB_PROFILES, type JobInstanceType, type JobProfile, type JobProfileId } from './jobConfig';
 import { type JobRow, JobStore } from './jobStore';
+import { proveMate } from './mateProof';
 
 const SESSION_CONTRACT = 'analysis-session-v1';
 const SESSION_PATH = '/session';
@@ -21,6 +22,12 @@ const MAX_SESSION_POSITIONS = 512;
 const NO_CONTAINER_INSTANCE = 'there is no container instance that can be provided to this durable object';
 const MAX_RUNNING_CONTAINER_INSTANCES = 'maximum number of running container instances exceeded';
 const CAPACITY_RESPONSE_PREFIX_LIMIT = 1024;
+/**
+ * Mate-proof work one session may spend (roughly 10–20 s of CPU) before it
+ * ends at a committed boundary, so the next slice starts with a fresh
+ * Durable Object CPU allowance. Each proof is bounded on its own as well.
+ */
+const SESSION_PROOF_NODE_BUDGET = 1_000_000;
 export type JobRunOutcome =
   | { kind: 'resume' }
   | { kind: 'done' }
@@ -49,6 +56,8 @@ export interface JobRunnerDeps {
   waitUntil?: (task: Promise<unknown>) => void;
   /** Bound for the best-effort /session/cancel fetch; overridable so tests stay fast. */
   sessionCancelTimeoutMs?: number;
+  /** Mate-proof work per session before it ends at a committed boundary; overridable for tests. */
+  sessionProofNodeBudget?: number;
   onTerminal?: () => void | Promise<void>;
   log?: JobRunnerLog;
 }
@@ -264,6 +273,8 @@ export async function runSession(
   deps: JobRunnerDeps,
 ): Promise<JobRunOutcome> {
   const waitUntil = deps.waitUntil;
+  const proofNodeBudget = deps.sessionProofNodeBudget ?? SESSION_PROOF_NODE_BUDGET;
+  let proofNodes = 0;
   const cancelTimeoutMs = deps.sessionCancelTimeoutMs ?? SESSION_CANCEL_TIMEOUT_MS;
   const deadlineMs = sessionDeadline - now();
   const controller = new AbortController();
@@ -448,6 +459,11 @@ export async function runSession(
       if (sessionDeadline - now() <= 0) {
         return progress > 0 ? CONTINUE : RETRY;
       }
+      // The mate proof is the server's own adjudication, never the engine's
+      // mate score; it replaces anything the driver might have sent.
+      const { proof, nodes } = proveMate(expected.sfen);
+      proofNodes += nodes;
+      (validated as AnalysisResult).mateProof = proof;
       const committed = await store.commitResult(
         job.job_id,
         expected.ply,
@@ -470,6 +486,10 @@ export async function runSession(
       received += 1;
       if (progress === 1) {
         emit(deps, { event: 'job_first_result_committed', jobId: job.job_id, profile: job.profile_id, ply: expected.ply });
+      }
+      if (proofNodes >= proofNodeBudget && received < positions.length) {
+        emit(deps, { event: 'job_session_proof_budget_reached', jobId: job.job_id, profile: job.profile_id, proofNodes });
+        return CONTINUE;
       }
     }
   } catch {

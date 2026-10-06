@@ -36,8 +36,55 @@ describe('Cloud結果の検証', () => {
     expect(display.candidates[0].mate).toBeNull();
     expect(display.meta.completedDepth).toBe(12);
     expect(display.engineLaunch).toBe(1);
-    // Cloud results never produce a mate proof — badges stay Sekirei-only.
+    // Engine scores never become a mate proof; only the server's proof does.
     expect(display).not.toHaveProperty('mateProof');
+  });
+
+  it('サーバーが証明した1手／3手詰めを手番側の証明として受理する', () => {
+    const sente = {
+      ...makeSuccessResult(STARTPOS, 'free'),
+      mateProof: { version: 1, status: 'proven', plies: 3, side: 'sente', pv: ['2g2f', '8c8d', '2f2e'] },
+    };
+    const row = validateCloudResult(wire(STARTPOS, sente), STARTPOS, 'free');
+    expect(toCloudPositionResult(row!).mateProof).toEqual({
+      status: 'proven', plies: 3, side: 'black', pv: ['2g2f', '8c8d', '2f2e'],
+    });
+    const gote = {
+      ...makeSuccessResult(GOTE_POS, 'free'),
+      mateProof: { version: 1, status: 'proven', plies: 1, side: 'gote', pv: ['G*5h'] },
+    };
+    const goteRow = validateCloudResult(wire(GOTE_POS, gote), GOTE_POS, 'free');
+    expect(toCloudPositionResult(goteRow!).mateProof).toMatchObject({ plies: 1, side: 'white' });
+  });
+
+  it('未証明・予算切れ・未知versionの証明はバッジにせず、行は受理する', () => {
+    for (const mateProof of [
+      { version: 1, status: 'not-found' },
+      { version: 1, status: 'incomplete' },
+      { version: 2, status: 'proven', plies: 5, side: 'sente', pv: ['2g2f'] },
+    ]) {
+      const row = validateCloudResult(
+        wire(STARTPOS, { ...makeSuccessResult(STARTPOS, 'free'), mateProof }),
+        STARTPOS,
+        'free',
+      );
+      expect(row).not.toBeNull();
+      expect(toCloudPositionResult(row!)).not.toHaveProperty('mateProof');
+    }
+  });
+
+  it('形式不正なversion 1の詰み証明を含む行を拒否する', () => {
+    for (const mateProof of [
+      null,
+      { version: 1, status: 'proven', plies: 1, side: 'gote', pv: ['2g2f'] },
+      { version: 1, status: 'proven', plies: 3, side: 'sente', pv: ['2g2f'] },
+      { version: 1, status: 'proven', plies: 2, side: 'sente', pv: ['2g2f', '8c8d'] },
+      { version: 1, status: 'proven', plies: 1, side: 'sente', pv: ['bad'] },
+      { version: 1, status: 'maybe' },
+    ]) {
+      const result = { ...makeSuccessResult(STARTPOS, 'free'), mateProof };
+      expect(validateCloudResult(wire(STARTPOS, result), STARTPOS, 'free')).toBeNull();
+    }
   });
 
   it('後手番の局面でもサーバー正規化済みの値を再反転しない', () => {

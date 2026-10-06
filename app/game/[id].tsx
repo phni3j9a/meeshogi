@@ -404,13 +404,15 @@ export default function GameScreen() {
       setError(errorMessage(e));
     }
   };
-  const proof = currentAnalysis?.mateProof;
-  // Mate badges are only ever produced from proven Sekirei mateProof results.
-  // Under a Cloud method nothing on screen is a proof, so badges stay hidden.
-  const proven =
-    settings.showMateBadges &&
-    method === 'sekirei' &&
-    isDisplayableMateProof(proof, position?.turn);
+  // Mate badges come only from proofs: Sekirei's mateProof or the Cloud
+  // server's 1/3-ply proof. Engine mate scores are never a proof.
+  const proof =
+    method === 'sekirei'
+      ? currentAnalysis?.mateProof
+      : branch
+        ? undefined
+        : cloudLine.get(ply)?.mateProof;
+  const proven = settings.showMateBadges && isDisplayableMateProof(proof, position?.turn);
   if (!game || !sfen)
     return (
       <EmptyState
